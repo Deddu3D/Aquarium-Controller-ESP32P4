@@ -95,12 +95,19 @@ esp_err_t geolocation_init(void)
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
     if (err == ESP_OK) {
-        nvs_get_double(h, NVS_KEY_LAT, &s_config.latitude);
-        nvs_get_double(h, NVS_KEY_LNG, &s_config.longitude);
+        /* Individual keys may not exist yet – keep defaults if missing */
+        if (nvs_get_double(h, NVS_KEY_LAT, &s_config.latitude) != ESP_OK) {
+            ESP_LOGI(TAG, "NVS key '%s' not found – using default", NVS_KEY_LAT);
+        }
+        if (nvs_get_double(h, NVS_KEY_LNG, &s_config.longitude) != ESP_OK) {
+            ESP_LOGI(TAG, "NVS key '%s' not found – using default", NVS_KEY_LNG);
+        }
 
         int32_t off = 0;
         if (nvs_get_i32(h, NVS_KEY_UTC_OFF, &off) == ESP_OK) {
             s_config.utc_offset_min = (int)off;
+        } else {
+            ESP_LOGI(TAG, "NVS key '%s' not found – using default", NVS_KEY_UTC_OFF);
         }
         nvs_close(h);
         ESP_LOGI(TAG, "Loaded from NVS: lat=%.4f lng=%.4f utc_off=%d",

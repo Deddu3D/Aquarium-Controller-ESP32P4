@@ -618,7 +618,7 @@ static esp_err_t api_geolocation_post_handler(httpd_req_t *req)
     /* Update system timezone offset for localtime_r */
     char tz[16];
     int abs_off = cfg.utc_offset_min < 0 ? -cfg.utc_offset_min : cfg.utc_offset_min;
-    /* POSIX TZ sign is inverted: UTC-5 means ahead of UTC */
+    /* POSIX TZ sign is inverted: +60 min offset → UTC-1 */
     snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
              cfg.utc_offset_min >= 0 ? '-' : '+',
              abs_off / 60, abs_off % 60);

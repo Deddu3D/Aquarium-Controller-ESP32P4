@@ -457,11 +457,14 @@ static void led_scene_task(void *arg)
                 ss_end   = 19 * 60;
             }
 
-            /* Clamp to valid range */
+            /* Clamp to valid range and ensure start < end */
             if (sr_start < 0)     sr_start = 0;
             if (sr_end   > 1439)  sr_end   = 1439;
             if (ss_start < 0)     ss_start = 0;
             if (ss_end   > 1439)  ss_end   = 1439;
+            if (sr_start >= sr_end) { sr_start = 6 * 60;  sr_end = 7 * 60;  }
+            if (ss_start >= ss_end) { ss_start = 18 * 60; ss_end = 19 * 60; }
+            if (sr_end > ss_start)  { sr_end = ss_start; }
 
             if (now_min >= sr_start && now_min < sr_end) {
                 /* Sunrise transition */

@@ -68,7 +68,8 @@ void app_main(void)
         geolocation_config_t geo = geolocation_get();
         int abs_off = geo.utc_offset_min < 0 ? -geo.utc_offset_min : geo.utc_offset_min;
         char tz[16];
-        /* POSIX TZ sign is inverted: UTC-5 means 5 h ahead of UTC */
+        /* POSIX TZ sign is inverted: a geolocation offset of +60 min
+         * (1 h east of Greenwich) is expressed as UTC-1.              */
         snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
                  geo.utc_offset_min >= 0 ? '-' : '+',
                  abs_off / 60, abs_off % 60);
