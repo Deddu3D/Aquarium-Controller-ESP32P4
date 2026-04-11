@@ -1,0 +1,15 @@
+menu "Aquarium WiFi Settings"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "your_ssid"
+        help
+            SSID (network name) of the WiFi access point to connect to.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "your_password"
+        help
+            Password for the WiFi access point.
+
+endmenu

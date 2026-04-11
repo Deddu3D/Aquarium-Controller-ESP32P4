@@ -1,0 +1,56 @@
+# ===========================================================================
+# Aquarium Controller – sdkconfig.defaults
+# Target board: Waveshare ESP32-P4-WiFi6 rev 1.3
+# ESP-IDF v6.0.0
+#
+# These defaults are applied when running `idf.py set-target esp32p4`
+# followed by `idf.py build`. User changes via menuconfig are saved
+# in the sdkconfig file and take precedence.
+# ===========================================================================
+
+# ── Target ──────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32p4"
+
+# ── Flash configuration (16 MB usable NOR Flash) ───────────────────
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# ── Partition table ─────────────────────────────────────────────────
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── PSRAM (32 MB octal PSRAM on board) ──────────────────────────────
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# ── ESP-Hosted / WiFi Remote  ──────────────────────────────────────
+# The esp_wifi_remote + esp_hosted components handle the SDIO transport
+# between the ESP32-P4 (host) and the ESP32-C6 (slave/coprocessor).
+# Pin mapping for the Waveshare ESP32-P4-WiFi6 board:
+#   SDIO_CLK  = GPIO 18
+#   SDIO_CMD  = GPIO 19
+#   SDIO_D0   = GPIO 14
+#   SDIO_D1   = GPIO 15
+#   SDIO_D2   = GPIO 16
+#   SDIO_D3   = GPIO 17
+#   RESET     = GPIO 54
+
+CONFIG_ESP_SDIO_PIN_CLK=18
+CONFIG_ESP_SDIO_PIN_CMD=19
+CONFIG_ESP_SDIO_PIN_D0=14
+CONFIG_ESP_SDIO_PIN_D1=15
+CONFIG_ESP_SDIO_PIN_D2=16
+CONFIG_ESP_SDIO_PIN_D3=17
+CONFIG_ESP_HOSTED_GPIO_SLAVE_RESET=54
+
+# ── Logging ─────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ── FreeRTOS ────────────────────────────────────────────────────────
+CONFIG_FREERTOS_HZ=1000
+
+# ── WiFi default settings ──────────────────────────────────────────
+CONFIG_WIFI_SSID="your_ssid"
+CONFIG_WIFI_PASSWORD="your_password"
