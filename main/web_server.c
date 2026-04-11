@@ -28,6 +28,7 @@
 #include "geolocation.h"
 #include "sun_position.h"
 #include "temperature_sensor.h"
+#include "temperature_history.h"
 #include "telegram_notify.h"
 
 static const char *TAG = "web_srv";
@@ -96,9 +97,10 @@ static void get_wifi_status(wifi_status_t *out)
 
 /*
  * Buffer size for the rendered HTML page.  The template has grown
- * with mobile-optimized UI; 32 KiB gives comfortable margin.
+ * with mobile-optimized UI and temperature chart; 40 KiB gives
+ * comfortable margin.
  */
-#define HTML_BUF_SIZE 32768
+#define HTML_BUF_SIZE 40960
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -214,6 +216,13 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"card-body\"><div class=\"card-inner\">"
     "<div class=\"row\"><span class=\"label\">Water</span>"
     "<span class=\"value\" id=\"temp-val\">--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Min</span>"
+    "<span class=\"value\" id=\"temp-min\">--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Max</span>"
+    "<span class=\"value\" id=\"temp-max\">--</span></div>"
+    "<canvas id=\"temp-chart\" width=\"440\" height=\"200\""
+    " style=\"width:100%%;height:200px;margin-top:.5rem;"
+    "border-radius:8px;background:#0f172a\"></canvas>"
     "</div></div></div>"
     /* LED control card – always open */
     "<div class=\"card open\" id=\"led-card\">"
@@ -479,6 +488,75 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).catch(function(){var el=$('temp-val');"
     "    el.textContent='Error';el.className='value err'})}"
     "loadTemp();setInterval(loadTemp,5000);"
+    /* ── Temperature chart ── */
+    "function drawChart(samples){"
+    "  var cv=$('temp-chart');if(!cv)return;"
+    "  var dpr=window.devicePixelRatio||1;"
+    "  cv.width=cv.clientWidth*dpr;cv.height=cv.clientHeight*dpr;"
+    "  var ctx=cv.getContext('2d');ctx.scale(dpr,dpr);"
+    "  var W=cv.clientWidth,H=cv.clientHeight;"
+    "  var pad={t:20,r:10,b:30,l:46};"
+    "  var cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;"
+    "  ctx.clearRect(0,0,W,H);"
+    "  if(!samples||samples.length<2){"
+    "    ctx.fillStyle='#64748b';ctx.font='13px sans-serif';"
+    "    ctx.textAlign='center';"
+    "    ctx.fillText('Waiting for data\\u2026',W/2,H/2);return}"
+    "  var mn=1e9,mx=-1e9;"
+    "  for(var i=0;i<samples.length;i++){"
+    "    if(samples[i].c<mn)mn=samples[i].c;"
+    "    if(samples[i].c>mx)mx=samples[i].c}"
+    "  $('temp-min').textContent=mn.toFixed(1)+' \\u00B0C';"
+    "  $('temp-min').className='value ok';"
+    "  $('temp-max').textContent=mx.toFixed(1)+' \\u00B0C';"
+    "  $('temp-max').className='value ok';"
+    "  var margin=(mx-mn)*0.15;if(margin<0.3)margin=0.3;"
+    "  var yMin=mn-margin,yMax=mx+margin;"
+    /* Grid lines */
+    "  ctx.strokeStyle='#1e293b';ctx.lineWidth=1;"
+    "  var ngy=5;for(var i=0;i<=ngy;i++){"
+    "    var y=pad.t+ch-ch*(i/ngy);"
+    "    ctx.beginPath();ctx.moveTo(pad.l,y);"
+    "    ctx.lineTo(pad.l+cw,y);ctx.stroke();"
+    "    ctx.fillStyle='#64748b';ctx.font='11px sans-serif';"
+    "    ctx.textAlign='right';ctx.textBaseline='middle';"
+    "    ctx.fillText((yMin+(yMax-yMin)*(i/ngy)).toFixed(1),pad.l-4,y)}"
+    /* X-axis labels (hours) */
+    "  var t0=samples[0].t,t1=samples[samples.length-1].t;"
+    "  var span=t1-t0;if(span<1)span=1;"
+    "  ctx.fillStyle='#64748b';ctx.font='11px sans-serif';"
+    "  ctx.textAlign='center';ctx.textBaseline='top';"
+    "  var lx=-999;"
+    "  for(var i=0;i<samples.length;i++){"
+    "    var x=pad.l+cw*((samples[i].t-t0)/span);"
+    "    var d=new Date(samples[i].t*1000);"
+    "    if(d.getMinutes()===0&&(x-lx)>36){"
+    "      ctx.beginPath();ctx.moveTo(x,pad.t);"
+    "      ctx.lineTo(x,pad.t+ch);ctx.strokeStyle='#1e293b';"
+    "      ctx.stroke();"
+    "      var lbl=('0'+d.getHours()).slice(-2)+':00';"
+    "      ctx.fillText(lbl,x,pad.t+ch+4);lx=x}}"
+    /* Line */
+    "  ctx.beginPath();ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;"
+    "  ctx.lineJoin='round';"
+    "  for(var i=0;i<samples.length;i++){"
+    "    var x=pad.l+cw*((samples[i].t-t0)/span);"
+    "    var y=pad.t+ch-ch*((samples[i].c-yMin)/(yMax-yMin));"
+    "    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}"
+    "  ctx.stroke();"
+    /* Gradient fill */
+    "  var last=samples.length-1;"
+    "  var lx2=pad.l+cw*((samples[last].t-t0)/span);"
+    "  ctx.lineTo(lx2,pad.t+ch);ctx.lineTo(pad.l,pad.t+ch);ctx.closePath();"
+    "  var grd=ctx.createLinearGradient(0,pad.t,0,pad.t+ch);"
+    "  grd.addColorStop(0,'rgba(56,189,248,0.25)');"
+    "  grd.addColorStop(1,'rgba(56,189,248,0.02)');"
+    "  ctx.fillStyle=grd;ctx.fill()}"
+    "function loadHistory(){"
+    "  fetch('/api/temperature_history').then(function(r){return r.json()})"
+    "  .then(function(d){drawChart(d.samples)})"
+    "  .catch(function(){})}"
+    "loadHistory();setInterval(loadHistory,60000);"
     "</script>"
     "</body></html>";
 
@@ -741,6 +819,49 @@ static esp_err_t api_temperature_get_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
+}
+
+/* ── Temperature history GET endpoint (/api/temperature_history  GET) ── */
+
+static esp_err_t api_temp_history_get_handler(httpd_req_t *req)
+{
+    /* Heap-allocate the sample buffer (~3.5 KB) */
+    temp_sample_t *samples = malloc(
+        TEMP_HISTORY_MAX_SAMPLES * sizeof(temp_sample_t));
+    if (samples == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    int count = 0;
+    temperature_history_get(samples, &count);
+
+    httpd_resp_set_type(req, "application/json");
+
+    /* Stream the response using chunked encoding to keep RAM usage low.
+     * Each sample serialises to ~30 bytes; a small fixed buffer is fine. */
+    char chunk[64];
+    int n;
+
+    n = snprintf(chunk, sizeof(chunk),
+        "{\"count\":%d,\"interval_sec\":%d,\"samples\":[",
+        count, CONFIG_TEMP_HISTORY_INTERVAL_SEC);
+    httpd_resp_send_chunk(req, chunk, n);
+
+    for (int i = 0; i < count; i++) {
+        n = snprintf(chunk, sizeof(chunk),
+            "%s{\"t\":%" PRId64 ",\"c\":%.2f}",
+            i > 0 ? "," : "",
+            (int64_t)samples[i].timestamp,
+            (double)samples[i].temp_c);
+        httpd_resp_send_chunk(req, chunk, n);
+    }
+
+    httpd_resp_send_chunk(req, "]}", 2);
+    httpd_resp_send_chunk(req, NULL, 0);   /* finalise chunked response */
+
+    free(samples);
+    return ESP_OK;
 }
 
 /* ── Geolocation GET endpoint (/api/geolocation  GET) ────────────── */
@@ -1072,6 +1193,13 @@ static const httpd_uri_t uri_api_temp_get = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_temp_hist_get = {
+    .uri      = "/api/temperature_history",
+    .method   = HTTP_GET,
+    .handler  = api_temp_history_get_handler,
+    .user_ctx = NULL,
+};
+
 static const httpd_uri_t uri_api_tg_get = {
     .uri      = "/api/telegram",
     .method   = HTTP_GET,
@@ -1137,6 +1265,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_geo_get);
     httpd_register_uri_handler(s_server, &uri_api_geo_post);
     httpd_register_uri_handler(s_server, &uri_api_temp_get);
+    httpd_register_uri_handler(s_server, &uri_api_temp_hist_get);
     httpd_register_uri_handler(s_server, &uri_api_tg_get);
     httpd_register_uri_handler(s_server, &uri_api_tg_post);
     httpd_register_uri_handler(s_server, &uri_api_tg_test);

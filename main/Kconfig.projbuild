@@ -54,4 +54,14 @@ menu "Aquarium Temperature Sensor Settings"
         help
             How often the DS18B20 sensor is read, in milliseconds.
 
+    config TEMP_HISTORY_INTERVAL_SEC
+        int "Temperature history sampling interval (seconds)"
+        default 300
+        range 60 3600
+        help
+            How often a temperature reading is stored in the 24-hour
+            history ring buffer used for the daily chart.  The buffer
+            holds 288 samples; at the default 300 s (5 min) interval
+            this gives exactly 24 hours of data.
+
 endmenu
