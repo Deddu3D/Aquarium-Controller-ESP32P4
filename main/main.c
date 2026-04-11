@@ -25,6 +25,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "led_controller.h"
+#include "led_scenes.h"
 
 static const char *TAG = "aquarium";
 
@@ -58,6 +59,12 @@ void app_main(void)
         ESP_LOGE(TAG, "LED strip init failed (0x%x)", ret);
     } else {
         ESP_LOGI(TAG, "LED strip ready");
+
+        /* Initialise LED scene engine */
+        ret = led_scenes_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "LED scene engine init failed (0x%x)", ret);
+        }
     }
 
     /* ── 4. Start HTTP status server ─────────────────────────── */
