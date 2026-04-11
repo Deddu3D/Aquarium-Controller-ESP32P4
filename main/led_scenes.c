@@ -513,6 +513,9 @@ esp_err_t led_scenes_set(led_scene_t scene)
     if (scene >= LED_SCENE_MAX) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_active_scene = scene;
     xSemaphoreGive(s_mutex);
@@ -522,6 +525,9 @@ esp_err_t led_scenes_set(led_scene_t scene)
 
 led_scene_t led_scenes_get(void)
 {
+    if (s_mutex == NULL) {
+        return LED_SCENE_OFF;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     led_scene_t s = s_active_scene;
     xSemaphoreGive(s_mutex);

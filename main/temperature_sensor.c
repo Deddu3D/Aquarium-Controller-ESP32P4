@@ -145,6 +145,10 @@ bool temperature_sensor_get(float *temp_c)
     if (temp_c == NULL) {
         return false;
     }
+    /* Module not initialised – sensor probe failed at startup. */
+    if (s_mutex == NULL) {
+        return false;
+    }
     bool valid;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     valid = s_valid;
