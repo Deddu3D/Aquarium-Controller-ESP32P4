@@ -68,6 +68,27 @@ static void json_escape(const char *src, char *dst, size_t dst_size)
 }
 
 /**
+ * @brief Escape a string for safe inclusion in HTML output.
+ *
+ * Prevents XSS injection by replacing &, <, >, ", ' with HTML entities.
+ */
+static void html_escape(const char *src, char *dst, size_t dst_size)
+{
+    size_t j = 0;
+    for (size_t i = 0; src[i] != '\0' && j + 7 < dst_size; i++) {
+        switch (src[i]) {
+        case '&':  j += snprintf(dst + j, dst_size - j, "&amp;");   break;
+        case '<':  j += snprintf(dst + j, dst_size - j, "&lt;");    break;
+        case '>':  j += snprintf(dst + j, dst_size - j, "&gt;");    break;
+        case '"':  j += snprintf(dst + j, dst_size - j, "&quot;");  break;
+        case '\'': j += snprintf(dst + j, dst_size - j, "&#x27;"); break;
+        default:   dst[j++] = src[i]; break;
+        }
+    }
+    dst[j] = '\0';
+}
+
+/**
  * @brief Fill a wifi_status_t struct with current WiFi information.
  */
 typedef struct {
@@ -99,10 +120,33 @@ static void get_wifi_status(wifi_status_t *out)
 
 /*
  * Buffer size for the rendered HTML page.  The template has grown
- * with mobile-optimized UI and temperature chart; 40 KiB gives
+ * with mobile-optimized UI and temperature chart; 52 KiB gives
  * comfortable margin.
  */
-#define HTML_BUF_SIZE 53248
+#define HTML_BUF_SIZE          53248
+
+/* JSON response buffer sizes */
+#define JSON_STATUS_BUF_SIZE   384
+#define JSON_LEDS_BUF_SIZE     256
+#define JSON_SCENES_BUF_SIZE   256
+#define JSON_TEMP_BUF_SIZE     128
+#define JSON_GEO_BUF_SIZE      384
+#define JSON_TG_BUF_SIZE       768
+#define JSON_DDNS_BUF_SIZE     384
+#define JSON_RELAY_CHUNK_SIZE  128
+#define JSON_TEMP_CHUNK_SIZE   64
+
+/* HTTP request body receive sizes */
+#define POST_BODY_LED_SIZE     256
+#define POST_BODY_SCENE_SIZE   256
+#define POST_BODY_GEO_SIZE     256
+#define POST_BODY_TG_SIZE      512
+#define POST_BODY_RELAY_SIZE   256
+#define POST_BODY_DDNS_SIZE    256
+
+/* HTTP server configuration */
+#define HTTP_STACK_SIZE        8192
+#define HTTP_MAX_URI_HANDLERS  25
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -830,6 +874,10 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     char uptime[32];
     snprintf(uptime, sizeof(uptime), "%dh %dm %ds", h, m, s);
 
+    /* HTML-escape the SSID to prevent XSS injection */
+    char escaped_ssid[128];
+    html_escape(ws.connected ? ws.ssid : "\xe2\x80\x94" /* — */, escaped_ssid, sizeof(escaped_ssid));
+
     /* Render HTML – heap-allocated to avoid httpd task stack overflow */
     char *buf = malloc(HTML_BUF_SIZE);
     if (buf == NULL) {
@@ -841,8 +889,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     int len = snprintf(buf, HTML_BUF_SIZE, STATUS_HTML_TEMPLATE,
                        ws.connected ? "ok" : "err",
                        ws.connected ? "Connected" : "Disconnected",
-                       ws.connected ? ws.ip : "—",
-                       ws.connected ? ws.ssid : "—",
+                       ws.connected ? ws.ip : "\xe2\x80\x94" /* — */,
+                       escaped_ssid,
                        ws.connected ? ws.rssi : 0,
                        esp_get_free_heap_size(),
                        uptime);
@@ -868,7 +916,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     char escaped_ssid[128];
     json_escape(ws.connected ? ws.ssid : "", escaped_ssid, sizeof(escaped_ssid));
 
-    char buf[384];
+    char buf[JSON_STATUS_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"connected\":%s,"
         "\"ip\":\"%s\","
@@ -894,7 +942,7 @@ static esp_err_t api_leds_get_handler(httpd_req_t *req)
     uint8_t r, g, b;
     led_controller_get_color(&r, &g, &b);
 
-    char buf[256];
+    char buf[JSON_LEDS_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"on\":%s,"
         "\"brightness\":%d,"
@@ -978,7 +1026,7 @@ static int json_get_double(const char *json, const char *key, double *out)
 
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
 {
-    char buf[256];
+    char buf[POST_BODY_LED_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1028,7 +1076,7 @@ static esp_err_t api_scenes_get_handler(httpd_req_t *req)
 {
     const char *active = led_scenes_get_name(led_scenes_get());
 
-    char buf[256];
+    char buf[JSON_SCENES_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"active_scene\":\"%s\","
         "\"scenes\":[\"off\",\"daylight\",\"sunrise\",\"sunset\","
@@ -1043,7 +1091,7 @@ static esp_err_t api_scenes_get_handler(httpd_req_t *req)
 
 static esp_err_t api_scenes_post_handler(httpd_req_t *req)
 {
-    char buf[256];
+    char buf[POST_BODY_SCENE_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1069,7 +1117,7 @@ static esp_err_t api_temperature_get_handler(httpd_req_t *req)
     float temp_c = 0.0f;
     bool valid = temperature_sensor_get(&temp_c);
 
-    char buf[128];
+    char buf[JSON_TEMP_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"valid\":%s,\"temperature_c\":%.2f}",
         valid ? "true" : "false",
@@ -1098,7 +1146,7 @@ static esp_err_t api_temp_history_get_handler(httpd_req_t *req)
 
     /* Stream the response using chunked encoding to keep RAM usage low.
      * Each sample serialises to ~30 bytes; a small fixed buffer is fine. */
-    char chunk[64];
+    char chunk[JSON_TEMP_CHUNK_SIZE];
     int n;
 
     n = snprintf(chunk, sizeof(chunk),
@@ -1147,7 +1195,7 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
                                        cfg.utc_offset_min,
                                        year, month, day);
 
-    char buf[384];
+    char buf[JSON_GEO_BUF_SIZE];
     int len;
     if (st.valid) {
         len = snprintf(buf, sizeof(buf),
@@ -1177,7 +1225,7 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
 
 static esp_err_t api_geolocation_post_handler(httpd_req_t *req)
 {
-    char buf[256];
+    char buf[POST_BODY_GEO_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1225,13 +1273,13 @@ static esp_err_t api_telegram_get_handler(httpd_req_t *req)
     json_escape(cfg.chat_id, escaped_chatid, sizeof(escaped_chatid));
 
     /* Use a heap buffer – stack-safe for the httpd task */
-    char *buf = malloc(768);
+    char *buf = malloc(JSON_TG_BUF_SIZE);
     if (buf == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
         return ESP_FAIL;
     }
 
-    int len = snprintf(buf, 768,
+    int len = snprintf(buf, JSON_TG_BUF_SIZE,
         "{\"bot_token_set\":%s,"
         "\"chat_id\":\"%s\","
         "\"enabled\":%s,"
@@ -1271,13 +1319,13 @@ static esp_err_t api_telegram_get_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_post_handler(httpd_req_t *req)
 {
-    char *buf = malloc(512);
+    char *buf = malloc(POST_BODY_TG_SIZE);
     if (buf == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
         return ESP_FAIL;
     }
 
-    int received = httpd_req_recv(req, buf, 511);
+    int received = httpd_req_recv(req, buf, POST_BODY_TG_SIZE - 1);
     if (received <= 0) {
         free(buf);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1317,6 +1365,18 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
         cfg.temp_high_c = (float)dval;
     if (json_get_double(buf, "\"temp_low_c\"", &dval) == 0)
         cfg.temp_low_c = (float)dval;
+
+    /* Enforce temp_high > temp_low – swap if inverted, ensure 0.5°C gap */
+    if (cfg.temp_high_c <= cfg.temp_low_c) {
+        float tmp_high = cfg.temp_high_c;
+        float tmp_low  = cfg.temp_low_c;
+        cfg.temp_low_c  = tmp_high;
+        cfg.temp_high_c = tmp_low;
+        if (cfg.temp_high_c <= cfg.temp_low_c) {
+            cfg.temp_high_c = cfg.temp_low_c + 0.5f;
+        }
+    }
+
     if (json_get_double(buf, "\"water_change_days\"", &dval) == 0)
         cfg.water_change_days = (int)dval;
     if (json_get_double(buf, "\"fertilizer_days\"", &dval) == 0)
@@ -1398,7 +1458,7 @@ static esp_err_t api_relays_get_handler(httpd_req_t *req)
     /* Build JSON response using chunked encoding */
     httpd_resp_set_type(req, "application/json");
 
-    char chunk[128];
+    char chunk[JSON_RELAY_CHUNK_SIZE];
     int n;
 
     n = snprintf(chunk, sizeof(chunk), "{\"count\":%d,\"relays\":[", RELAY_COUNT);
@@ -1424,7 +1484,7 @@ static esp_err_t api_relays_get_handler(httpd_req_t *req)
 
 static esp_err_t api_relays_post_handler(httpd_req_t *req)
 {
-    char buf[256];
+    char buf[POST_BODY_RELAY_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1449,7 +1509,10 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     /* Apply name if provided */
     char name[RELAY_NAME_MAX];
     if (json_get_str(buf, "\"name\"", name, sizeof(name)) == 0) {
-        relay_controller_set_name(idx, name);
+        /* Reject empty names */
+        if (name[0] != '\0') {
+            relay_controller_set_name(idx, name);
+        }
     }
 
     /* Respond with full relay state */
@@ -1469,7 +1532,7 @@ static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
     char escaped_status[128];
     json_escape(status, escaped_status, sizeof(escaped_status));
 
-    char buf[384];
+    char buf[JSON_DDNS_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"domain\":\"%s\","
         "\"token_set\":%s,"
@@ -1488,7 +1551,7 @@ static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
 
 static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
 {
-    char buf[256];
+    char buf[POST_BODY_DDNS_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1692,8 +1755,8 @@ esp_err_t web_server_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size       = 8192;
-    config.max_uri_handlers = 25;
+    config.stack_size       = HTTP_STACK_SIZE;
+    config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);

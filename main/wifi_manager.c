@@ -10,8 +10,10 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -38,12 +40,18 @@ static const char *TAG = "wifi_mgr";
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
+/* Reconnection back-off parameters */
+#define WIFI_BACKOFF_INITIAL_MS   1000   /* first retry after 1 s          */
+#define WIFI_BACKOFF_MAX_MS       60000  /* cap at 60 s between retries    */
+#define WIFI_INIT_TIMEOUT_MS      30000  /* give up blocking init after 30s*/
+
 /* ── Private state ───────────────────────────────────────────────── */
 
 static EventGroupHandle_t s_wifi_event_group;
 static int                s_retry_count;
 static bool               s_is_connected;
 static esp_netif_t       *s_sta_netif;
+static uint32_t           s_backoff_ms;      /* current back-off interval */
 
 /* ── Event handler ───────────────────────────────────────────────── */
 
@@ -59,16 +67,16 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
         case WIFI_EVENT_STA_DISCONNECTED: {
             s_is_connected = false;
-            if (WIFI_MAXIMUM_RETRY == 0 || s_retry_count < WIFI_MAXIMUM_RETRY) {
-                s_retry_count++;
-                ESP_LOGW(TAG, "Disconnected – retry %d/%d",
-                         s_retry_count,
-                         WIFI_MAXIMUM_RETRY ? WIFI_MAXIMUM_RETRY : -1);
-                esp_wifi_connect();
-            } else {
-                ESP_LOGE(TAG, "Maximum retries reached – giving up");
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            s_retry_count++;
+            /* Exponential back-off: double the wait each time, capped */
+            ESP_LOGW(TAG, "Disconnected – retry %d (backoff %"PRIu32" ms)",
+                     s_retry_count, s_backoff_ms);
+            vTaskDelay(pdMS_TO_TICKS(s_backoff_ms));
+            s_backoff_ms *= 2;
+            if (s_backoff_ms > WIFI_BACKOFF_MAX_MS) {
+                s_backoff_ms = WIFI_BACKOFF_MAX_MS;
             }
+            esp_wifi_connect();
             break;
         }
 
@@ -79,6 +87,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Connected! IP address: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count  = 0;
+        s_backoff_ms   = WIFI_BACKOFF_INITIAL_MS;   /* reset back-off */
         s_is_connected = true;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -91,6 +100,7 @@ esp_err_t wifi_manager_init(void)
     s_wifi_event_group = xEventGroupCreate();
     s_retry_count      = 0;
     s_is_connected     = false;
+    s_backoff_ms       = WIFI_BACKOFF_INITIAL_MS;
 
     /* ---- TCP/IP & event loop ---- */
     ESP_ERROR_CHECK(esp_netif_init());
@@ -129,19 +139,20 @@ esp_err_t wifi_manager_init(void)
 
     ESP_LOGI(TAG, "WiFi STA initialisation complete – waiting for connection …");
 
-    /* ---- Block until connected or failed ---- */
+    /* ---- Block until connected or timeout ---- */
     EventBits_t bits = xEventGroupWaitBits(
         s_wifi_event_group,
         WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
         pdFALSE, pdFALSE,
-        portMAX_DELAY);
+        pdMS_TO_TICKS(WIFI_INIT_TIMEOUT_MS));
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Successfully connected to SSID: %s", CONFIG_WIFI_SSID);
         return ESP_OK;
     }
 
-    ESP_LOGE(TAG, "Failed to connect to SSID: %s", CONFIG_WIFI_SSID);
+    ESP_LOGW(TAG, "Initial connection timed out after %d ms – "
+             "retries continue in background", WIFI_INIT_TIMEOUT_MS);
     return ESP_FAIL;
 }
 

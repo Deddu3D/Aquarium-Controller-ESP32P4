@@ -19,12 +19,6 @@ extern "C" {
 #endif
 
 /**
- * @brief Maximum number of reconnection attempts before giving up.
- *        Set to 0 for infinite retries.
- */
-#define WIFI_MAXIMUM_RETRY 5
-
-/**
  * @brief Initialise the WiFi subsystem in STA mode and attempt to connect.
  *
  * This function:
@@ -32,12 +26,14 @@ extern "C" {
  *   2. Creates the default WiFi STA network interface.
  *   3. Configures and starts WiFi using the SSID / password defined
  *      in Kconfig (menuconfig) or the compile-time defaults.
- *   4. Blocks until either a connection is established (IP obtained)
- *      or the maximum retry count is exhausted.
+ *   4. Blocks for up to 30 seconds waiting for a connection.
+ *      If the timeout expires, the function returns ESP_FAIL but
+ *      reconnection attempts continue in the background with
+ *      exponential back-off (1 s → 60 s cap).
  *
  * @return
- *   - ESP_OK            on successful connection.
- *   - ESP_FAIL          if the connection could not be established.
+ *   - ESP_OK            on successful connection within the timeout.
+ *   - ESP_FAIL          if the timeout expired (retries continue).
  *   - ESP_ERR_*         on internal error during initialisation.
  */
 esp_err_t wifi_manager_init(void);

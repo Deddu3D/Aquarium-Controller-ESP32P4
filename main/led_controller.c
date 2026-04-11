@@ -10,6 +10,8 @@
  */
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "led_strip.h"
 #include "led_controller.h"
@@ -35,23 +37,57 @@ static const char *TAG = "led_ctrl";
 /* RMT resolution – 10 MHz is the recommended value for WS2812B */
 #define RMT_LED_STRIP_RESOLUTION_HZ (10 * 1000 * 1000)
 
+/* ── Gamma correction (gamma ≈ 2.2) ──────────────────────────────── */
+
+/**
+ * Look-up table that maps a linear 0-255 brightness value to a
+ * gamma-corrected output.  This gives perceptually smooth fading
+ * because human vision responds non-linearly to luminance.
+ *
+ * Generated with: round(pow(i / 255.0, 2.2) * 255) for i in 0..255
+ */
+static const uint8_t GAMMA_LUT[256] = {
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,
+      1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,   2,
+      3,   3,   3,   3,   3,   4,   4,   4,   4,   5,   5,   5,   5,   6,   6,   6,
+      6,   7,   7,   7,   8,   8,   8,   9,   9,   9,  10,  10,  11,  11,  11,  12,
+     12,  13,  13,  13,  14,  14,  15,  15,  16,  16,  17,  17,  18,  18,  19,  19,
+     20,  20,  21,  22,  22,  23,  23,  24,  25,  25,  26,  26,  27,  28,  28,  29,
+     30,  30,  31,  32,  33,  33,  34,  35,  35,  36,  37,  38,  39,  39,  40,  41,
+     42,  43,  43,  44,  45,  46,  47,  48,  49,  49,  50,  51,  52,  53,  54,  55,
+     56,  57,  58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,
+     73,  74,  75,  76,  77,  78,  79,  81,  82,  83,  84,  85,  87,  88,  89,  90,
+     91,  93,  94,  95,  97,  98,  99, 100, 102, 103, 105, 106, 107, 109, 110, 111,
+    113, 114, 116, 117, 119, 120, 121, 123, 124, 126, 127, 129, 130, 132, 133, 135,
+    137, 138, 140, 141, 143, 145, 146, 148, 149, 151, 153, 154, 156, 158, 159, 161,
+    163, 165, 166, 168, 170, 172, 173, 175, 177, 179, 181, 182, 184, 186, 188, 190,
+    192, 194, 196, 197, 199, 201, 203, 205, 207, 209, 211, 213, 215, 217, 219, 221,
+    223, 225, 227, 229, 231, 234, 236, 238, 240, 242, 244, 246, 248, 251, 253, 255,
+};
+
 /* ── Private state ───────────────────────────────────────────────── */
 
-static led_strip_handle_t s_strip   = NULL;
-static bool               s_is_on   = false;
-static uint8_t            s_brightness = CONFIG_LED_STRIP_DEFAULT_BRIGHTNESS;
-static uint8_t            s_red     = 255;
-static uint8_t            s_green   = 255;
-static uint8_t            s_blue    = 255;
+static led_strip_handle_t  s_strip   = NULL;
+static SemaphoreHandle_t   s_mutex   = NULL;   /* protects colour/brightness state */
+static bool                s_is_on   = false;
+static uint8_t             s_brightness = CONFIG_LED_STRIP_DEFAULT_BRIGHTNESS;
+static uint8_t             s_red     = 255;
+static uint8_t             s_green   = 255;
+static uint8_t             s_blue    = 255;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 /**
- * @brief Apply brightness scaling to a single colour component.
+ * @brief Apply brightness scaling with gamma correction to a single
+ *        colour component.
+ *
+ * The brightness value is passed through a gamma 2.2 look-up table
+ * so that perceived brightness ramps smoothly for the human eye.
  */
 static inline uint8_t scale(uint8_t value, uint8_t brightness)
 {
-    return (uint8_t)(((uint16_t)value * brightness) / 255);
+    uint8_t gamma_br = GAMMA_LUT[brightness];
+    return (uint8_t)(((uint16_t)value * gamma_br) / 255);
 }
 
 /**
@@ -84,6 +120,13 @@ esp_err_t led_controller_init(void)
 {
     ESP_LOGI(TAG, "Initialising WS2812B strip – GPIO %d, %d LEDs",
              CONFIG_LED_STRIP_GPIO, CONFIG_LED_STRIP_NUM_LEDS);
+
+    /* Create mutex for thread-safe state access */
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create LED mutex");
+        return ESP_ERR_NO_MEM;
+    }
 
     /* LED strip general configuration */
     led_strip_config_t strip_config = {
@@ -126,39 +169,51 @@ esp_err_t led_controller_init(void)
 
 esp_err_t led_controller_on(void)
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_is_on = true;
     ESP_LOGI(TAG, "LED strip ON (R=%d G=%d B=%d, brightness=%d)",
              s_red, s_green, s_blue, s_brightness);
-    return apply_all();
+    esp_err_t ret = apply_all();
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
 
 esp_err_t led_controller_off(void)
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_is_on = false;
     ESP_LOGI(TAG, "LED strip OFF");
-    return apply_all();
+    esp_err_t ret = apply_all();
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
 
 esp_err_t led_controller_set_brightness(uint8_t brightness)
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_brightness = brightness;
     ESP_LOGI(TAG, "Brightness set to %d", brightness);
+    esp_err_t ret = ESP_OK;
     if (s_is_on) {
-        return apply_all();
+        ret = apply_all();
     }
-    return ESP_OK;
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
 
 esp_err_t led_controller_set_color(uint8_t red, uint8_t green, uint8_t blue)
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_red   = red;
     s_green = green;
     s_blue  = blue;
     ESP_LOGI(TAG, "Color set to R=%d G=%d B=%d", red, green, blue);
+    esp_err_t ret = ESP_OK;
     if (s_is_on) {
-        return apply_all();
+        ret = apply_all();
     }
-    return ESP_OK;
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
 
 esp_err_t led_controller_set_pixel(uint16_t index, uint8_t red, uint8_t green, uint8_t blue)
@@ -187,19 +242,27 @@ esp_err_t led_controller_refresh(void)
 
 uint8_t led_controller_get_brightness(void)
 {
-    return s_brightness;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    uint8_t br = s_brightness;
+    xSemaphoreGive(s_mutex);
+    return br;
 }
 
 void led_controller_get_color(uint8_t *red, uint8_t *green, uint8_t *blue)
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     if (red)   *red   = s_red;
     if (green) *green = s_green;
     if (blue)  *blue  = s_blue;
+    xSemaphoreGive(s_mutex);
 }
 
 bool led_controller_is_on(void)
 {
-    return s_is_on;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool on = s_is_on;
+    xSemaphoreGive(s_mutex);
+    return on;
 }
 
 uint16_t led_controller_get_num_leds(void)

@@ -27,6 +27,9 @@ static const char *TAG = "ds18b20";
 /* Maximum number of DS18B20 devices we support on one bus */
 #define MAX_DS18B20  4
 
+/* Moving average window size – smooths out sensor noise */
+#define TEMP_AVG_WINDOW  3
+
 static ds18b20_device_handle_t s_devices[MAX_DS18B20];
 static int                     s_device_count;
 static onewire_bus_handle_t    s_bus;
@@ -35,6 +38,11 @@ static onewire_bus_handle_t    s_bus;
 static SemaphoreHandle_t s_mutex;
 static float s_temperature;
 static bool  s_valid;
+
+/* Moving average ring buffer */
+static float s_avg_buf[TEMP_AVG_WINDOW];
+static int   s_avg_idx;
+static int   s_avg_count;
 
 /* ── Reading task ────────────────────────────────────────────────── */
 
@@ -57,11 +65,29 @@ static void temperature_task(void *arg)
         float temp = 0.0f;
         err = ds18b20_get_temperature(s_devices[0], &temp);
         if (err == ESP_OK) {
+            /* Apply calibration offset from Kconfig */
+            temp += ((float)CONFIG_DS18B20_CALIBRATION_OFFSET_CENTI) / 100.0f;
+
+            /* Moving average – push new sample into ring buffer */
+            s_avg_buf[s_avg_idx] = temp;
+            s_avg_idx = (s_avg_idx + 1) % TEMP_AVG_WINDOW;
+            if (s_avg_count < TEMP_AVG_WINDOW) {
+                s_avg_count++;
+            }
+
+            /* Compute average of available samples */
+            float sum = 0.0f;
+            for (int i = 0; i < s_avg_count; i++) {
+                sum += s_avg_buf[i];
+            }
+            float avg = sum / (float)s_avg_count;
+
             xSemaphoreTake(s_mutex, portMAX_DELAY);
-            s_temperature = temp;
+            s_temperature = avg;
             s_valid = true;
             xSemaphoreGive(s_mutex);
-            ESP_LOGI(TAG, "Water temperature: %.2f °C", temp);
+            ESP_LOGI(TAG, "Water temperature: %.2f °C (avg of %d)",
+                     avg, s_avg_count);
         } else {
             ESP_LOGW(TAG, "Read failed: %s", esp_err_to_name(err));
             xSemaphoreTake(s_mutex, portMAX_DELAY);

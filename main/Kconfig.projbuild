@@ -64,6 +64,16 @@ menu "Aquarium Temperature Sensor Settings"
             holds 288 samples; at the default 300 s (5 min) interval
             this gives exactly 24 hours of data.
 
+    config DS18B20_CALIBRATION_OFFSET_CENTI
+        int "DS18B20 calibration offset (hundredths of °C)"
+        default 0
+        range -500 500
+        help
+            Constant offset added to every DS18B20 reading to compensate
+            for sensor-to-sensor manufacturing variance.
+            Value is in hundredths of a degree Celsius:
+            e.g. -50 means subtract 0.50 °C, 25 means add 0.25 °C.
+
 endmenu
 
 menu "Aquarium Relay Settings"
