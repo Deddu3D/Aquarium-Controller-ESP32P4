@@ -9,6 +9,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 
@@ -21,6 +22,7 @@
 
 #include "wifi_manager.h"
 #include "web_server.h"
+#include "led_controller.h"
 
 static const char *TAG = "web_srv";
 
@@ -97,13 +99,16 @@ static const char STATUS_HTML_TEMPLATE[] =
     "* { box-sizing: border-box; margin: 0; padding: 0; }"
     "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
     "       background: #0f172a; color: #e2e8f0; min-height: 100vh;"
-    "       display: flex; justify-content: center; align-items: center; }"
+    "       display: flex; flex-direction: column; align-items: center; padding: 1rem; }"
     ".card { background: #1e293b; border-radius: 16px; padding: 2rem;"
-    "        max-width: 420px; width: 90%%; box-shadow: 0 8px 32px rgba(0,0,0,.4); }"
+    "        max-width: 420px; width: 90%%; box-shadow: 0 8px 32px rgba(0,0,0,.4);"
+    "        margin-bottom: 1rem; }"
     "h1 { font-size: 1.4rem; text-align: center; margin-bottom: 1.2rem;"
     "     color: #38bdf8; }"
-    ".row { display: flex; justify-content: space-between; padding: .6rem 0;"
-    "       border-bottom: 1px solid #334155; }"
+    "h2 { font-size: 1.1rem; text-align: center; margin-bottom: 1rem;"
+    "     color: #38bdf8; }"
+    ".row { display: flex; justify-content: space-between; align-items: center;"
+    "       padding: .6rem 0; border-bottom: 1px solid #334155; }"
     ".row:last-child { border-bottom: none; }"
     ".label { color: #94a3b8; }"
     ".value { font-weight: 600; }"
@@ -113,9 +118,26 @@ static const char STATUS_HTML_TEMPLATE[] =
     "           background: #38bdf8; color: #0f172a; border: none;"
     "           border-radius: 8px; font-size: 1rem; cursor: pointer; }"
     ".refresh:hover { background: #7dd3fc; }"
+    /* LED control styles */
+    ".toggle { position: relative; width: 50px; height: 26px; }"
+    ".toggle input { opacity: 0; width: 0; height: 0; }"
+    ".slider { position: absolute; cursor: pointer; top: 0; left: 0;"
+    "          right: 0; bottom: 0; background: #475569; border-radius: 26px;"
+    "          transition: .3s; }"
+    ".slider:before { content: ''; position: absolute; height: 20px; width: 20px;"
+    "                 left: 3px; bottom: 3px; background: white; border-radius: 50%%;"
+    "                 transition: .3s; }"
+    ".toggle input:checked + .slider { background: #4ade80; }"
+    ".toggle input:checked + .slider:before { transform: translateX(24px); }"
+    "input[type=range] { width: 100%%; accent-color: #38bdf8; }"
+    "input[type=color] { width: 50px; height: 30px; border: none;"
+    "                     border-radius: 6px; cursor: pointer; background: none; }"
+    ".led-preview { width: 100%%; height: 24px; border-radius: 8px;"
+    "               margin-top: .5rem; border: 1px solid #334155; }"
     "</style>"
     "</head>"
     "<body>"
+    /* WiFi status card */
     "<div class=\"card\">"
     "<h1>&#x1F41F; Aquarium Controller</h1>"
     "<div class=\"row\"><span class=\"label\">Status</span>"
@@ -130,8 +152,61 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"value\">%" PRIu32 " bytes</span></div>"
     "<div class=\"row\"><span class=\"label\">Uptime</span>"
     "<span class=\"value\">%s</span></div>"
-    "<button class=\"refresh\" onclick=\"location.reload()\">Refresh</button>"
     "</div>"
+    /* LED control card */
+    "<div class=\"card\" id=\"led-card\">"
+    "<h2>&#x1F4A1; LED Strip Control</h2>"
+    "<div class=\"row\"><span class=\"label\">Power</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"led-on\""
+    " onchange=\"sendLed()\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Brightness</span>"
+    "<span class=\"value\" id=\"br-val\">128</span></div>"
+    "<div class=\"row\"><input type=\"range\" id=\"led-br\" min=\"0\""
+    " max=\"255\" value=\"128\" oninput=\"document.getElementById("
+    "'br-val').textContent=this.value\" onchange=\"sendLed()\"></div>"
+    "<div class=\"row\"><span class=\"label\">Colour</span>"
+    "<input type=\"color\" id=\"led-color\" value=\"#ffffff\""
+    " onchange=\"sendLed()\"></div>"
+    "<div class=\"led-preview\" id=\"led-preview\"></div>"
+    "</div>"
+    /* Scripts */
+    "<script>"
+    "function hexToRgb(h){"
+    "  var r=parseInt(h.slice(1,3),16),"
+    "      g=parseInt(h.slice(3,5),16),"
+    "      b=parseInt(h.slice(5,7),16);"
+    "  return{r:r,g:g,b:b};}"
+    "function rgbToHex(r,g,b){"
+    "  return'#'+[r,g,b].map(function(x){"
+    "    var h=x.toString(16);return h.length===1?'0'+h:h;}).join('');}"
+    "function updatePreview(){"
+    "  var on=document.getElementById('led-on').checked;"
+    "  var br=parseInt(document.getElementById('led-br').value);"
+    "  var c=hexToRgb(document.getElementById('led-color').value);"
+    "  if(!on){document.getElementById('led-preview').style.background='#1e293b';return;}"
+    "  var s=br/255;"
+    "  document.getElementById('led-preview').style.background="
+    "    'rgb('+Math.round(c.r*s)+','+Math.round(c.g*s)+','+Math.round(c.b*s)+')';}"
+    "function sendLed(){"
+    "  updatePreview();"
+    "  var on=document.getElementById('led-on').checked;"
+    "  var br=parseInt(document.getElementById('led-br').value);"
+    "  var c=hexToRgb(document.getElementById('led-color').value);"
+    "  fetch('/api/leds',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({on:on,brightness:br,r:c.r,g:c.g,b:c.b})"
+    "  }).then(function(r){return r.json();}).then(function(d){"
+    "    console.log('LED updated',d);}).catch(function(e){"
+    "    console.error('LED error',e);});}"
+    "fetch('/api/leds').then(function(r){return r.json();})"
+    ".then(function(d){"
+    "  document.getElementById('led-on').checked=d.on;"
+    "  document.getElementById('led-br').value=d.brightness;"
+    "  document.getElementById('br-val').textContent=d.brightness;"
+    "  document.getElementById('led-color').value=rgbToHex(d.r,d.g,d.b);"
+    "  updatePreview();});"
+    "</script>"
     "</body></html>";
 
 static esp_err_t root_get_handler(httpd_req_t *req)
@@ -147,7 +222,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     snprintf(uptime, sizeof(uptime), "%dh %dm %ds", h, m, s);
 
     /* Render HTML */
-    char buf[2048];
+    char buf[4096];
     int len = snprintf(buf, sizeof(buf), STATUS_HTML_TEMPLATE,
                        ws.connected ? "ok" : "err",
                        ws.connected ? "Connected" : "Disconnected",
@@ -192,6 +267,102 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+/* ── LED status endpoint (/api/leds  GET) ─────────────────────────── */
+
+static esp_err_t api_leds_get_handler(httpd_req_t *req)
+{
+    uint8_t r, g, b;
+    led_controller_get_color(&r, &g, &b);
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"on\":%s,"
+        "\"brightness\":%d,"
+        "\"r\":%d,\"g\":%d,\"b\":%d,"
+        "\"num_leds\":%d}",
+        led_controller_is_on() ? "true" : "false",
+        led_controller_get_brightness(),
+        r, g, b,
+        led_controller_get_num_leds());
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── LED control endpoint (/api/leds  POST) ──────────────────────── */
+
+/**
+ * @brief Simple integer parser – find "key":value in a JSON-like string.
+ *        Returns -1 if key not found.
+ */
+static int json_get_int(const char *json, const char *key)
+{
+    const char *p = strstr(json, key);
+    if (!p) return -1;
+    p += strlen(key);
+    /* skip possible ": */
+    while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+    return atoi(p);
+}
+
+/**
+ * @brief Check for "key":true / "key":false in a JSON-like string.
+ *        Returns 1 for true, 0 for false, -1 if not found.
+ */
+static int json_get_bool(const char *json, const char *key)
+{
+    const char *p = strstr(json, key);
+    if (!p) return -1;
+    p += strlen(key);
+    while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+    if (strncmp(p, "true", 4) == 0) return 1;
+    if (strncmp(p, "false", 5) == 0) return 0;
+    return -1;
+}
+
+static esp_err_t api_leds_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "LED POST body: %s", buf);
+
+    /* Parse fields */
+    int on_val = json_get_bool(buf, "\"on\"");
+    int br_val = json_get_int(buf, "\"brightness\"");
+    int r_val  = json_get_int(buf, "\"r\"");
+    int g_val  = json_get_int(buf, "\"g\"");
+    int b_val  = json_get_int(buf, "\"b\"");
+
+    /* Apply colour if all three components are present */
+    if (r_val >= 0 && g_val >= 0 && b_val >= 0) {
+        led_controller_set_color(
+            (uint8_t)(r_val > 255 ? 255 : r_val),
+            (uint8_t)(g_val > 255 ? 255 : g_val),
+            (uint8_t)(b_val > 255 ? 255 : b_val));
+    }
+
+    /* Apply brightness */
+    if (br_val >= 0) {
+        led_controller_set_brightness((uint8_t)(br_val > 255 ? 255 : br_val));
+    }
+
+    /* Apply on/off */
+    if (on_val == 1) {
+        led_controller_on();
+    } else if (on_val == 0) {
+        led_controller_off();
+    }
+
+    /* Respond with updated state */
+    return api_leds_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -205,6 +376,20 @@ static const httpd_uri_t uri_api_status = {
     .uri      = "/api/status",
     .method   = HTTP_GET,
     .handler  = api_status_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_leds_get = {
+    .uri      = "/api/leds",
+    .method   = HTTP_GET,
+    .handler  = api_leds_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_leds_post = {
+    .uri      = "/api/leds",
+    .method   = HTTP_POST,
+    .handler  = api_leds_post_handler,
     .user_ctx = NULL,
 };
 
@@ -229,6 +414,8 @@ esp_err_t web_server_start(void)
 
     httpd_register_uri_handler(s_server, &uri_root);
     httpd_register_uri_handler(s_server, &uri_api_status);
+    httpd_register_uri_handler(s_server, &uri_api_leds_get);
+    httpd_register_uri_handler(s_server, &uri_api_leds_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

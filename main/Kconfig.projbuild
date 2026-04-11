@@ -13,3 +13,27 @@ menu "Aquarium WiFi Settings"
             Password for the WiFi access point.
 
 endmenu
+
+menu "Aquarium LED Strip Settings"
+
+    config LED_STRIP_GPIO
+        int "LED strip data GPIO"
+        default 8
+        help
+            GPIO pin connected to the data line of the WS2812B LED strip.
+
+    config LED_STRIP_NUM_LEDS
+        int "Number of LEDs"
+        default 105
+        range 1 1024
+        help
+            Total number of LEDs in the WS2812B strip.
+
+    config LED_STRIP_DEFAULT_BRIGHTNESS
+        int "Default brightness (0-255)"
+        default 128
+        range 0 255
+        help
+            Default brightness level for the LED strip at startup.
+
+endmenu
