@@ -29,6 +29,34 @@ static httpd_handle_t s_server = NULL;
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 /**
+ * @brief Escape a string for safe inclusion in JSON output.
+ *
+ * Escapes quotes, backslashes, and control characters.
+ */
+static void json_escape(const char *src, char *dst, size_t dst_size)
+{
+    size_t j = 0;
+    for (size_t i = 0; src[i] != '\0' && j + 6 < dst_size; i++) {
+        char c = src[i];
+        switch (c) {
+        case '"':  dst[j++] = '\\'; dst[j++] = '"';  break;
+        case '\\': dst[j++] = '\\'; dst[j++] = '\\'; break;
+        case '\n': dst[j++] = '\\'; dst[j++] = 'n';  break;
+        case '\r': dst[j++] = '\\'; dst[j++] = 'r';  break;
+        case '\t': dst[j++] = '\\'; dst[j++] = 't';  break;
+        default:
+            if ((unsigned char)c < 0x20) {
+                j += snprintf(dst + j, dst_size - j, "\\u%04x", (unsigned char)c);
+            } else {
+                dst[j++] = c;
+            }
+            break;
+        }
+    }
+    dst[j] = '\0';
+}
+
+/**
  * @brief Fill a wifi_status_t struct with current WiFi information.
  */
 typedef struct {
@@ -142,7 +170,10 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
 
     int64_t uptime_s = esp_timer_get_time() / 1000000;
 
-    char buf[256];
+    char escaped_ssid[128];
+    json_escape(ws.connected ? ws.ssid : "", escaped_ssid, sizeof(escaped_ssid));
+
+    char buf[384];
     int len = snprintf(buf, sizeof(buf),
         "{\"connected\":%s,"
         "\"ip\":\"%s\","
@@ -152,7 +183,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
         "\"uptime_s\":%" PRId64 "}",
         ws.connected ? "true" : "false",
         ws.connected ? ws.ip : "",
-        ws.connected ? ws.ssid : "",
+        escaped_ssid,
         ws.connected ? ws.rssi : 0,
         esp_get_free_heap_size(),
         uptime_s);
