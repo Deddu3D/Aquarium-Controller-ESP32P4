@@ -54,3 +54,8 @@ CONFIG_FREERTOS_HZ=1000
 # ── WiFi default settings ──────────────────────────────────────────
 CONFIG_WIFI_SSID="your_ssid"
 CONFIG_WIFI_PASSWORD="your_password"
+
+# ── LED strip (WS2812B) ───────────────────────────────────────────
+CONFIG_LED_STRIP_GPIO=8
+CONFIG_LED_STRIP_NUM_LEDS=105
+CONFIG_LED_STRIP_DEFAULT_BRIGHTNESS=128

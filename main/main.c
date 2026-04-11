@@ -24,6 +24,7 @@
 
 #include "wifi_manager.h"
 #include "web_server.h"
+#include "led_controller.h"
 
 static const char *TAG = "aquarium";
 
@@ -51,7 +52,15 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
     }
 
-    /* ── 3. Start HTTP status server ─────────────────────────── */
+    /* ── 3. Initialise LED strip ────────────────────────────────── */
+    ret = led_controller_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LED strip init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "LED strip ready");
+    }
+
+    /* ── 4. Start HTTP status server ─────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -59,7 +68,7 @@ void app_main(void)
         }
     }
 
-    /* ── 4. Main application loop ─────────────────────────────── */
+    /* ── 5. Main application loop ─────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
