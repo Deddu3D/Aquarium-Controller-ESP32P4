@@ -9,5 +9,8 @@ dependencies:
   ## LED Strip: addressable LED driver (WS2812B) via RMT peripheral
   espressif/led_strip:
     version: "^3.0.0"
+  ## DS18B20: digital temperature sensor (1-Wire) via RMT peripheral
+  espressif/ds18b20:
+    version: "^0.3.0"
   idf:
     version: ">=5.5.0"

@@ -37,3 +37,21 @@ menu "Aquarium LED Strip Settings"
             Default brightness level for the LED strip at startup.
 
 endmenu
+
+menu "Aquarium Temperature Sensor Settings"
+
+    config DS18B20_GPIO
+        int "DS18B20 data GPIO"
+        default 21
+        help
+            GPIO pin connected to the data line of the DS18B20 temperature sensor.
+            A 4.7 kΩ pull-up resistor to 3.3 V is recommended on this line.
+
+    config DS18B20_READ_INTERVAL_MS
+        int "Temperature read interval (ms)"
+        default 5000
+        range 1000 60000
+        help
+            How often the DS18B20 sensor is read, in milliseconds.
+
+endmenu

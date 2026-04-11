@@ -27,6 +27,7 @@
 #include "led_scenes.h"
 #include "geolocation.h"
 #include "sun_position.h"
+#include "temperature_sensor.h"
 
 static const char *TAG = "web_srv";
 
@@ -165,6 +166,12 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Uptime</span>"
     "<span class=\"value\">%s</span></div>"
     "</div>"
+    /* Water temperature card */
+    "<div class=\"card\" id=\"temp-card\">"
+    "<h2>&#x1F321;&#xFE0F; Water Temperature</h2>"
+    "<div class=\"row\"><span class=\"label\">Temperature</span>"
+    "<span class=\"value\" id=\"temp-val\">--</span></div>"
+    "</div>"
     /* LED control card */
     "<div class=\"card\" id=\"led-card\">"
     "<h2>&#x1F4A1; LED Strip Control</h2>"
@@ -288,6 +295,15 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    console.log('Geo updated',d);"
     "  }).catch(function(e){console.error('Geo error',e);});}"
     "loadGeo();"
+    "function loadTemp(){"
+    "  fetch('/api/temperature').then(function(r){return r.json();})"
+    "  .then(function(d){"
+    "    var el=document.getElementById('temp-val');"
+    "    if(d.valid){el.textContent=d.temperature_c.toFixed(2)+' \\u00B0C';"
+    "      el.className='value ok';}"
+    "    else{el.textContent='No sensor';el.className='value err';}"
+    "  }).catch(function(e){console.error('Temp error',e);});}"
+    "loadTemp();setInterval(loadTemp,5000);"
     "</script>"
     "</body></html>";
 
@@ -535,6 +551,23 @@ static esp_err_t api_scenes_post_handler(httpd_req_t *req)
     return api_scenes_get_handler(req);
 }
 
+/* ── Temperature GET endpoint (/api/temperature  GET) ────────────── */
+
+static esp_err_t api_temperature_get_handler(httpd_req_t *req)
+{
+    float temp_c = 0.0f;
+    bool valid = temperature_sensor_get(&temp_c);
+
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"valid\":%s,\"temperature_c\":%.2f}",
+        valid ? "true" : "false",
+        valid ? temp_c : 0.0f);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
 /* ── Geolocation GET endpoint (/api/geolocation  GET) ────────────── */
 
 static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
@@ -686,6 +719,13 @@ static const httpd_uri_t uri_api_geo_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_temp_get = {
+    .uri      = "/api/temperature",
+    .method   = HTTP_GET,
+    .handler  = api_temperature_get_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -697,6 +737,7 @@ esp_err_t web_server_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size       = 8192;
+    config.max_uri_handlers = 16;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
@@ -714,6 +755,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scenes_post);
     httpd_register_uri_handler(s_server, &uri_api_geo_get);
     httpd_register_uri_handler(s_server, &uri_api_geo_post);
+    httpd_register_uri_handler(s_server, &uri_api_temp_get);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

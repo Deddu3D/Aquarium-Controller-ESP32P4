@@ -30,6 +30,7 @@
 #include "led_controller.h"
 #include "led_scenes.h"
 #include "geolocation.h"
+#include "temperature_sensor.h"
 
 static const char *TAG = "aquarium";
 
@@ -99,7 +100,15 @@ void app_main(void)
         }
     }
 
-    /* ── 6. Start HTTP status server ─────────────────────────── */
+    /* ── 6. Initialise DS18B20 water temperature sensor ─────────── */
+    ret = temperature_sensor_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DS18B20 init failed (0x%x) – continuing without temperature", ret);
+    } else {
+        ESP_LOGI(TAG, "DS18B20 temperature sensor ready");
+    }
+
+    /* ── 7. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -107,7 +116,7 @@ void app_main(void)
         }
     }
 
-    /* ── 7. Main application loop ─────────────────────────────── */
+    /* ── 8. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
