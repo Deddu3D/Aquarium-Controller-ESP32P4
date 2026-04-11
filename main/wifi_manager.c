@@ -9,6 +9,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "esp_log.h"
@@ -42,6 +43,7 @@ static const char *TAG = "wifi_mgr";
 static EventGroupHandle_t s_wifi_event_group;
 static int                s_retry_count;
 static bool               s_is_connected;
+static esp_netif_t       *s_sta_netif;
 
 /* ── Event handler ───────────────────────────────────────────────── */
 
@@ -93,7 +95,7 @@ esp_err_t wifi_manager_init(void)
     /* ---- TCP/IP & event loop ---- */
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+    s_sta_netif = esp_netif_create_default_wifi_sta();
 
     /* ---- WiFi driver init ---- */
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -146,4 +148,22 @@ esp_err_t wifi_manager_init(void)
 bool wifi_manager_is_connected(void)
 {
     return s_is_connected;
+}
+
+void wifi_manager_get_ip_str(char *buf, size_t len)
+{
+    if (!buf || len == 0) {
+        return;
+    }
+
+    if (s_is_connected && s_sta_netif) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
+            snprintf(buf, len, IPSTR, IP2STR(&ip_info.ip));
+            return;
+        }
+    }
+
+    strncpy(buf, "0.0.0.0", len - 1);
+    buf[len - 1] = '\0';
 }

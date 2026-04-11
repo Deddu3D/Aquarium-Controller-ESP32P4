@@ -45,6 +45,16 @@ esp_err_t wifi_manager_init(void);
  */
 bool wifi_manager_is_connected(void);
 
+/**
+ * @brief Copy the current IP address into @p buf as a dotted-decimal string.
+ *
+ * If the station is not connected the buffer is set to "0.0.0.0".
+ *
+ * @param buf   Destination buffer (at least 16 bytes recommended).
+ * @param len   Size of @p buf.
+ */
+void wifi_manager_get_ip_str(char *buf, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

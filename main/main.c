@@ -23,6 +23,7 @@
 #include "nvs_flash.h"
 
 #include "wifi_manager.h"
+#include "web_server.h"
 
 static const char *TAG = "aquarium";
 
@@ -50,7 +51,15 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
     }
 
-    /* ── 3. Main application loop ─────────────────────────────── */
+    /* ── 3. Start HTTP status server ─────────────────────────── */
+    if (wifi_manager_is_connected()) {
+        ret = web_server_start();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "HTTP server start failed (0x%x)", ret);
+        }
+    }
+
+    /* ── 4. Main application loop ─────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
