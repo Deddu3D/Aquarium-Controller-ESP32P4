@@ -2,9 +2,9 @@
 dependencies:
   ## ESP-Hosted: provides the SDIO transport layer between ESP32-P4 and ESP32-C6
   espressif/esp_hosted:
-    version: "^0.0.34"
+    version: "^2.0.0"
   ## ESP WiFi Remote: transparent WiFi API delegation to the coprocessor
   espressif/esp_wifi_remote:
-    version: "^0.5.2"
+    version: "^1.0.0"
   idf:
     version: ">=5.5.0"
