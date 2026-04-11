@@ -90,8 +90,8 @@ static void get_wifi_status(wifi_status_t *out)
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
 /*
- * Buffer size for the rendered HTML page.  STATUS_HTML_TEMPLATE is roughly
- * 5 100 bytes after printf substitution, so 6 KiB gives comfortable margin.
+ * Buffer size for the rendered HTML page.  The template is roughly
+ * 6200 bytes after printf substitution, so 8 KiB gives comfortable margin.
  */
 #define HTML_BUF_SIZE 8192
 
