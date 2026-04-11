@@ -34,6 +34,7 @@
 #include "temperature_history.h"
 #include "telegram_notify.h"
 #include "relay_controller.h"
+#include "duckdns.h"
 
 static const char *TAG = "aquarium";
 
@@ -148,7 +149,15 @@ void app_main(void)
         ESP_LOGI(TAG, "Relay controller ready (4 channels)");
     }
 
-    /* ── 9. Start HTTP status server ─────────────────────────────── */
+    /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
+    ret = duckdns_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DuckDNS init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "DuckDNS client ready");
+    }
+
+    /* ── 10. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -156,7 +165,7 @@ void app_main(void)
         }
     }
 
-    /* ── 10. Main application loop ─────────────────────────────────── */
+    /* ── 11. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {

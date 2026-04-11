@@ -31,6 +31,7 @@
 #include "temperature_history.h"
 #include "telegram_notify.h"
 #include "relay_controller.h"
+#include "duckdns.h"
 
 static const char *TAG = "web_srv";
 
@@ -101,7 +102,7 @@ static void get_wifi_status(wifi_status_t *out)
  * with mobile-optimized UI and temperature chart; 40 KiB gives
  * comfortable margin.
  */
-#define HTML_BUF_SIZE 49152
+#define HTML_BUF_SIZE 53248
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -212,6 +213,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"tab-icon\">&#x1F50C;</span>Rel&#xE8;</button>"
     "<button class=\"tab\" onclick=\"switchTab(3)\">"
     "<span class=\"tab-icon\">&#x1F4F1;</span>Telegram</button>"
+    "<button class=\"tab\" onclick=\"switchTab(4)\">"
+    "<span class=\"tab-icon\">&#x1F310;</span>Network</button>"
     "</div>"
     /* ════════════════════════════════════════════════════════════════
      *  Panel 0 – Dashboard (Riepilogo & Azioni Rapide)
@@ -412,6 +415,36 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"btn\" onclick=\"saveTg()\">Save Settings</button>"
     "</div></div></div>"
     "</div>"
+    /* ════════════════════════════════════════════════════════════════
+     *  Panel 4 – Network (DuckDNS)
+     * ════════════════════════════════════════════════════════════════ */
+    "<div class=\"panel\" id=\"p4\">"
+    "<div class=\"card open\" id=\"ddns-card\">"
+    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F310; DuckDNS</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"card-body\"><div class=\"card-inner\">"
+    "<div class=\"row\"><span class=\"label\">Domain</span></div>"
+    "<div class=\"row\" style=\"border-bottom:none;padding-top:0\">"
+    "<input type=\"text\" class=\"fin fin-wide\" id=\"ddns-domain\""
+    " placeholder=\"myaquarium\"></div>"
+    "<div class=\"row\" style=\"padding-top:0\">"
+    "<span class=\"label\" style=\"font-size:.8rem;color:#64748b\">"
+    ".duckdns.org</span></div>"
+    "<div class=\"row\"><span class=\"label\">Token</span></div>"
+    "<div class=\"row\" style=\"border-bottom:none;padding-top:0\">"
+    "<input type=\"password\" class=\"fin fin-wide\" id=\"ddns-token\""
+    " placeholder=\"Not configured\"></div>"
+    "<div class=\"row\"><span class=\"label\">Enabled</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"ddns-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Last status</span>"
+    "<span class=\"value\" id=\"ddns-status\">--</span></div>"
+    "<button class=\"btn btn-sm\" onclick=\"testDdns()\">"
+    "&#x1F504; Update Now</button>"
+    "<button class=\"btn\" onclick=\"saveDdns()\">Save Settings</button>"
+    "</div></div></div>"
+    "</div>"
     /* ── end panels ── */
     "</div>"
     /* Toast element */
@@ -431,7 +464,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "var _tab=0;"
     "function switchTab(n){"
     "  var tabs=document.querySelectorAll('.tab');"
-    "  for(var i=0;i<4;i++){"
+    "  for(var i=0;i<5;i++){"
     "    $('p'+i).classList.remove('active');"
     "    tabs[i].classList.remove('active')}"
     "  $('p'+n).classList.add('active');"
@@ -440,7 +473,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  if(n===0){loadTemp();loadHistory();loadQScene();loadQRelays()}"
     "  if(n===1){loadLeds();loadScene();loadGeo()}"
     "  if(n===2){loadRelays()}"
-    "  if(n===3){loadTg()}}"
+    "  if(n===3){loadTg()}"
+    "  if(n===4){loadDdns()}}"
     /* ── Color helpers ── */
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
@@ -662,6 +696,41 @@ static const char STATUS_HTML_TEMPLATE[] =
     "      row.appendChild(lbl);row.appendChild(tg);"
     "      c.appendChild(row)})})"
     "  .catch(function(){})}"
+    /* ── DuckDNS (Network tab) ── */
+    "function loadDdns(){"
+    "  fetch('/api/duckdns').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if(d.domain){$('ddns-domain').value=d.domain}"
+    "    if(d.token_set){$('ddns-token').placeholder="
+    "      'Token configured \\u2713'}"
+    "    $('ddns-en').checked=d.enabled;"
+    "    $('ddns-status').textContent=d.last_status||'--';"
+    "    $('ddns-status').className='value '+"
+    "      (d.last_status&&d.last_status.indexOf('OK')===0?'ok':'err')"
+    "  })}"
+    "function saveDdns(){"
+    "  var data={enabled:$('ddns-en').checked};"
+    "  var dom=$('ddns-domain').value.trim();"
+    "  if(dom.length>0){data.domain=dom}"
+    "  var tk=$('ddns-token').value;"
+    "  if(tk.length>0){data.token=tk}"
+    "  fetch('/api/duckdns',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(d){"
+    "    if(d.token_set){$('ddns-token').value='';"
+    "      $('ddns-token').placeholder='Token configured \\u2713'}"
+    "    $('ddns-status').textContent=d.last_status||'--';"
+    "    toast('DuckDNS settings saved',1)"
+    "  }).catch(function(){toast('Save failed',0)})}"
+    "function testDdns(){"
+    "  $('ddns-status').textContent='updating\\u2026';"
+    "  fetch('/api/duckdns_update',{method:'POST'})"
+    "  .then(function(r){return r.json()}).then(function(d){"
+    "    $('ddns-status').textContent=d.last_status||'--';"
+    "    $('ddns-status').className='value '+(d.ok?'ok':'err');"
+    "    toast(d.ok?'DuckDNS updated!':'Update failed',d.ok)"
+    "  }).catch(function(){toast('Update error',0)})}"
     /* ── Temperature ── */
     "function loadTemp(){"
     "  fetch('/api/temperature').then(function(r){return r.json()})"
@@ -1387,6 +1456,90 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     return api_relays_get_handler(req);
 }
 
+/* ── DuckDNS GET endpoint (/api/duckdns  GET) ───────────────────── */
+
+static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
+{
+    duckdns_config_t cfg = duckdns_get_config();
+
+    char escaped_domain[128];
+    json_escape(cfg.domain, escaped_domain, sizeof(escaped_domain));
+
+    const char *status = duckdns_get_last_status();
+    char escaped_status[128];
+    json_escape(status, escaped_status, sizeof(escaped_status));
+
+    char buf[384];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"domain\":\"%s\","
+        "\"token_set\":%s,"
+        "\"enabled\":%s,"
+        "\"last_status\":\"%s\"}",
+        escaped_domain,
+        cfg.token[0] != '\0' ? "true" : "false",
+        cfg.enabled ? "true" : "false",
+        escaped_status);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── DuckDNS POST endpoint (/api/duckdns  POST) ─────────────────── */
+
+static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "DuckDNS POST body: %s", buf);
+
+    duckdns_config_t cfg = duckdns_get_config();
+
+    char str_val[64];
+    if (json_get_str(buf, "\"domain\"", str_val, sizeof(str_val)) == 0) {
+        strncpy(cfg.domain, str_val, sizeof(cfg.domain) - 1);
+        cfg.domain[sizeof(cfg.domain) - 1] = '\0';
+    }
+    if (json_get_str(buf, "\"token\"", str_val, sizeof(str_val)) == 0) {
+        strncpy(cfg.token, str_val, sizeof(cfg.token) - 1);
+        cfg.token[sizeof(cfg.token) - 1] = '\0';
+    }
+
+    int bval = json_get_bool(buf, "\"enabled\"");
+    if (bval >= 0) {
+        cfg.enabled = bval;
+    }
+
+    duckdns_set_config(&cfg);
+
+    return api_duckdns_get_handler(req);
+}
+
+/* ── DuckDNS update now endpoint (/api/duckdns_update  POST) ─────── */
+
+static esp_err_t api_duckdns_update_handler(httpd_req_t *req)
+{
+    esp_err_t err = duckdns_update_now();
+
+    const char *status = duckdns_get_last_status();
+    char escaped_status[128];
+    json_escape(status, escaped_status, sizeof(escaped_status));
+
+    char resp[192];
+    int len = snprintf(resp, sizeof(resp),
+        "{\"ok\":%s,\"last_status\":\"%s\"}",
+        err == ESP_OK ? "true" : "false",
+        escaped_status);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, len);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -1508,6 +1661,27 @@ static const httpd_uri_t uri_api_relays_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_ddns_get = {
+    .uri      = "/api/duckdns",
+    .method   = HTTP_GET,
+    .handler  = api_duckdns_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ddns_post = {
+    .uri      = "/api/duckdns",
+    .method   = HTTP_POST,
+    .handler  = api_duckdns_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ddns_update = {
+    .uri      = "/api/duckdns_update",
+    .method   = HTTP_POST,
+    .handler  = api_duckdns_update_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -1519,7 +1693,7 @@ esp_err_t web_server_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size       = 8192;
-    config.max_uri_handlers = 22;
+    config.max_uri_handlers = 25;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
@@ -1546,6 +1720,9 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_tg_fert);
     httpd_register_uri_handler(s_server, &uri_api_relays_get);
     httpd_register_uri_handler(s_server, &uri_api_relays_post);
+    httpd_register_uri_handler(s_server, &uri_api_ddns_get);
+    httpd_register_uri_handler(s_server, &uri_api_ddns_post);
+    httpd_register_uri_handler(s_server, &uri_api_ddns_update);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;
