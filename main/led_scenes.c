@@ -137,17 +137,6 @@ static void interp_kf(const keyframe_t *kf, int count, float t,
 /* ── Render functions ────────────────────────────────────────────── */
 
 /**
- * @brief Render static daylight (cool-white) across the whole strip.
- */
-static void render_daylight(uint16_t num_leds)
-{
-    for (uint16_t i = 0; i < num_leds; i++) {
-        led_controller_set_pixel(i, 200, 220, 255);
-    }
-    led_controller_refresh();
-}
-
-/**
  * @brief Render static moonlight (dim blue) across the whole strip.
  */
 static void render_moonlight(uint16_t num_leds)
