@@ -165,7 +165,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><input type=\"range\" id=\"led-br\" min=\"0\""
     " max=\"255\" value=\"128\" oninput=\"document.getElementById("
     "'br-val').textContent=this.value\" onchange=\"sendLed()\"></div>"
-    "<div class=\"row\"><span class=\"label\">Colour</span>"
+    "<div class=\"row\"><span class=\"label\">Color</span>"
     "<input type=\"color\" id=\"led-color\" value=\"#ffffff\""
     " onchange=\"sendLed()\"></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
@@ -339,7 +339,7 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
     int g_val  = json_get_int(buf, "\"g\"");
     int b_val  = json_get_int(buf, "\"b\"");
 
-    /* Apply colour if all three components are present */
+    /* Apply color if all three components are present */
     if (r_val >= 0 && g_val >= 0 && b_val >= 0) {
         led_controller_set_color(
             (uint8_t)(r_val > 255 ? 255 : r_val),

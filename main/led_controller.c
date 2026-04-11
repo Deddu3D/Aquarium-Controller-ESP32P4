@@ -154,7 +154,7 @@ esp_err_t led_controller_set_color(uint8_t red, uint8_t green, uint8_t blue)
     s_red   = red;
     s_green = green;
     s_blue  = blue;
-    ESP_LOGI(TAG, "Colour set to R=%d G=%d B=%d", red, green, blue);
+    ESP_LOGI(TAG, "Color set to R=%d G=%d B=%d", red, green, blue);
     if (s_is_on) {
         return apply_all();
     }
