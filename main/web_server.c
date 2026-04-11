@@ -75,7 +75,7 @@ static void json_escape(const char *src, char *dst, size_t dst_size)
 static void html_escape(const char *src, char *dst, size_t dst_size)
 {
     size_t j = 0;
-    for (size_t i = 0; src[i] != '\0' && j + 6 < dst_size; i++) {
+    for (size_t i = 0; src[i] != '\0' && j + 7 < dst_size; i++) {
         switch (src[i]) {
         case '&':  j += snprintf(dst + j, dst_size - j, "&amp;");   break;
         case '<':  j += snprintf(dst + j, dst_size - j, "&lt;");    break;
@@ -1366,12 +1366,14 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
     if (json_get_double(buf, "\"temp_low_c\"", &dval) == 0)
         cfg.temp_low_c = (float)dval;
 
-    /* Enforce temp_high > temp_low – swap if needed */
+    /* Enforce temp_high > temp_low – swap if inverted, ensure 0.5°C gap */
     if (cfg.temp_high_c <= cfg.temp_low_c) {
-        float tmp = cfg.temp_high_c;
-        cfg.temp_high_c = cfg.temp_low_c + 0.5f;
-        if (tmp < cfg.temp_low_c) {
-            cfg.temp_low_c = tmp;
+        float tmp_high = cfg.temp_high_c;
+        float tmp_low  = cfg.temp_low_c;
+        cfg.temp_low_c  = tmp_high;
+        cfg.temp_high_c = tmp_low;
+        if (cfg.temp_high_c <= cfg.temp_low_c) {
+            cfg.temp_high_c = cfg.temp_low_c + 0.5f;
         }
     }
 
