@@ -88,6 +88,12 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
+/*
+ * Buffer size for the rendered HTML page.  STATUS_HTML_TEMPLATE is roughly
+ * 5 100 bytes after printf substitution, so 6 KiB gives comfortable margin.
+ */
+#define HTML_BUF_SIZE 6144
+
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
     "<html lang=\"en\">"
@@ -222,7 +228,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     snprintf(uptime, sizeof(uptime), "%dh %dm %ds", h, m, s);
 
     /* Render HTML */
-    char buf[4096];
+    char buf[HTML_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf), STATUS_HTML_TEMPLATE,
                        ws.connected ? "ok" : "err",
                        ws.connected ? "Connected" : "Disconnected",
