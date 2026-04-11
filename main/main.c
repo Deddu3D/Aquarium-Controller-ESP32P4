@@ -33,6 +33,7 @@
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
+#include "relay_controller.h"
 
 static const char *TAG = "aquarium";
 
@@ -139,7 +140,15 @@ void app_main(void)
         ESP_LOGI(TAG, "Telegram notification service ready");
     }
 
-    /* ── 8. Start HTTP status server ─────────────────────────────── */
+    /* ── 8. Initialise 4-channel relay controller ────────────────── */
+    ret = relay_controller_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Relay controller init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "Relay controller ready (4 channels)");
+    }
+
+    /* ── 9. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -147,7 +156,7 @@ void app_main(void)
         }
     }
 
-    /* ── 9. Main application loop ─────────────────────────────────── */
+    /* ── 10. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
