@@ -98,6 +98,13 @@ void temperature_history_get(temp_sample_t *out, int *out_count)
         return;
     }
 
+    /* Module not yet initialised (e.g. DS18B20 probe failed) – return
+     * an empty result set instead of crashing on a NULL semaphore.     */
+    if (s_mutex == NULL) {
+        *out_count = 0;
+        return;
+    }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
     /* Return samples in chronological order (oldest first).

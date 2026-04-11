@@ -516,6 +516,10 @@ esp_err_t telegram_notify_init(void)
 telegram_config_t telegram_notify_get_config(void)
 {
     telegram_config_t cfg;
+    if (s_mutex == NULL) {
+        memset(&cfg, 0, sizeof(cfg));
+        return cfg;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     cfg = s_config;
     xSemaphoreGive(s_mutex);
@@ -546,6 +550,9 @@ esp_err_t telegram_notify_set_config(const telegram_config_t *cfg)
     safe.bot_token[sizeof(safe.bot_token) - 1] = '\0';
     safe.chat_id[sizeof(safe.chat_id) - 1] = '\0';
 
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config = safe;
     xSemaphoreGive(s_mutex);
@@ -560,6 +567,9 @@ esp_err_t telegram_notify_send(const char *message)
     }
 
     telegram_config_t cfg;
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     cfg = s_config;
     xSemaphoreGive(s_mutex);
@@ -576,6 +586,9 @@ esp_err_t telegram_notify_reset_water_change(void)
 {
     time_t now = time(NULL);
 
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_last_water_change = (int64_t)now;
     xSemaphoreGive(s_mutex);
@@ -597,6 +610,9 @@ esp_err_t telegram_notify_reset_fertilizer(void)
 {
     time_t now = time(NULL);
 
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_last_fertilizer = (int64_t)now;
     xSemaphoreGive(s_mutex);
@@ -616,6 +632,9 @@ esp_err_t telegram_notify_reset_fertilizer(void)
 int64_t telegram_notify_get_last_water_change(void)
 {
     int64_t val;
+    if (s_mutex == NULL) {
+        return 0;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     val = s_last_water_change;
     xSemaphoreGive(s_mutex);
@@ -625,6 +644,9 @@ int64_t telegram_notify_get_last_water_change(void)
 int64_t telegram_notify_get_last_fertilizer(void)
 {
     int64_t val;
+    if (s_mutex == NULL) {
+        return 0;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     val = s_last_fertilizer;
     xSemaphoreGive(s_mutex);
