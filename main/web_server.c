@@ -28,6 +28,7 @@
 #include "geolocation.h"
 #include "sun_position.h"
 #include "temperature_sensor.h"
+#include "telegram_notify.h"
 
 static const char *TAG = "web_srv";
 
@@ -95,9 +96,9 @@ static void get_wifi_status(wifi_status_t *out)
 
 /*
  * Buffer size for the rendered HTML page.  The template has grown
- * with the geolocation card; 12 KiB gives comfortable margin.
+ * with the geolocation + telegram cards; 20 KiB gives comfortable margin.
  */
-#define HTML_BUF_SIZE 12288
+#define HTML_BUF_SIZE 20480
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -221,6 +222,65 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"value\" id=\"geo-sunset\">--:--</span></div>"
     "<button class=\"refresh\" onclick=\"sendGeo()\">Save Location</button>"
     "</div>"
+    /* Telegram notification settings card */
+    "<div class=\"card\" id=\"tg-card\">"
+    "<h2>&#x1F4F1; Telegram Notifications</h2>"
+    "<div class=\"row\"><span class=\"label\">Bot Token</span>"
+    "<input type=\"password\" id=\"tg-token\" placeholder=\"Not configured\""
+    " style=\"width:100%%;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.85rem\"></div>"
+    "<div class=\"row\"><span class=\"label\">Chat ID</span>"
+    "<input type=\"text\" id=\"tg-chatid\" placeholder=\"e.g. -100123456\""
+    " style=\"width:120px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Enabled</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<button class=\"refresh\" onclick=\"testTg()\">Send Test Message</button>"
+    "<h2 style=\"margin-top:1rem;font-size:1rem\">&#x1F321;&#xFE0F; Temperature Alarms</h2>"
+    "<div class=\"row\"><span class=\"label\">Enabled</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-talm\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">High &#xB0;C</span>"
+    "<input type=\"number\" id=\"tg-thigh\" step=\"0.5\" min=\"-10\" max=\"50\""
+    " style=\"width:80px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Low &#xB0;C</span>"
+    "<input type=\"number\" id=\"tg-tlow\" step=\"0.5\" min=\"-10\" max=\"50\""
+    " style=\"width:80px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<h2 style=\"margin-top:1rem;font-size:1rem\">&#x1F4A7; Water Change</h2>"
+    "<div class=\"row\"><span class=\"label\">Reminder</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-wc\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Interval (days)</span>"
+    "<input type=\"number\" id=\"tg-wcdays\" min=\"1\" max=\"90\""
+    " style=\"width:80px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Last change</span>"
+    "<span class=\"value\" id=\"tg-wclast\">--</span></div>"
+    "<button class=\"refresh\" onclick=\"resetWc()\">&#x2705; Record Water Change</button>"
+    "<h2 style=\"margin-top:1rem;font-size:1rem\">&#x1F33F; Fertilizer</h2>"
+    "<div class=\"row\"><span class=\"label\">Reminder</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-fert\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Interval (days)</span>"
+    "<input type=\"number\" id=\"tg-fertdays\" min=\"1\" max=\"90\""
+    " style=\"width:80px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Last dose</span>"
+    "<span class=\"value\" id=\"tg-fertlast\">--</span></div>"
+    "<button class=\"refresh\" onclick=\"resetFert()\">&#x2705; Record Fertilizer Dose</button>"
+    "<h2 style=\"margin-top:1rem;font-size:1rem\">&#x1F4CA; Daily Summary</h2>"
+    "<div class=\"row\"><span class=\"label\">Enabled</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-sum\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Send at hour</span>"
+    "<input type=\"number\" id=\"tg-sumhr\" min=\"0\" max=\"23\""
+    " style=\"width:80px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<button class=\"refresh\" onclick=\"saveTg()\">Save Settings</button>"
+    "</div>"
     /* Scripts */
     "<script>"
     "function hexToRgb(h){"
@@ -295,6 +355,66 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    console.log('Geo updated',d);"
     "  }).catch(function(e){console.error('Geo error',e);});}"
     "loadGeo();"
+    "function tgTs(id,ts){"
+    "  var el=document.getElementById(id);"
+    "  if(ts>0){var d=Math.floor((Date.now()/1000-ts)/86400);"
+    "    el.textContent=d+' days ago';}"
+    "  else{el.textContent='Never';}}"
+    "function loadTg(){"
+    "  fetch('/api/telegram').then(function(r){return r.json();})"
+    "  .then(function(d){"
+    "    if(d.bot_token_set){document.getElementById('tg-token').placeholder='Token configured \\u2713';}"
+    "    document.getElementById('tg-chatid').value=d.chat_id||'';"
+    "    document.getElementById('tg-en').checked=d.enabled;"
+    "    document.getElementById('tg-talm').checked=d.temp_alarm_enabled;"
+    "    document.getElementById('tg-thigh').value=d.temp_high_c;"
+    "    document.getElementById('tg-tlow').value=d.temp_low_c;"
+    "    document.getElementById('tg-wc').checked=d.water_change_enabled;"
+    "    document.getElementById('tg-wcdays').value=d.water_change_days;"
+    "    document.getElementById('tg-fert').checked=d.fertilizer_enabled;"
+    "    document.getElementById('tg-fertdays').value=d.fertilizer_days;"
+    "    document.getElementById('tg-sum').checked=d.daily_summary_enabled;"
+    "    document.getElementById('tg-sumhr').value=d.daily_summary_hour;"
+    "    tgTs('tg-wclast',d.last_water_change);"
+    "    tgTs('tg-fertlast',d.last_fertilizer);"
+    "  });}"
+    "function saveTg(){"
+    "  var data={"
+    "    chat_id:document.getElementById('tg-chatid').value,"
+    "    enabled:document.getElementById('tg-en').checked,"
+    "    temp_alarm_enabled:document.getElementById('tg-talm').checked,"
+    "    temp_high_c:parseFloat(document.getElementById('tg-thigh').value),"
+    "    temp_low_c:parseFloat(document.getElementById('tg-tlow').value),"
+    "    water_change_enabled:document.getElementById('tg-wc').checked,"
+    "    water_change_days:parseInt(document.getElementById('tg-wcdays').value),"
+    "    fertilizer_enabled:document.getElementById('tg-fert').checked,"
+    "    fertilizer_days:parseInt(document.getElementById('tg-fertdays').value),"
+    "    daily_summary_enabled:document.getElementById('tg-sum').checked,"
+    "    daily_summary_hour:parseInt(document.getElementById('tg-sumhr').value)};"
+    "  var tk=document.getElementById('tg-token').value;"
+    "  if(tk.length>0){data.bot_token=tk;}"
+    "  fetch('/api/telegram',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json();}).then(function(d){"
+    "    if(d.bot_token_set){document.getElementById('tg-token').value='';"
+    "      document.getElementById('tg-token').placeholder='Token configured \\u2713';}"
+    "    console.log('Telegram saved',d);"
+    "  }).catch(function(e){console.error('Telegram error',e);});}"
+    "function testTg(){"
+    "  fetch('/api/telegram_test',{method:'POST'})"
+    "  .then(function(r){return r.json();}).then(function(d){"
+    "    alert(d.ok?'Test message sent!':'Failed: '+(d.error||'unknown'));}"
+    "  ).catch(function(e){alert('Error: '+e);});}"
+    "function resetWc(){"
+    "  fetch('/api/telegram_wc',{method:'POST'})"
+    "  .then(function(r){return r.json();}).then(function(d){"
+    "    tgTs('tg-wclast',d.last_water_change);});}"
+    "function resetFert(){"
+    "  fetch('/api/telegram_fert',{method:'POST'})"
+    "  .then(function(r){return r.json();}).then(function(d){"
+    "    tgTs('tg-fertlast',d.last_fertilizer);});}"
+    "loadTg();"
     "function loadTemp(){"
     "  fetch('/api/temperature').then(function(r){return r.json();})"
     "  .then(function(d){"
@@ -661,6 +781,174 @@ static esp_err_t api_geolocation_post_handler(httpd_req_t *req)
     return api_geolocation_get_handler(req);
 }
 
+/* ── Telegram GET endpoint (/api/telegram  GET) ──────────────────── */
+
+static esp_err_t api_telegram_get_handler(httpd_req_t *req)
+{
+    telegram_config_t cfg = telegram_notify_get_config();
+
+    char escaped_chatid[128];
+    json_escape(cfg.chat_id, escaped_chatid, sizeof(escaped_chatid));
+
+    /* Use a heap buffer – stack-safe for the httpd task */
+    char *buf = malloc(768);
+    if (buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    int len = snprintf(buf, 768,
+        "{\"bot_token_set\":%s,"
+        "\"chat_id\":\"%s\","
+        "\"enabled\":%s,"
+        "\"temp_alarm_enabled\":%s,"
+        "\"temp_high_c\":%.1f,"
+        "\"temp_low_c\":%.1f,"
+        "\"water_change_enabled\":%s,"
+        "\"water_change_days\":%d,"
+        "\"fertilizer_enabled\":%s,"
+        "\"fertilizer_days\":%d,"
+        "\"daily_summary_enabled\":%s,"
+        "\"daily_summary_hour\":%d,"
+        "\"last_water_change\":%" PRId64 ","
+        "\"last_fertilizer\":%" PRId64 "}",
+        cfg.bot_token[0] != '\0' ? "true" : "false",
+        escaped_chatid,
+        cfg.enabled ? "true" : "false",
+        cfg.temp_alarm_enabled ? "true" : "false",
+        (double)cfg.temp_high_c,
+        (double)cfg.temp_low_c,
+        cfg.water_change_enabled ? "true" : "false",
+        cfg.water_change_days,
+        cfg.fertilizer_enabled ? "true" : "false",
+        cfg.fertilizer_days,
+        cfg.daily_summary_enabled ? "true" : "false",
+        cfg.daily_summary_hour,
+        telegram_notify_get_last_water_change(),
+        telegram_notify_get_last_fertilizer());
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t ret = httpd_resp_send(req, buf, len);
+    free(buf);
+    return ret;
+}
+
+/* ── Telegram POST endpoint (/api/telegram  POST) ────────────────── */
+
+static esp_err_t api_telegram_post_handler(httpd_req_t *req)
+{
+    char *buf = malloc(512);
+    if (buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    int received = httpd_req_recv(req, buf, 511);
+    if (received <= 0) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+    ESP_LOGI(TAG, "Telegram POST body: %s", buf);
+
+    /* Start from current config */
+    telegram_config_t cfg = telegram_notify_get_config();
+
+    /* Parse fields – only update what is provided */
+    char str_val[128];
+    if (json_get_str(buf, "\"bot_token\"", str_val, sizeof(str_val)) == 0) {
+        strncpy(cfg.bot_token, str_val, sizeof(cfg.bot_token) - 1);
+        cfg.bot_token[sizeof(cfg.bot_token) - 1] = '\0';
+    }
+    if (json_get_str(buf, "\"chat_id\"", str_val, sizeof(str_val)) == 0) {
+        strncpy(cfg.chat_id, str_val, sizeof(cfg.chat_id) - 1);
+        cfg.chat_id[sizeof(cfg.chat_id) - 1] = '\0';
+    }
+
+    int bval;
+    bval = json_get_bool(buf, "\"enabled\"");
+    if (bval >= 0) cfg.enabled = bval;
+    bval = json_get_bool(buf, "\"temp_alarm_enabled\"");
+    if (bval >= 0) cfg.temp_alarm_enabled = bval;
+    bval = json_get_bool(buf, "\"water_change_enabled\"");
+    if (bval >= 0) cfg.water_change_enabled = bval;
+    bval = json_get_bool(buf, "\"fertilizer_enabled\"");
+    if (bval >= 0) cfg.fertilizer_enabled = bval;
+    bval = json_get_bool(buf, "\"daily_summary_enabled\"");
+    if (bval >= 0) cfg.daily_summary_enabled = bval;
+
+    double dval;
+    if (json_get_double(buf, "\"temp_high_c\"", &dval) == 0)
+        cfg.temp_high_c = (float)dval;
+    if (json_get_double(buf, "\"temp_low_c\"", &dval) == 0)
+        cfg.temp_low_c = (float)dval;
+    if (json_get_double(buf, "\"water_change_days\"", &dval) == 0)
+        cfg.water_change_days = (int)dval;
+    if (json_get_double(buf, "\"fertilizer_days\"", &dval) == 0)
+        cfg.fertilizer_days = (int)dval;
+    if (json_get_double(buf, "\"daily_summary_hour\"", &dval) == 0)
+        cfg.daily_summary_hour = (int)dval;
+
+    free(buf);
+
+    telegram_notify_set_config(&cfg);
+
+    return api_telegram_get_handler(req);
+}
+
+/* ── Telegram test endpoint (/api/telegram_test  POST) ───────────── */
+
+static esp_err_t api_telegram_test_handler(httpd_req_t *req)
+{
+    esp_err_t err = telegram_notify_send(
+        "\xf0\x9f\x90\x9f <b>Aquarium Controller</b>\n\n"
+        "Test message received successfully!\n"
+        "Telegram notifications are working.");
+
+    char buf[64];
+    int len;
+    if (err == ESP_OK) {
+        len = snprintf(buf, sizeof(buf), "{\"ok\":true}");
+    } else {
+        len = snprintf(buf, sizeof(buf),
+            "{\"ok\":false,\"error\":\"send_failed\"}");
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Water change reset endpoint (/api/telegram_wc  POST) ────────── */
+
+static esp_err_t api_telegram_wc_handler(httpd_req_t *req)
+{
+    telegram_notify_reset_water_change();
+
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"last_water_change\":%" PRId64 "}",
+        telegram_notify_get_last_water_change());
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Fertilizer reset endpoint (/api/telegram_fert  POST) ────────── */
+
+static esp_err_t api_telegram_fert_handler(httpd_req_t *req)
+{
+    telegram_notify_reset_fertilizer();
+
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"last_fertilizer\":%" PRId64 "}",
+        telegram_notify_get_last_fertilizer());
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -726,6 +1014,41 @@ static const httpd_uri_t uri_api_temp_get = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_tg_get = {
+    .uri      = "/api/telegram",
+    .method   = HTTP_GET,
+    .handler  = api_telegram_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tg_post = {
+    .uri      = "/api/telegram",
+    .method   = HTTP_POST,
+    .handler  = api_telegram_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tg_test = {
+    .uri      = "/api/telegram_test",
+    .method   = HTTP_POST,
+    .handler  = api_telegram_test_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tg_wc = {
+    .uri      = "/api/telegram_wc",
+    .method   = HTTP_POST,
+    .handler  = api_telegram_wc_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tg_fert = {
+    .uri      = "/api/telegram_fert",
+    .method   = HTTP_POST,
+    .handler  = api_telegram_fert_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -737,7 +1060,7 @@ esp_err_t web_server_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size       = 8192;
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 20;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
@@ -756,6 +1079,11 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_geo_get);
     httpd_register_uri_handler(s_server, &uri_api_geo_post);
     httpd_register_uri_handler(s_server, &uri_api_temp_get);
+    httpd_register_uri_handler(s_server, &uri_api_tg_get);
+    httpd_register_uri_handler(s_server, &uri_api_tg_post);
+    httpd_register_uri_handler(s_server, &uri_api_tg_test);
+    httpd_register_uri_handler(s_server, &uri_api_tg_wc);
+    httpd_register_uri_handler(s_server, &uri_api_tg_fert);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

@@ -31,6 +31,7 @@
 #include "led_scenes.h"
 #include "geolocation.h"
 #include "temperature_sensor.h"
+#include "telegram_notify.h"
 
 static const char *TAG = "aquarium";
 
@@ -108,7 +109,15 @@ void app_main(void)
         ESP_LOGI(TAG, "DS18B20 temperature sensor ready");
     }
 
-    /* ── 7. Start HTTP status server ─────────────────────────────── */
+    /* ── 7. Initialise Telegram notification service ────────────── */
+    ret = telegram_notify_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Telegram init failed (0x%x) – continuing without notifications", ret);
+    } else {
+        ESP_LOGI(TAG, "Telegram notification service ready");
+    }
+
+    /* ── 8. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -116,7 +125,7 @@ void app_main(void)
         }
     }
 
-    /* ── 8. Main application loop ─────────────────────────────────── */
+    /* ── 9. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
