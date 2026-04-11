@@ -227,9 +227,15 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     char uptime[32];
     snprintf(uptime, sizeof(uptime), "%dh %dm %ds", h, m, s);
 
-    /* Render HTML */
-    char buf[HTML_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf), STATUS_HTML_TEMPLATE,
+    /* Render HTML – heap-allocated to avoid httpd task stack overflow */
+    char *buf = malloc(HTML_BUF_SIZE);
+    if (buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Out of memory");
+        return ESP_FAIL;
+    }
+
+    int len = snprintf(buf, HTML_BUF_SIZE, STATUS_HTML_TEMPLATE,
                        ws.connected ? "ok" : "err",
                        ws.connected ? "Connected" : "Disconnected",
                        ws.connected ? ws.ip : "—",
@@ -237,9 +243,14 @@ static esp_err_t root_get_handler(httpd_req_t *req)
                        ws.connected ? ws.rssi : 0,
                        esp_get_free_heap_size(),
                        uptime);
+    if (len >= HTML_BUF_SIZE) {
+        len = HTML_BUF_SIZE - 1;   /* output was truncated */
+    }
 
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, buf, len);
+    esp_err_t ret = httpd_resp_send(req, buf, len);
+    free(buf);
+    return ret;
 }
 
 /* ── JSON status endpoint (/api/status  GET) ─────────────────────── */
@@ -409,6 +420,7 @@ esp_err_t web_server_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.stack_size       = 8192;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
