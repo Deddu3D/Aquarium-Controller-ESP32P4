@@ -65,3 +65,39 @@ menu "Aquarium Temperature Sensor Settings"
             this gives exactly 24 hours of data.
 
 endmenu
+
+menu "Aquarium Relay Settings"
+
+    config RELAY_1_GPIO
+        int "Relay 1 GPIO"
+        default 22
+        help
+            GPIO pin connected to relay channel 1.
+
+    config RELAY_2_GPIO
+        int "Relay 2 GPIO"
+        default 23
+        help
+            GPIO pin connected to relay channel 2.
+
+    config RELAY_3_GPIO
+        int "Relay 3 GPIO"
+        default 24
+        help
+            GPIO pin connected to relay channel 3.
+
+    config RELAY_4_GPIO
+        int "Relay 4 GPIO"
+        default 25
+        help
+            GPIO pin connected to relay channel 4.
+
+    config RELAY_ACTIVE_LOW
+        bool "Relays are active-low"
+        default n
+        help
+            Enable if your relay modules activate when the input is
+            driven LOW (common for opto-isolated relay boards).
+            When disabled (default), GPIO HIGH = relay ON.
+
+endmenu

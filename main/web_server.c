@@ -30,6 +30,7 @@
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
+#include "relay_controller.h"
 
 static const char *TAG = "web_srv";
 
@@ -255,6 +256,14 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</select></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
     "</div></div></div>"
+    /* Relay control card – always open */
+    "<div class=\"card open\" id=\"relay-card\">"
+    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F50C; Relays</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"card-body\"><div class=\"card-inner\">"
+    "<div id=\"relay-rows\"></div>"
+    "</div></div></div>"
     /* Geolocation card – collapsed by default */
     "<div class=\"card\" id=\"geo-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
@@ -478,6 +487,43 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    tgTs('tg-fertlast',d.last_fertilizer);"
     "    toast('Fertilizer recorded',1)})}"
     "loadTg();"
+    /* ── Relay control ── */
+    "function loadRelays(){"
+    "  fetch('/api/relays').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    var c=$('relay-rows');c.innerHTML='';"
+    "    d.relays.forEach(function(rl,i){"
+    "      var row=document.createElement('div');"
+    "      row.className='row';"
+    "      var lbl=document.createElement('span');"
+    "      lbl.className='label';lbl.textContent=rl.name;"
+    "      lbl.style.cursor='pointer';lbl.title='Click to rename';"
+    "      lbl.onclick=function(){"
+    "        var nn=prompt('Rename relay:',rl.name);"
+    "        if(nn&&nn.length>0){"
+    "          fetch('/api/relays',{method:'POST',"
+    "            headers:{'Content-Type':'application/json'},"
+    "            body:JSON.stringify({index:i,name:nn})"
+    "          }).then(function(){loadRelays();toast('Renamed',1)})"
+    "          .catch(function(){toast('Rename failed',0)})}};"
+    "      var tg=document.createElement('label');"
+    "      tg.className='toggle';"
+    "      var inp=document.createElement('input');"
+    "      inp.type='checkbox';inp.checked=rl.on;"
+    "      inp.onchange=function(){"
+    "        fetch('/api/relays',{method:'POST',"
+    "          headers:{'Content-Type':'application/json'},"
+    "          body:JSON.stringify({index:i,on:inp.checked})"
+    "        }).then(function(r){return r.json()}).then(function(){"
+    "          toast(rl.name+(inp.checked?' ON':' OFF'),1)})"
+    "        .catch(function(){toast('Relay error',0)})};"
+    "      var sl=document.createElement('span');"
+    "      sl.className='slider';"
+    "      tg.appendChild(inp);tg.appendChild(sl);"
+    "      row.appendChild(lbl);row.appendChild(tg);"
+    "      c.appendChild(row)})})"
+    "  .catch(function(){})}"
+    "loadRelays();"
     "function loadTemp(){"
     "  fetch('/api/temperature').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -1128,6 +1174,76 @@ static esp_err_t api_telegram_fert_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+/* ── Relay GET endpoint (/api/relays  GET) ───────────────────────── */
+
+static esp_err_t api_relays_get_handler(httpd_req_t *req)
+{
+    relay_state_t relays[RELAY_COUNT];
+    relay_controller_get_all(relays);
+
+    char escaped_name[RELAY_NAME_MAX * 2];
+
+    /* Build JSON response using chunked encoding */
+    httpd_resp_set_type(req, "application/json");
+
+    char chunk[128];
+    int n;
+
+    n = snprintf(chunk, sizeof(chunk), "{\"count\":%d,\"relays\":[", RELAY_COUNT);
+    httpd_resp_send_chunk(req, chunk, n);
+
+    for (int i = 0; i < RELAY_COUNT; i++) {
+        json_escape(relays[i].name, escaped_name, sizeof(escaped_name));
+        n = snprintf(chunk, sizeof(chunk),
+            "%s{\"index\":%d,\"on\":%s,\"name\":\"%s\"}",
+            i > 0 ? "," : "",
+            i,
+            relays[i].on ? "true" : "false",
+            escaped_name);
+        httpd_resp_send_chunk(req, chunk, n);
+    }
+
+    httpd_resp_send_chunk(req, "]}", 2);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/* ── Relay POST endpoint (/api/relays  POST) ─────────────────────── */
+
+static esp_err_t api_relays_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "Relay POST body: %s", buf);
+
+    int idx = json_get_int(buf, "\"index\"");
+    if (idx < 0 || idx >= RELAY_COUNT) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid index");
+        return ESP_FAIL;
+    }
+
+    /* Apply on/off if provided */
+    int on_val = json_get_bool(buf, "\"on\"");
+    if (on_val >= 0) {
+        relay_controller_set(idx, on_val == 1);
+    }
+
+    /* Apply name if provided */
+    char name[RELAY_NAME_MAX];
+    if (json_get_str(buf, "\"name\"", name, sizeof(name)) == 0) {
+        relay_controller_set_name(idx, name);
+    }
+
+    /* Respond with full relay state */
+    return api_relays_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -1235,6 +1351,20 @@ static const httpd_uri_t uri_api_tg_fert = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_relays_get = {
+    .uri      = "/api/relays",
+    .method   = HTTP_GET,
+    .handler  = api_relays_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_relays_post = {
+    .uri      = "/api/relays",
+    .method   = HTTP_POST,
+    .handler  = api_relays_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -1246,7 +1376,7 @@ esp_err_t web_server_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size       = 8192;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 22;
     config.lru_purge_enable = true;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
@@ -1271,6 +1401,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_tg_test);
     httpd_register_uri_handler(s_server, &uri_api_tg_wc);
     httpd_register_uri_handler(s_server, &uri_api_tg_fert);
+    httpd_register_uri_handler(s_server, &uri_api_relays_get);
+    httpd_register_uri_handler(s_server, &uri_api_relays_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;
