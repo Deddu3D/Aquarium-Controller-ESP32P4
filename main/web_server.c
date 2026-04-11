@@ -906,10 +906,13 @@ static esp_err_t api_telegram_test_handler(httpd_req_t *req)
         "Test message received successfully!\n"
         "Telegram notifications are working.");
 
-    char buf[64];
+    char buf[128];
     int len;
     if (err == ESP_OK) {
         len = snprintf(buf, sizeof(buf), "{\"ok\":true}");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        len = snprintf(buf, sizeof(buf),
+            "{\"ok\":false,\"error\":\"clock_not_synced\"}");
     } else {
         len = snprintf(buf, sizeof(buf),
             "{\"ok\":false,\"error\":\"send_failed\"}");

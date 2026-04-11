@@ -194,6 +194,19 @@ static void json_msg_escape(const char *src, char *dst, size_t dst_size)
 static esp_err_t send_telegram_message(const char *token, const char *chat_id,
                                        const char *text)
 {
+    /* Guard: TLS certificate validation requires a valid system clock.
+     * If SNTP has not synchronised yet the handshake will fail with
+     * MBEDTLS_ERR_X509_CERT_VERIFY_FAILED (-0x3000).                   */
+    time_t now = time(NULL);
+    struct tm ti;
+    localtime_r(&now, &ti);
+    if (ti.tm_year < (2024 - 1900)) {
+        ESP_LOGE(TAG, "System clock not synchronised (year=%d) – "
+                 "cannot verify TLS certificates. "
+                 "Waiting for SNTP sync …", ti.tm_year + 1900);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     /* Build URL: https://api.telegram.org/bot<token>/sendMessage */
     char url[256];
     int url_len = snprintf(url, sizeof(url), "%s%s/sendMessage",

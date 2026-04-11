@@ -84,7 +84,22 @@ void app_main(void)
     if (wifi_manager_is_connected()) {
         esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
         esp_netif_sntp_init(&sntp_cfg);
-        ESP_LOGI(TAG, "SNTP time sync started (pool.ntp.org)");
+        ESP_LOGI(TAG, "SNTP time sync started – waiting for clock …");
+
+        /* Block until the system clock is synchronised (max 15 s).
+         * Without a valid wall-clock time, TLS certificate validation
+         * will always fail (the cert appears expired / not-yet-valid). */
+        ret = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000));
+        if (ret == ESP_OK) {
+            time_t now = time(NULL);
+            struct tm ti;
+            localtime_r(&now, &ti);
+            ESP_LOGI(TAG, "SNTP synchronised – %04d-%02d-%02d %02d:%02d:%02d",
+                     ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday,
+                     ti.tm_hour, ti.tm_min, ti.tm_sec);
+        } else {
+            ESP_LOGW(TAG, "SNTP sync timed out – HTTPS connections may fail");
+        }
     }
 
     /* ── 5. Initialise LED strip ────────────────────────────────── */
