@@ -51,12 +51,18 @@ static const char *TAG = "telegram";
 #define NVS_KEY_LAST_WC    "last_wc"
 #define NVS_KEY_LAST_FERT  "last_fert"
 
-#define TASK_STACK_SIZE    8192
+#define TASK_STACK_SIZE    12288   /* TLS handshake needs generous stack */
 #define TASK_PERIOD_MS     60000   /* Check every 60 seconds */
 #define TEMP_ALARM_COOLDOWN_S  1800  /* 30 minutes between repeated alarms */
 
 #define TELEGRAM_API_URL   "https://api.telegram.org/bot"
 #define MSG_BUF_SIZE       1024
+#define SEND_MAX_RETRIES   2       /* Retry once with fallback cert method */
+
+/* Embedded root CA certificates for api.telegram.org
+ * Contains Go Daddy Root CA G2 + DigiCert Global Root G2.           */
+extern const char telegram_root_cert_pem_start[] asm("_binary_telegram_root_cert_pem_start");
+extern const char telegram_root_cert_pem_end[]   asm("_binary_telegram_root_cert_pem_end");
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -238,27 +244,47 @@ static esp_err_t send_telegram_message(const char *token, const char *chat_id,
     esp_http_client_config_t http_cfg = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .cert_pem = telegram_root_cert_pem_start,
         .timeout_ms = 10000,
     };
 
-    esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
-    if (client == NULL) {
-        free(body);
-        return ESP_FAIL;
+    esp_err_t err = ESP_FAIL;
+    int status = 0;
+
+    for (int attempt = 0; attempt < SEND_MAX_RETRIES; attempt++) {
+        if (attempt == 1) {
+            /* Second attempt: fall back to the built-in certificate bundle
+             * in case Telegram migrated to a CA not in the embedded PEM.   */
+            ESP_LOGW(TAG, "Retrying with certificate bundle …");
+            http_cfg.cert_pem = NULL;
+            http_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+        }
+
+        esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
+        if (client == NULL) {
+            free(body);
+            return ESP_FAIL;
+        }
+
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+        esp_http_client_set_post_field(client, body, (int)strlen(body));
+
+        err = esp_http_client_perform(client);
+        status = esp_http_client_get_status_code(client);
+
+        esp_http_client_cleanup(client);
+
+        if (err == ESP_OK) {
+            break;   /* success – no need to retry */
+        }
+
+        ESP_LOGE(TAG, "HTTP request failed (attempt %d/%d): %s",
+                 attempt + 1, SEND_MAX_RETRIES, esp_err_to_name(err));
     }
 
-    esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, body, (int)strlen(body));
-
-    esp_err_t err = esp_http_client_perform(client);
-    int status = esp_http_client_get_status_code(client);
-
-    esp_http_client_cleanup(client);
     free(body);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
         return err;
     }
 
