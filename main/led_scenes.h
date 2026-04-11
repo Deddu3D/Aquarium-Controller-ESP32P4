@@ -27,7 +27,7 @@ typedef enum {
     LED_SCENE_MOONLIGHT,        /**< Static dim blue moonlight              */
     LED_SCENE_CLOUDY,           /**< Slow sinusoidal brightness waves       */
     LED_SCENE_STORM,            /**< Dark base with random lightning flashes */
-    LED_SCENE_FULL_DAY_CYCLE,   /**< Automatic 24 h cycle (uptime-based)    */
+    LED_SCENE_FULL_DAY_CYCLE,   /**< Automatic 24 h cycle (real-time + geolocation) */
     LED_SCENE_MAX               /**< Sentinel – not a valid scene           */
 } led_scene_t;
 

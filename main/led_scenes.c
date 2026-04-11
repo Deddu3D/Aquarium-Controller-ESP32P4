@@ -10,6 +10,8 @@
 
 #include <string.h>
 #include <math.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,6 +23,8 @@
 
 #include "led_controller.h"
 #include "led_scenes.h"
+#include "geolocation.h"
+#include "sun_position.h"
 
 static const char *TAG = "led_scene";
 
@@ -401,25 +405,82 @@ static void led_scene_task(void *arg)
             render_storm(num_leds);
             break;
 
-        /* ── Full 24 h day cycle (uptime-based) ─────────────────── */
+        /* ── Full 24 h day cycle (real-time + geolocation) ────────── */
         case LED_SCENE_FULL_DAY_CYCLE: {
-            int64_t up_s  = esp_timer_get_time() / 1000000;
-            int     hour  = (int)((up_s / 3600) % 24);
-            int     min_s = (int)(up_s % 3600); /* seconds into hour */
+            /* Get current wall-clock time */
+            time_t now;
+            time(&now);
+            struct tm timeinfo;
+            localtime_r(&now, &timeinfo);
 
-            if (hour >= 6 && hour < 7) {
-                /* Sunrise over 1 hour */
-                float p = (float)min_s / 3600.0f;
+            /* If system time is not set (year < 2024) fall back to
+             * uptime so the scene still works without NTP.          */
+            int now_min;    /* minutes since local midnight */
+            int cur_year, cur_month, cur_day;
+            bool have_time = (timeinfo.tm_year >= (2024 - 1900));
+
+            if (have_time) {
+                now_min   = timeinfo.tm_hour * 60 + timeinfo.tm_min;
+                cur_year  = timeinfo.tm_year + 1900;
+                cur_month = timeinfo.tm_mon + 1;
+                cur_day   = timeinfo.tm_mday;
+            } else {
+                /* Fallback: use uptime mapped to a 24 h day */
+                int64_t up_s = esp_timer_get_time() / 1000000;
+                int     sec_of_day = (int)(up_s % 86400);
+                now_min   = sec_of_day / 60;
+                cur_year  = 2026;
+                cur_month = 6;
+                cur_day   = 21;   /* summer solstice as default */
+            }
+
+            /* Compute sunrise / sunset from geolocation */
+            geolocation_config_t geo = geolocation_get();
+            sun_times_t st = sun_position_calc(
+                geo.latitude, geo.longitude, geo.utc_offset_min,
+                cur_year, cur_month, cur_day);
+
+            int sr_start, sr_end, ss_start, ss_end;
+
+            if (st.valid) {
+                /* 30-min sunrise transition centred on calculated time */
+                sr_start = st.sunrise_min - 15;
+                sr_end   = st.sunrise_min + 15;
+                /* 30-min sunset transition centred on calculated time */
+                ss_start = st.sunset_min - 15;
+                ss_end   = st.sunset_min + 15;
+            } else {
+                /* Polar edge-case: default to fixed schedule */
+                sr_start = 6 * 60;
+                sr_end   = 7 * 60;
+                ss_start = 18 * 60;
+                ss_end   = 19 * 60;
+            }
+
+            /* Clamp to valid range and ensure start < end */
+            if (sr_start < 0)     sr_start = 0;
+            if (sr_end   > 1439)  sr_end   = 1439;
+            if (ss_start < 0)     ss_start = 0;
+            if (ss_end   > 1439)  ss_end   = 1439;
+            if (sr_start >= sr_end) { sr_start = 6 * 60;  sr_end = 7 * 60;  }
+            if (ss_start >= ss_end) { ss_start = 18 * 60; ss_end = 19 * 60; }
+            if (sr_end > ss_start)  { sr_end = ss_start; }
+
+            if (now_min >= sr_start && now_min < sr_end) {
+                /* Sunrise transition */
+                float p = (float)(now_min - sr_start) /
+                          (float)(sr_end - sr_start);
                 render_sunrise(p, num_leds);
-            } else if (hour >= 7 && hour < 18) {
-                /* Daylight with cloudy variation */
+            } else if (now_min >= sr_end && now_min < ss_start) {
+                /* Daytime – cloudy variation */
                 render_cloudy(frame, num_leds);
-            } else if (hour >= 18 && hour < 19) {
-                /* Sunset over 1 hour */
-                float p = (float)min_s / 3600.0f;
+            } else if (now_min >= ss_start && now_min < ss_end) {
+                /* Sunset transition */
+                float p = (float)(now_min - ss_start) /
+                          (float)(ss_end - ss_start);
                 render_sunset(p, num_leds);
             } else {
-                /* Moonlight (19:00 – 06:00) */
+                /* Night – moonlight */
                 render_moonlight(num_leds);
             }
             break;

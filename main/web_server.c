@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <time.h>
 
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -24,6 +25,8 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_scenes.h"
+#include "geolocation.h"
+#include "sun_position.h"
 
 static const char *TAG = "web_srv";
 
@@ -90,10 +93,10 @@ static void get_wifi_status(wifi_status_t *out)
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
 /*
- * Buffer size for the rendered HTML page.  The template is roughly
- * 6200 bytes after printf substitution, so 8 KiB gives comfortable margin.
+ * Buffer size for the rendered HTML page.  The template has grown
+ * with the geolocation card; 12 KiB gives comfortable margin.
  */
-#define HTML_BUF_SIZE 8192
+#define HTML_BUF_SIZE 12288
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -190,6 +193,27 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</select></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
     "</div>"
+    /* Geolocation settings card */
+    "<div class=\"card\" id=\"geo-card\">"
+    "<h2>&#x1F30D; Geolocation</h2>"
+    "<div class=\"row\"><span class=\"label\">Latitude</span>"
+    "<input type=\"number\" id=\"geo-lat\" step=\"0.0001\" min=\"-90\" max=\"90\""
+    " style=\"width:110px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Longitude</span>"
+    "<input type=\"number\" id=\"geo-lng\" step=\"0.0001\" min=\"-180\" max=\"180\""
+    " style=\"width:110px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">UTC Offset (min)</span>"
+    "<input type=\"number\" id=\"geo-utc\" step=\"30\" min=\"-720\" max=\"840\""
+    " style=\"width:110px;background:#334155;color:#e2e8f0;border:1px solid #475569;"
+    "border-radius:6px;padding:.3rem .5rem;font-size:.9rem;text-align:right\"></div>"
+    "<div class=\"row\"><span class=\"label\">Sunrise</span>"
+    "<span class=\"value\" id=\"geo-sunrise\">--:--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Sunset</span>"
+    "<span class=\"value\" id=\"geo-sunset\">--:--</span></div>"
+    "<button class=\"refresh\" onclick=\"sendGeo()\">Save Location</button>"
+    "</div>"
     /* Scripts */
     "<script>"
     "function hexToRgb(h){"
@@ -238,6 +262,32 @@ static const char STATUS_HTML_TEMPLATE[] =
     "fetch('/api/scenes').then(function(r){return r.json();})"
     ".then(function(d){"
     "  document.getElementById('led-scene').value=d.active_scene;});"
+    "function loadGeo(){"
+    "  fetch('/api/geolocation').then(function(r){return r.json();})"
+    "  .then(function(d){"
+    "    document.getElementById('geo-lat').value=d.latitude;"
+    "    document.getElementById('geo-lng').value=d.longitude;"
+    "    document.getElementById('geo-utc').value=d.utc_offset_min;"
+    "    document.getElementById('geo-sunrise').textContent="
+    "      d.sunrise||'--:--';"
+    "    document.getElementById('geo-sunset').textContent="
+    "      d.sunset||'--:--';"
+    "  });}"
+    "function sendGeo(){"
+    "  var lat=parseFloat(document.getElementById('geo-lat').value);"
+    "  var lng=parseFloat(document.getElementById('geo-lng').value);"
+    "  var utc=parseInt(document.getElementById('geo-utc').value);"
+    "  fetch('/api/geolocation',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({latitude:lat,longitude:lng,utc_offset_min:utc})"
+    "  }).then(function(r){return r.json();}).then(function(d){"
+    "    document.getElementById('geo-sunrise').textContent="
+    "      d.sunrise||'--:--';"
+    "    document.getElementById('geo-sunset').textContent="
+    "      d.sunset||'--:--';"
+    "    console.log('Geo updated',d);"
+    "  }).catch(function(e){console.error('Geo error',e);});}"
+    "loadGeo();"
     "</script>"
     "</body></html>";
 
@@ -382,6 +432,23 @@ static int json_get_str(const char *json, const char *key, char *out, size_t out
     return (i > 0) ? 0 : -1;
 }
 
+/**
+ * @brief Extract a double value for "key":value in a JSON-like string.
+ *        Returns 0 on success, -1 if key not found.
+ */
+static int json_get_double(const char *json, const char *key, double *out)
+{
+    const char *p = strstr(json, key);
+    if (!p) return -1;
+    p += strlen(key);
+    while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+    char *end = NULL;
+    double val = strtod(p, &end);
+    if (end == p) return -1;
+    *out = val;
+    return 0;
+}
+
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
 {
     char buf[256];
@@ -468,6 +535,99 @@ static esp_err_t api_scenes_post_handler(httpd_req_t *req)
     return api_scenes_get_handler(req);
 }
 
+/* ── Geolocation GET endpoint (/api/geolocation  GET) ────────────── */
+
+static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
+{
+    geolocation_config_t cfg = geolocation_get();
+
+    /* Also compute today's sunrise/sunset for display */
+    time_t now;
+    time(&now);
+    struct tm ti;
+    localtime_r(&now, &ti);
+
+    int year  = ti.tm_year + 1900;
+    int month = ti.tm_mon + 1;
+    int day   = ti.tm_mday;
+
+    /* If time not set, use a default date */
+    if (ti.tm_year < (2024 - 1900)) {
+        year = 2026; month = 6; day = 21;
+    }
+
+    sun_times_t st = sun_position_calc(cfg.latitude, cfg.longitude,
+                                       cfg.utc_offset_min,
+                                       year, month, day);
+
+    char buf[384];
+    int len;
+    if (st.valid) {
+        len = snprintf(buf, sizeof(buf),
+            "{\"latitude\":%.4f,"
+            "\"longitude\":%.4f,"
+            "\"utc_offset_min\":%d,"
+            "\"sunrise\":\"%02d:%02d\","
+            "\"sunset\":\"%02d:%02d\"}",
+            cfg.latitude, cfg.longitude, cfg.utc_offset_min,
+            st.sunrise_min / 60, st.sunrise_min % 60,
+            st.sunset_min / 60, st.sunset_min % 60);
+    } else {
+        len = snprintf(buf, sizeof(buf),
+            "{\"latitude\":%.4f,"
+            "\"longitude\":%.4f,"
+            "\"utc_offset_min\":%d,"
+            "\"sunrise\":null,"
+            "\"sunset\":null}",
+            cfg.latitude, cfg.longitude, cfg.utc_offset_min);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Geolocation POST endpoint (/api/geolocation  POST) ─────────── */
+
+static esp_err_t api_geolocation_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "Geolocation POST body: %s", buf);
+
+    geolocation_config_t cfg = geolocation_get();
+
+    double lat, lng, utc_off;
+    if (json_get_double(buf, "\"latitude\"", &lat) == 0) {
+        cfg.latitude = lat;
+    }
+    if (json_get_double(buf, "\"longitude\"", &lng) == 0) {
+        cfg.longitude = lng;
+    }
+    if (json_get_double(buf, "\"utc_offset_min\"", &utc_off) == 0) {
+        cfg.utc_offset_min = (int)utc_off;
+    }
+
+    geolocation_set(&cfg);
+
+    /* Update system timezone offset for localtime_r */
+    char tz[16];
+    int abs_off = cfg.utc_offset_min < 0 ? -cfg.utc_offset_min : cfg.utc_offset_min;
+    /* POSIX TZ sign is inverted: +60 min offset → UTC-1 */
+    snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
+             cfg.utc_offset_min >= 0 ? '-' : '+',
+             abs_off / 60, abs_off % 60);
+    setenv("TZ", tz, 1);
+    tzset();
+
+    return api_geolocation_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -512,6 +672,20 @@ static const httpd_uri_t uri_api_scenes_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_geo_get = {
+    .uri      = "/api/geolocation",
+    .method   = HTTP_GET,
+    .handler  = api_geolocation_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_geo_post = {
+    .uri      = "/api/geolocation",
+    .method   = HTTP_POST,
+    .handler  = api_geolocation_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -538,6 +712,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_leds_post);
     httpd_register_uri_handler(s_server, &uri_api_scenes_get);
     httpd_register_uri_handler(s_server, &uri_api_scenes_post);
+    httpd_register_uri_handler(s_server, &uri_api_geo_get);
+    httpd_register_uri_handler(s_server, &uri_api_geo_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

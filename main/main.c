@@ -16,16 +16,20 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "esp_netif_sntp.h"
 
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_scenes.h"
+#include "geolocation.h"
 
 static const char *TAG = "aquarium";
 
@@ -53,7 +57,35 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
     }
 
-    /* ── 3. Initialise LED strip ────────────────────────────────── */
+    /* ── 3. Initialise geolocation (NVS-backed lat/lng/UTC) ──── */
+    ret = geolocation_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Geolocation init failed (0x%x)", ret);
+    }
+
+    /* Set POSIX timezone from geolocation UTC offset */
+    {
+        geolocation_config_t geo = geolocation_get();
+        int abs_off = geo.utc_offset_min < 0 ? -geo.utc_offset_min : geo.utc_offset_min;
+        char tz[16];
+        /* POSIX TZ sign is inverted: a geolocation offset of +60 min
+         * (1 h east of Greenwich) is expressed as UTC-1.              */
+        snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
+                 geo.utc_offset_min >= 0 ? '-' : '+',
+                 abs_off / 60, abs_off % 60);
+        setenv("TZ", tz, 1);
+        tzset();
+        ESP_LOGI(TAG, "Timezone set: %s", tz);
+    }
+
+    /* ── 4. Start SNTP time synchronisation ─────────────────── */
+    if (wifi_manager_is_connected()) {
+        esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        esp_netif_sntp_init(&sntp_cfg);
+        ESP_LOGI(TAG, "SNTP time sync started (pool.ntp.org)");
+    }
+
+    /* ── 5. Initialise LED strip ────────────────────────────────── */
     ret = led_controller_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LED strip init failed (0x%x)", ret);
@@ -67,7 +99,7 @@ void app_main(void)
         }
     }
 
-    /* ── 4. Start HTTP status server ─────────────────────────── */
+    /* ── 6. Start HTTP status server ─────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
@@ -75,7 +107,7 @@ void app_main(void)
         }
     }
 
-    /* ── 5. Main application loop ─────────────────────────────── */
+    /* ── 7. Main application loop ─────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
