@@ -31,6 +31,7 @@
 #include "led_scenes.h"
 #include "geolocation.h"
 #include "temperature_sensor.h"
+#include "temperature_history.h"
 #include "telegram_notify.h"
 
 static const char *TAG = "aquarium";
@@ -122,6 +123,12 @@ void app_main(void)
         ESP_LOGE(TAG, "DS18B20 init failed (0x%x) – continuing without temperature", ret);
     } else {
         ESP_LOGI(TAG, "DS18B20 temperature sensor ready");
+
+        /* Start temperature history recording for daily chart */
+        ret = temperature_history_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Temperature history init failed (0x%x)", ret);
+        }
     }
 
     /* ── 7. Initialise Telegram notification service ────────────── */
