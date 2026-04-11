@@ -60,7 +60,7 @@ static const char *TAG = "telegram";
 #define SEND_MAX_RETRIES   2       /* Retry once with fallback cert method */
 
 /* Embedded root CA certificates for api.telegram.org
- * Contains Go Daddy Root CA G2 + DigiCert Global Root G2.           */
+ * Contains Go Daddy Root CA G2 + DigiCert Global Root G2. */
 extern const char telegram_root_cert_pem_start[] asm("_binary_telegram_root_cert_pem_start");
 extern const char telegram_root_cert_pem_end[]   asm("_binary_telegram_root_cert_pem_end");
 
@@ -262,8 +262,9 @@ static esp_err_t send_telegram_message(const char *token, const char *chat_id,
 
         esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
         if (client == NULL) {
-            free(body);
-            return ESP_FAIL;
+            ESP_LOGE(TAG, "esp_http_client_init failed (attempt %d/%d)",
+                     attempt + 1, SEND_MAX_RETRIES);
+            continue;   /* try next attempt with fallback config */
         }
 
         esp_http_client_set_header(client, "Content-Type", "application/json");
