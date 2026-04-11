@@ -101,7 +101,7 @@ static void get_wifi_status(wifi_status_t *out)
  * with mobile-optimized UI and temperature chart; 40 KiB gives
  * comfortable margin.
  */
-#define HTML_BUF_SIZE 40960
+#define HTML_BUF_SIZE 49152
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -132,7 +132,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     ".card-hdr .arr{color:#64748b;font-size:.7rem;transition:transform .25s}"
     ".card.open .arr{transform:rotate(180deg)}"
     ".card-body{max-height:0;overflow:hidden;transition:max-height .3s ease}"
-    ".card.open .card-body{max-height:1200px}"
+    ".card.open .card-body{max-height:2000px}"
     ".card-inner{padding:0 1rem 1rem}"
     /* Rows */
     ".row{display:flex;justify-content:space-between;align-items:center;"
@@ -178,6 +178,17 @@ static const char STATUS_HTML_TEMPLATE[] =
     /* LED preview */
     ".led-preview{width:100%%;height:28px;border-radius:8px;"
     "margin-top:.5rem;border:1px solid #334155}"
+    /* Tab bar */
+    ".tab-bar{display:flex;background:#1e293b;border-radius:12px;"
+    "margin-bottom:.75rem;overflow:hidden}"
+    ".tab{flex:1;padding:.65rem .3rem;background:none;border:none;"
+    "color:#64748b;font-size:.75rem;font-weight:600;cursor:pointer;"
+    "text-align:center;transition:color .2s,background .2s;"
+    "display:flex;flex-direction:column;align-items:center;gap:.2rem}"
+    ".tab .tab-icon{font-size:1.2rem}"
+    ".tab.active{color:#38bdf8;background:#334155}"
+    ".panel{display:none}"
+    ".panel.active{display:block}"
     /* Toast notification */
     ".toast{position:fixed;bottom:1.5rem;left:50%%;transform:translateX(-50%%);"
     "background:#334155;color:#e2e8f0;padding:.7rem 1.2rem;border-radius:10px;"
@@ -191,7 +202,22 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<body>"
     "<div class=\"wrap\">"
     "<h1>&#x1F41F; Aquarium Controller</h1>"
-    /* WiFi status card – always open */
+    /* ── Tab bar ── */
+    "<div class=\"tab-bar\">"
+    "<button class=\"tab active\" onclick=\"switchTab(0)\">"
+    "<span class=\"tab-icon\">&#x1F3E0;</span>Dashboard</button>"
+    "<button class=\"tab\" onclick=\"switchTab(1)\">"
+    "<span class=\"tab-icon\">&#x1F4A1;</span>Luci</button>"
+    "<button class=\"tab\" onclick=\"switchTab(2)\">"
+    "<span class=\"tab-icon\">&#x1F50C;</span>Rel&#xE8;</button>"
+    "<button class=\"tab\" onclick=\"switchTab(3)\">"
+    "<span class=\"tab-icon\">&#x1F4F1;</span>Telegram</button>"
+    "</div>"
+    /* ════════════════════════════════════════════════════════════════
+     *  Panel 0 – Dashboard (Riepilogo & Azioni Rapide)
+     * ════════════════════════════════════════════════════════════════ */
+    "<div class=\"panel active\" id=\"p0\">"
+    /* WiFi status card */
     "<div class=\"card open\" id=\"wifi-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
     "<h2>&#x1F4F6; Status</h2><span class=\"arr\">&#x25BC;</span></div>"
@@ -209,7 +235,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Uptime</span>"
     "<span class=\"value\">%s</span></div>"
     "</div></div></div>"
-    /* Water temperature card – always open */
+    /* Temperature card */
     "<div class=\"card open\" id=\"temp-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
     "<h2>&#x1F321;&#xFE0F; Temperature</h2>"
@@ -225,7 +251,36 @@ static const char STATUS_HTML_TEMPLATE[] =
     " style=\"width:100%%;height:200px;margin-top:.5rem;"
     "border-radius:8px;background:#0f172a\"></canvas>"
     "</div></div></div>"
-    /* LED control card – always open */
+    /* Quick Actions card */
+    "<div class=\"card open\" id=\"qa-card\">"
+    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x26A1; Quick Actions</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"card-body\"><div class=\"card-inner\">"
+    "<div class=\"row\"><span class=\"label\">LED</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"q-led\""
+    " onchange=\"toggleQuickLed()\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Scene</span>"
+    "<select class=\"fin\" id=\"q-scene\" onchange=\"sendQScene()\">"
+    "<option value=\"off\">&#x270B; Manual</option>"
+    "<option value=\"daylight\">&#x2600;&#xFE0F; Daylight</option>"
+    "<option value=\"sunrise\">&#x1F305; Sunrise</option>"
+    "<option value=\"sunset\">&#x1F307; Sunset</option>"
+    "<option value=\"moonlight\">&#x1F319; Moonlight</option>"
+    "<option value=\"cloudy\">&#x2601;&#xFE0F; Cloudy</option>"
+    "<option value=\"storm\">&#x26A1; Storm</option>"
+    "<option value=\"full_day_cycle\">&#x1F504; Full Day</option>"
+    "</select></div>"
+    "<div class=\"sect\">&#x1F50C; Relays</div>"
+    "<div id=\"q-relays\"></div>"
+    "</div></div></div>"
+    "</div>"
+    /* ════════════════════════════════════════════════════════════════
+     *  Panel 1 – Luci (Full Light Control)
+     * ════════════════════════════════════════════════════════════════ */
+    "<div class=\"panel\" id=\"p1\">"
+    /* LED control card */
     "<div class=\"card open\" id=\"led-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
     "<h2>&#x1F4A1; LED Control</h2>"
@@ -256,15 +311,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</select></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
     "</div></div></div>"
-    /* Relay control card – always open */
-    "<div class=\"card open\" id=\"relay-card\">"
-    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
-    "<h2>&#x1F50C; Relays</h2>"
-    "<span class=\"arr\">&#x25BC;</span></div>"
-    "<div class=\"card-body\"><div class=\"card-inner\">"
-    "<div id=\"relay-rows\"></div>"
-    "</div></div></div>"
-    /* Geolocation card – collapsed by default */
+    /* Geolocation card */
     "<div class=\"card\" id=\"geo-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
     "<h2>&#x1F30D; Geolocation</h2>"
@@ -285,8 +332,24 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"value\" id=\"geo-sunset\">--:--</span></div>"
     "<button class=\"btn\" onclick=\"sendGeo()\">Save Location</button>"
     "</div></div></div>"
-    /* Telegram card – collapsed by default */
-    "<div class=\"card\" id=\"tg-card\">"
+    "</div>"
+    /* ════════════════════════════════════════════════════════════════
+     *  Panel 2 – Relays
+     * ════════════════════════════════════════════════════════════════ */
+    "<div class=\"panel\" id=\"p2\">"
+    "<div class=\"card open\" id=\"relay-card\">"
+    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F50C; Relays</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"card-body\"><div class=\"card-inner\">"
+    "<div id=\"relay-rows\"></div>"
+    "</div></div></div>"
+    "</div>"
+    /* ════════════════════════════════════════════════════════════════
+     *  Panel 3 – Telegram
+     * ════════════════════════════════════════════════════════════════ */
+    "<div class=\"panel\" id=\"p3\">"
+    "<div class=\"card open\" id=\"tg-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
     "<h2>&#x1F4F1; Telegram</h2>"
     "<span class=\"arr\">&#x25BC;</span></div>"
@@ -349,9 +412,13 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"btn\" onclick=\"saveTg()\">Save Settings</button>"
     "</div></div></div>"
     "</div>"
+    /* ── end panels ── */
+    "</div>"
     /* Toast element */
     "<div class=\"toast\" id=\"toast\"></div>"
-    /* Scripts */
+    /* ════════════════════════════════════════════════════════════════
+     *  Scripts
+     * ════════════════════════════════════════════════════════════════ */
     "<script>"
     "function $(i){return document.getElementById(i)}"
     "function tog(hdr){hdr.parentElement.classList.toggle('open')}"
@@ -360,6 +427,21 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  t.className='toast '+(ok?'ok':'fail')+' show';"
     "  clearTimeout(t._t);t._t=setTimeout(function(){"
     "    t.className='toast'},2500)}"
+    /* ── Tab switching ── */
+    "var _tab=0;"
+    "function switchTab(n){"
+    "  var tabs=document.querySelectorAll('.tab');"
+    "  for(var i=0;i<4;i++){"
+    "    $('p'+i).classList.remove('active');"
+    "    tabs[i].classList.remove('active')}"
+    "  $('p'+n).classList.add('active');"
+    "  tabs[n].classList.add('active');"
+    "  _tab=n;"
+    "  if(n===0){loadTemp();loadHistory();loadQScene();loadQRelays()}"
+    "  if(n===1){loadLeds();loadScene();loadGeo()}"
+    "  if(n===2){loadRelays()}"
+    "  if(n===3){loadTg()}}"
+    /* ── Color helpers ── */
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
     "  g:parseInt(h.slice(3,5),16),"
@@ -376,8 +458,10 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  $('led-preview').style.background="
     "    'rgb('+Math.round(c.r*s)+','+Math.round(c.g*s)+','+"
     "    Math.round(c.b*s)+')'}"
+    /* ── LED control (Luci tab) ── */
     "function sendLed(){"
-    "  updatePreview();$('led-scene').value='off';"
+    "  updatePreview();"
+    "  $('led-scene').value='off';"
     "  var on=$('led-on').checked;"
     "  var br=parseInt($('led-br').value);"
     "  var c=hexToRgb($('led-color').value);"
@@ -385,25 +469,81 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    headers:{'Content-Type':'application/json'},"
     "    body:JSON.stringify({on:on,brightness:br,r:c.r,g:c.g,b:c.b})"
     "  }).then(function(r){return r.json()}).then(function(){"
+    "    $('q-led').checked=on;"
     "    toast('LED updated',1)}).catch(function(){"
     "    toast('LED error',0)})}"
-    "fetch('/api/leds').then(function(r){return r.json()})"
-    ".then(function(d){"
-    "  $('led-on').checked=d.on;"
-    "  $('led-br').value=d.brightness;"
-    "  $('br-val').textContent=d.brightness;"
-    "  $('led-color').value=rgbToHex(d.r,d.g,d.b);"
-    "  updatePreview()});"
+    "function loadLeds(){"
+    "  fetch('/api/leds').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('led-on').checked=d.on;"
+    "    $('led-br').value=d.brightness;"
+    "    $('br-val').textContent=d.brightness;"
+    "    $('led-color').value=rgbToHex(d.r,d.g,d.b);"
+    "    $('q-led').checked=d.on;"
+    "    updatePreview()})}"
+    /* ── Scene control (Luci tab) ── */
     "function sendScene(){"
     "  var s=$('led-scene').value;"
     "  fetch('/api/scenes',{method:'POST',"
     "    headers:{'Content-Type':'application/json'},"
     "    body:JSON.stringify({scene:s})"
     "  }).then(function(r){return r.json()}).then(function(){"
+    "    $('q-scene').value=s;"
     "    toast('Scene set',1)}).catch(function(){"
     "    toast('Scene error',0)})}"
-    "fetch('/api/scenes').then(function(r){return r.json()})"
-    ".then(function(d){$('led-scene').value=d.active_scene});"
+    "function loadScene(){"
+    "  fetch('/api/scenes').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('led-scene').value=d.active_scene;"
+    "    $('q-scene').value=d.active_scene})}"
+    /* ── Quick Actions (Dashboard) ── */
+    "function toggleQuickLed(){"
+    "  var on=$('q-led').checked;"
+    "  fetch('/api/leds',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({on:on})"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('LED '+(on?'ON':'OFF'),1)}).catch(function(){"
+    "    toast('LED error',0)})}"
+    "function sendQScene(){"
+    "  var s=$('q-scene').value;"
+    "  fetch('/api/scenes',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({scene:s})"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    $('led-scene').value=s;"
+    "    toast('Scene set',1)}).catch(function(){"
+    "    toast('Scene error',0)})}"
+    "function loadQScene(){"
+    "  fetch('/api/scenes').then(function(r){return r.json()})"
+    "  .then(function(d){$('q-scene').value=d.active_scene})}"
+    "function loadQRelays(){"
+    "  fetch('/api/relays').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    var c=$('q-relays');c.innerHTML='';"
+    "    d.relays.forEach(function(rl,i){"
+    "      var row=document.createElement('div');"
+    "      row.className='row';"
+    "      var lbl=document.createElement('span');"
+    "      lbl.className='label';lbl.textContent=rl.name;"
+    "      var tg=document.createElement('label');"
+    "      tg.className='toggle';"
+    "      var inp=document.createElement('input');"
+    "      inp.type='checkbox';inp.checked=rl.on;"
+    "      inp.onchange=function(){"
+    "        fetch('/api/relays',{method:'POST',"
+    "          headers:{'Content-Type':'application/json'},"
+    "          body:JSON.stringify({index:i,on:inp.checked})"
+    "        }).then(function(r){return r.json()}).then(function(){"
+    "          toast(rl.name+(inp.checked?' ON':' OFF'),1)})"
+    "        .catch(function(){toast('Relay error',0)})};"
+    "      var sl=document.createElement('span');"
+    "      sl.className='slider';"
+    "      tg.appendChild(inp);tg.appendChild(sl);"
+    "      row.appendChild(lbl);row.appendChild(tg);"
+    "      c.appendChild(row)})})"
+    "  .catch(function(){})}"
+    /* ── Geolocation (Luci tab) ── */
     "function loadGeo(){"
     "  fetch('/api/geolocation').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -424,7 +564,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    $('geo-sunset').textContent=d.sunset||'--:--';"
     "    toast('Location saved',1)"
     "  }).catch(function(){toast('Save failed',0)})}"
-    "loadGeo();"
+    /* ── Telegram (Telegram tab) ── */
     "function tgTs(id,ts){"
     "  var el=$(id);"
     "  if(ts>0){var d=Math.floor((Date.now()/1000-ts)/86400);"
@@ -486,8 +626,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  .then(function(r){return r.json()}).then(function(d){"
     "    tgTs('tg-fertlast',d.last_fertilizer);"
     "    toast('Fertilizer recorded',1)})}"
-    "loadTg();"
-    /* ── Relay control ── */
+    /* ── Relay control (Relay tab) ── */
     "function loadRelays(){"
     "  fetch('/api/relays').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -523,7 +662,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "      row.appendChild(lbl);row.appendChild(tg);"
     "      c.appendChild(row)})})"
     "  .catch(function(){})}"
-    "loadRelays();"
+    /* ── Temperature ── */
     "function loadTemp(){"
     "  fetch('/api/temperature').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -533,7 +672,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    else{el.textContent='No sensor';el.className='value err'}"
     "  }).catch(function(){var el=$('temp-val');"
     "    el.textContent='Error';el.className='value err'})}"
-    "loadTemp();setInterval(loadTemp,5000);"
     /* ── Temperature chart ── */
     "function drawChart(samples){"
     "  var cv=$('temp-chart');if(!cv)return;"
@@ -602,7 +740,12 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  fetch('/api/temperature_history').then(function(r){return r.json()})"
     "  .then(function(d){drawChart(d.samples)})"
     "  .catch(function(){})}"
+    /* ── Initial data load (Dashboard is default tab) ── */
+    "loadTemp();setInterval(loadTemp,5000);"
     "loadHistory();setInterval(loadHistory,60000);"
+    "loadQScene();loadQRelays();"
+    "fetch('/api/leds').then(function(r){return r.json()})"
+    ".then(function(d){$('q-led').checked=d.on});"
     "</script>"
     "</body></html>";
 
