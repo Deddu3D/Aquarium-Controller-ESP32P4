@@ -23,6 +23,10 @@
 
 static const char *TAG = "temp_hist";
 
+/* Task parameters */
+#define HISTORY_TASK_STACK  3072
+#define HISTORY_TASK_PRIO   4
+
 /* ── Ring buffer ─────────────────────────────────────────────────── */
 
 static temp_sample_t     s_ring[TEMP_HISTORY_MAX_SAMPLES];
@@ -76,7 +80,8 @@ esp_err_t temperature_history_init(void)
     s_count = 0;
 
     BaseType_t ret = xTaskCreate(history_task, "temp_hist",
-                                 3072, NULL, 4, NULL);
+                                 HISTORY_TASK_STACK, NULL,
+                                 HISTORY_TASK_PRIO, NULL);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create history task");
         return ESP_ERR_NO_MEM;
