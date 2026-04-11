@@ -23,6 +23,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "led_controller.h"
+#include "led_scenes.h"
 
 static const char *TAG = "web_srv";
 
@@ -89,10 +90,10 @@ static void get_wifi_status(wifi_status_t *out)
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
 /*
- * Buffer size for the rendered HTML page.  STATUS_HTML_TEMPLATE is roughly
- * 5 100 bytes after printf substitution, so 6 KiB gives comfortable margin.
+ * Buffer size for the rendered HTML page.  The template is roughly
+ * 6200 bytes after printf substitution, so 8 KiB gives comfortable margin.
  */
-#define HTML_BUF_SIZE 6144
+#define HTML_BUF_SIZE 8192
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -140,6 +141,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "                     border-radius: 6px; cursor: pointer; background: none; }"
     ".led-preview { width: 100%%; height: 24px; border-radius: 8px;"
     "               margin-top: .5rem; border: 1px solid #334155; }"
+    "select { background: #334155; color: #e2e8f0; border: 1px solid #475569;"
+    "         border-radius: 6px; padding: .3rem .5rem; font-size: .9rem; }"
     "</style>"
     "</head>"
     "<body>"
@@ -174,6 +177,17 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Color</span>"
     "<input type=\"color\" id=\"led-color\" value=\"#ffffff\""
     " onchange=\"sendLed()\"></div>"
+    "<div class=\"row\"><span class=\"label\">Scene</span>"
+    "<select id=\"led-scene\" onchange=\"sendScene()\">"
+    "<option value=\"off\">&#x270B; Manual</option>"
+    "<option value=\"daylight\">&#x2600;&#xFE0F; Daylight</option>"
+    "<option value=\"sunrise\">&#x1F305; Sunrise</option>"
+    "<option value=\"sunset\">&#x1F307; Sunset</option>"
+    "<option value=\"moonlight\">&#x1F319; Moonlight</option>"
+    "<option value=\"cloudy\">&#x2601;&#xFE0F; Cloudy</option>"
+    "<option value=\"storm\">&#x26A1; Storm</option>"
+    "<option value=\"full_day_cycle\">&#x1F504; Full Day</option>"
+    "</select></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
     "</div>"
     /* Scripts */
@@ -196,6 +210,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    'rgb('+Math.round(c.r*s)+','+Math.round(c.g*s)+','+Math.round(c.b*s)+')';}"
     "function sendLed(){"
     "  updatePreview();"
+    "  document.getElementById('led-scene').value='off';"
     "  var on=document.getElementById('led-on').checked;"
     "  var br=parseInt(document.getElementById('led-br').value);"
     "  var c=hexToRgb(document.getElementById('led-color').value);"
@@ -212,6 +227,17 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  document.getElementById('br-val').textContent=d.brightness;"
     "  document.getElementById('led-color').value=rgbToHex(d.r,d.g,d.b);"
     "  updatePreview();});"
+    "function sendScene(){"
+    "  var s=document.getElementById('led-scene').value;"
+    "  fetch('/api/scenes',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({scene:s})"
+    "  }).then(function(r){return r.json();}).then(function(d){"
+    "    console.log('Scene:',d);}).catch(function(e){"
+    "    console.error('Scene err',e);});}"
+    "fetch('/api/scenes').then(function(r){return r.json();})"
+    ".then(function(d){"
+    "  document.getElementById('led-scene').value=d.active_scene;});"
     "</script>"
     "</body></html>";
 
@@ -337,6 +363,25 @@ static int json_get_bool(const char *json, const char *key)
     return -1;
 }
 
+/**
+ * @brief Extract a string value for "key":"value" in a JSON-like string.
+ *        Returns 0 on success, -1 if key not found.
+ */
+static int json_get_str(const char *json, const char *key, char *out, size_t out_size)
+{
+    const char *p = strstr(json, key);
+    if (!p) return -1;
+    p += strlen(key);
+    /* skip ": and spaces */
+    while (*p && (*p == '"' || *p == ':' || *p == ' ')) p++;
+    size_t i = 0;
+    while (*p && *p != '"' && *p != ',' && *p != '}' && i < out_size - 1) {
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return (i > 0) ? 0 : -1;
+}
+
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
 {
     char buf[256];
@@ -348,6 +393,9 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
     buf[received] = '\0';
 
     ESP_LOGI(TAG, "LED POST body: %s", buf);
+
+    /* Stop any active scene when manual control is used */
+    led_scenes_stop();
 
     /* Parse fields */
     int on_val = json_get_bool(buf, "\"on\"");
@@ -380,6 +428,46 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
     return api_leds_get_handler(req);
 }
 
+/* ── Scene status endpoint (/api/scenes  GET) ────────────────────── */
+
+static esp_err_t api_scenes_get_handler(httpd_req_t *req)
+{
+    const char *active = led_scenes_get_name(led_scenes_get());
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"active_scene\":\"%s\","
+        "\"scenes\":[\"off\",\"daylight\",\"sunrise\",\"sunset\","
+        "\"moonlight\",\"cloudy\",\"storm\",\"full_day_cycle\"]}",
+        active);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Scene control endpoint (/api/scenes  POST) ──────────────────── */
+
+static esp_err_t api_scenes_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "Scene POST body: %s", buf);
+
+    char scene_name[32];
+    if (json_get_str(buf, "\"scene\"", scene_name, sizeof(scene_name)) == 0) {
+        led_scene_t scene = led_scenes_from_name(scene_name);
+        led_scenes_set(scene);
+    }
+
+    return api_scenes_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -410,6 +498,20 @@ static const httpd_uri_t uri_api_leds_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_scenes_get = {
+    .uri      = "/api/scenes",
+    .method   = HTTP_GET,
+    .handler  = api_scenes_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_scenes_post = {
+    .uri      = "/api/scenes",
+    .method   = HTTP_POST,
+    .handler  = api_scenes_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -434,6 +536,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_status);
     httpd_register_uri_handler(s_server, &uri_api_leds_get);
     httpd_register_uri_handler(s_server, &uri_api_leds_post);
+    httpd_register_uri_handler(s_server, &uri_api_scenes_get);
+    httpd_register_uri_handler(s_server, &uri_api_scenes_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;
