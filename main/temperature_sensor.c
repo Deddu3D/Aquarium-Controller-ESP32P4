@@ -13,6 +13,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include "esp_log.h"
 
@@ -30,9 +31,10 @@ static ds18b20_device_handle_t s_devices[MAX_DS18B20];
 static int                     s_device_count;
 static onewire_bus_handle_t    s_bus;
 
-/* Cached reading – access is atomic for a single float on 32-bit MCU */
-static volatile float s_temperature;
-static volatile bool  s_valid;
+/* Cached reading – protected by mutex for safe cross-task access */
+static SemaphoreHandle_t s_mutex;
+static float s_temperature;
+static bool  s_valid;
 
 /* ── Reading task ────────────────────────────────────────────────── */
 
@@ -55,12 +57,16 @@ static void temperature_task(void *arg)
         float temp = 0.0f;
         err = ds18b20_get_temperature(s_devices[0], &temp);
         if (err == ESP_OK) {
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_temperature = temp;
             s_valid = true;
+            xSemaphoreGive(s_mutex);
             ESP_LOGI(TAG, "Water temperature: %.2f °C", temp);
         } else {
             ESP_LOGW(TAG, "Read failed: %s", esp_err_to_name(err));
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_valid = false;
+            xSemaphoreGive(s_mutex);
         }
 
         vTaskDelay(interval);
@@ -71,6 +77,12 @@ static void temperature_task(void *arg)
 
 esp_err_t temperature_sensor_init(void)
 {
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     /* 1. Create the 1-Wire bus using the RMT peripheral */
     onewire_bus_config_t bus_cfg = {
         .bus_gpio_num = CONFIG_DS18B20_GPIO,
@@ -130,9 +142,15 @@ esp_err_t temperature_sensor_init(void)
 
 bool temperature_sensor_get(float *temp_c)
 {
-    if (!s_valid || temp_c == NULL) {
+    if (temp_c == NULL) {
         return false;
     }
-    *temp_c = s_temperature;
-    return true;
+    bool valid;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    valid = s_valid;
+    if (valid) {
+        *temp_c = s_temperature;
+    }
+    xSemaphoreGive(s_mutex);
+    return valid;
 }
