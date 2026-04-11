@@ -68,6 +68,27 @@ static void json_escape(const char *src, char *dst, size_t dst_size)
 }
 
 /**
+ * @brief Escape a string for safe inclusion in HTML output.
+ *
+ * Prevents XSS injection by replacing &, <, >, ", ' with HTML entities.
+ */
+static void html_escape(const char *src, char *dst, size_t dst_size)
+{
+    size_t j = 0;
+    for (size_t i = 0; src[i] != '\0' && j + 6 < dst_size; i++) {
+        switch (src[i]) {
+        case '&':  j += snprintf(dst + j, dst_size - j, "&amp;");   break;
+        case '<':  j += snprintf(dst + j, dst_size - j, "&lt;");    break;
+        case '>':  j += snprintf(dst + j, dst_size - j, "&gt;");    break;
+        case '"':  j += snprintf(dst + j, dst_size - j, "&quot;");  break;
+        case '\'': j += snprintf(dst + j, dst_size - j, "&#x27;"); break;
+        default:   dst[j++] = src[i]; break;
+        }
+    }
+    dst[j] = '\0';
+}
+
+/**
  * @brief Fill a wifi_status_t struct with current WiFi information.
  */
 typedef struct {
@@ -830,6 +851,10 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     char uptime[32];
     snprintf(uptime, sizeof(uptime), "%dh %dm %ds", h, m, s);
 
+    /* HTML-escape the SSID to prevent XSS injection */
+    char escaped_ssid[128];
+    html_escape(ws.connected ? ws.ssid : "\xe2\x80\x94" /* — */, escaped_ssid, sizeof(escaped_ssid));
+
     /* Render HTML – heap-allocated to avoid httpd task stack overflow */
     char *buf = malloc(HTML_BUF_SIZE);
     if (buf == NULL) {
@@ -841,8 +866,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     int len = snprintf(buf, HTML_BUF_SIZE, STATUS_HTML_TEMPLATE,
                        ws.connected ? "ok" : "err",
                        ws.connected ? "Connected" : "Disconnected",
-                       ws.connected ? ws.ip : "—",
-                       ws.connected ? ws.ssid : "—",
+                       ws.connected ? ws.ip : "\xe2\x80\x94" /* — */,
+                       escaped_ssid,
                        ws.connected ? ws.rssi : 0,
                        esp_get_free_heap_size(),
                        uptime);
