@@ -151,10 +151,22 @@ esp_err_t geolocation_set(const geolocation_config_t *cfg)
         return err;
     }
 
-    nvs_set_double(h, NVS_KEY_LAT, safe.latitude);
-    nvs_set_double(h, NVS_KEY_LNG, safe.longitude);
-    nvs_set_i32(h, NVS_KEY_UTC_OFF, (int32_t)safe.utc_offset_min);
-    nvs_commit(h);
+    err = nvs_set_double(h, NVS_KEY_LAT, safe.latitude);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_double(lat) failed: %s", esp_err_to_name(err));
+    }
+    err = nvs_set_double(h, NVS_KEY_LNG, safe.longitude);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_double(lng) failed: %s", esp_err_to_name(err));
+    }
+    err = nvs_set_i32(h, NVS_KEY_UTC_OFF, (int32_t)safe.utc_offset_min);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_i32(utc_off) failed: %s", esp_err_to_name(err));
+    }
+    err = nvs_commit(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
+    }
     nvs_close(h);
 
     /* Update in-memory copy */

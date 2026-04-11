@@ -87,12 +87,19 @@ static void nvs_save_state(int index)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed for relay state save");
         return;
     }
     char key[12];
     snprintf(key, sizeof(key), "on%d", index);
-    nvs_set_u8(h, key, s_relay[index].on ? 1 : 0);
-    nvs_commit(h);
+    esp_err_t err = nvs_set_u8(h, key, s_relay[index].on ? 1 : 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_u8(%s) failed: %s", key, esp_err_to_name(err));
+    }
+    err = nvs_commit(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
+    }
     nvs_close(h);
 }
 
@@ -100,12 +107,19 @@ static void nvs_save_name(int index)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed for relay name save");
         return;
     }
     char key[12];
     snprintf(key, sizeof(key), "name%d", index);
-    nvs_set_str(h, key, s_relay[index].name);
-    nvs_commit(h);
+    esp_err_t err = nvs_set_str(h, key, s_relay[index].name);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_set_str(%s) failed: %s", key, esp_err_to_name(err));
+    }
+    err = nvs_commit(h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
+    }
     nvs_close(h);
 }
 

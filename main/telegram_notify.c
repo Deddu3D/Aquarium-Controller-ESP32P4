@@ -276,7 +276,15 @@ static esp_err_t send_telegram_message(const char *token, const char *chat_id,
         esp_http_client_cleanup(client);
 
         if (err == ESP_OK) {
-            break;   /* success – no need to retry */
+            /* Do not retry on 4xx client errors (bad token, wrong chat_id,
+             * malformed request) – these won't succeed on the next attempt. */
+            if (status >= 400 && status < 500) {
+                ESP_LOGE(TAG, "Telegram API returned HTTP %d – "
+                         "permanent error, check bot_token / chat_id", status);
+                free(body);
+                return ESP_FAIL;
+            }
+            break;   /* success or 5xx – stop retrying on success */
         }
 
         ESP_LOGE(TAG, "HTTP request failed (attempt %d/%d): %s",

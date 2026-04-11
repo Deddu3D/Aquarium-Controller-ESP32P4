@@ -1342,6 +1342,16 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
         cfg.temp_high_c = (float)dval;
     if (json_get_double(buf, "\"temp_low_c\"", &dval) == 0)
         cfg.temp_low_c = (float)dval;
+
+    /* Enforce temp_high > temp_low – swap if needed */
+    if (cfg.temp_high_c <= cfg.temp_low_c) {
+        float tmp = cfg.temp_high_c;
+        cfg.temp_high_c = cfg.temp_low_c + 0.5f;
+        if (tmp < cfg.temp_low_c) {
+            cfg.temp_low_c = tmp;
+        }
+    }
+
     if (json_get_double(buf, "\"water_change_days\"", &dval) == 0)
         cfg.water_change_days = (int)dval;
     if (json_get_double(buf, "\"fertilizer_days\"", &dval) == 0)
@@ -1474,7 +1484,10 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     /* Apply name if provided */
     char name[RELAY_NAME_MAX];
     if (json_get_str(buf, "\"name\"", name, sizeof(name)) == 0) {
-        relay_controller_set_name(idx, name);
+        /* Reject empty names */
+        if (name[0] != '\0') {
+            relay_controller_set_name(idx, name);
+        }
     }
 
     /* Respond with full relay state */
