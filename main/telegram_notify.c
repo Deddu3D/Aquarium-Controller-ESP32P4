@@ -202,15 +202,29 @@ static void json_msg_escape(const char *src, char *dst, size_t dst_size)
 static esp_err_t send_telegram_message(const char *token, const char *chat_id,
                                        const char *text)
 {
-    /* Rate limiting – avoid flooding the Telegram API */
+    /* Rate limiting – avoid flooding the Telegram API.
+     * s_last_send_time_us is accessed under s_mutex for thread safety
+     * since this function can be called from both the telegram task
+     * and the HTTP server task (via telegram_notify_send).            */
     int64_t now_us = esp_timer_get_time();
-    int64_t elapsed_ms = (now_us - s_last_send_time_us) / 1000;
+    int64_t elapsed_ms;
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        elapsed_ms = (now_us - s_last_send_time_us) / 1000;
+        xSemaphoreGive(s_mutex);
+    } else {
+        elapsed_ms = SEND_RATE_LIMIT_MS;   /* skip if mutex not ready */
+    }
     if (s_last_send_time_us > 0 && elapsed_ms < SEND_RATE_LIMIT_MS) {
         int delay_ms = (int)(SEND_RATE_LIMIT_MS - elapsed_ms);
         ESP_LOGD(TAG, "Rate limit: waiting %d ms before next send", delay_ms);
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
-    s_last_send_time_us = esp_timer_get_time();
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_last_send_time_us = esp_timer_get_time();
+        xSemaphoreGive(s_mutex);
+    }
 
     /* Guard: TLS certificate validation requires a valid system clock.
      * If SNTP has not synchronised yet the handshake will fail with

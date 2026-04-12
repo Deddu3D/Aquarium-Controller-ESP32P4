@@ -243,8 +243,6 @@ static void ota_task(void *arg)
     /* Give the web UI time to poll the final status */
     vTaskDelay(pdMS_TO_TICKS(3000));
     esp_restart();
-
-    vTaskDelete(NULL);   /* unreachable after restart */
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
