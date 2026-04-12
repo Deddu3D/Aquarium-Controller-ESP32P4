@@ -37,6 +37,8 @@
 #include "relay_controller.h"
 #include "duckdns.h"
 #include "auto_heater.h"
+#include "display_driver.h"
+#include "display_ui.h"
 
 static const char *TAG = "aquarium";
 
@@ -186,6 +188,18 @@ void app_main(void)
         ESP_LOGI(TAG, "DuckDNS client ready");
     }
 
+    /* ── 9b. Initialise MIPI DSI display + LVGL + touch ───────────── */
+    ret = display_driver_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Display init failed (0x%x) – continuing without display", ret);
+    } else {
+        ESP_LOGI(TAG, "MIPI DSI display ready (800x480)");
+        ret = display_ui_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Display UI init failed (0x%x)", ret);
+        }
+    }
+
     /* ── 10. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
@@ -210,6 +224,9 @@ void app_main(void)
 
         /* Evaluate auto-heater thermostat logic */
         auto_heater_tick();
+
+        /* Refresh on-screen LVGL dashboard */
+        display_ui_refresh();
 
         esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */

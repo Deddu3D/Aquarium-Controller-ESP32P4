@@ -150,3 +150,52 @@ menu "Aquarium Relay Settings"
             When disabled (default), GPIO HIGH = relay ON.
 
 endmenu
+
+menu "Aquarium MIPI DSI Display Settings"
+
+    config DISPLAY_BK_LIGHT_GPIO
+        int "LCD backlight GPIO"
+        default 26
+        help
+            GPIO pin connected to the LCD backlight enable line.
+            On the Waveshare ESP32-P4-WiFi6 board this is typically GPIO 26.
+            Set to -1 to disable software backlight control.
+
+    config DISPLAY_RST_GPIO
+        int "LCD reset GPIO"
+        default 27
+        help
+            GPIO pin connected to the LCD panel reset line.
+            On the Waveshare ESP32-P4-WiFi6 board this is typically GPIO 27.
+            Set to -1 if the panel has no dedicated reset pin.
+
+    config DISPLAY_TOUCH_I2C_SDA_GPIO
+        int "Touch I2C SDA GPIO"
+        default 7
+        help
+            GPIO pin for the GT911 touch controller I2C data line (SDA).
+            Default is GPIO 7 for the Waveshare ESP32-P4-WiFi6 DSI connector.
+
+    config DISPLAY_TOUCH_I2C_SCL_GPIO
+        int "Touch I2C SCL GPIO"
+        default 9
+        help
+            GPIO pin for the GT911 touch controller I2C clock line (SCL).
+            Default is GPIO 9 for the Waveshare ESP32-P4-WiFi6 DSI connector.
+            Ensure this does not conflict with other peripherals (e.g. LED strip).
+
+    config DISPLAY_TOUCH_INT_GPIO
+        int "Touch interrupt GPIO (-1 = polling)"
+        default -1
+        help
+            GPIO pin for the GT911 INT (interrupt) line.
+            Set to -1 to use polling mode (default).
+
+    config DISPLAY_TOUCH_RST_GPIO
+        int "Touch reset GPIO (-1 = no reset)"
+        default -1
+        help
+            GPIO pin for the GT911 RST (reset) line.
+            Set to -1 if not wired.
+
+endmenu
