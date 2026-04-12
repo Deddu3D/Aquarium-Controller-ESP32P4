@@ -80,6 +80,7 @@ void app_main(void)
     }
 
     /* ── 2. Bring up WiFi via C6 coprocessor ──────────────────── */
+    esp_task_wdt_reset();
     ret = wifi_manager_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
@@ -107,6 +108,7 @@ void app_main(void)
     }
 
     /* ── 4. Start SNTP time synchronisation ─────────────────── */
+    esp_task_wdt_reset();
     if (wifi_manager_is_connected()) {
         esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
         esp_netif_sntp_init(&sntp_cfg);
@@ -129,6 +131,7 @@ void app_main(void)
     }
 
     /* ── 5. Initialise LED strip ────────────────────────────────── */
+    esp_task_wdt_reset();
     ret = led_controller_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LED strip init failed (0x%x)", ret);
@@ -143,6 +146,7 @@ void app_main(void)
     }
 
     /* ── 6. Initialise DS18B20 water temperature sensor ─────────── */
+    esp_task_wdt_reset();
     ret = temperature_sensor_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DS18B20 init failed (0x%x) – continuing without temperature", ret);
@@ -157,6 +161,7 @@ void app_main(void)
     }
 
     /* ── 7. Initialise Telegram notification service ────────────── */
+    esp_task_wdt_reset();
     ret = telegram_notify_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Telegram init failed (0x%x) – continuing without notifications", ret);
@@ -165,6 +170,7 @@ void app_main(void)
     }
 
     /* ── 8. Initialise 4-channel relay controller ────────────────── */
+    esp_task_wdt_reset();
     ret = relay_controller_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Relay controller init failed (0x%x)", ret);
@@ -173,6 +179,7 @@ void app_main(void)
     }
 
     /* ── 8b. Initialise auto-heater thermostat ───────────────────── */
+    esp_task_wdt_reset();
     ret = auto_heater_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Auto-heater init failed (0x%x)", ret);
@@ -181,6 +188,7 @@ void app_main(void)
     }
 
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
+    esp_task_wdt_reset();
     ret = duckdns_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DuckDNS init failed (0x%x)", ret);
@@ -189,7 +197,14 @@ void app_main(void)
     }
 
     /* ── 9b. Initialise MIPI DSI display + LVGL + touch ───────────── */
+    /* The ILI9881C panel init sends many DSI commands with busy-wait
+     * read-backs in the HAL. Temporarily remove the main task from WDT
+     * monitoring so these blocking exchanges do not trigger a timeout. */
+    esp_task_wdt_reset();
+    esp_task_wdt_delete(NULL);
     ret = display_driver_init();
+    esp_task_wdt_add(NULL);
+    esp_task_wdt_reset();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Display init failed (0x%x) – continuing without display", ret);
     } else {
