@@ -206,9 +206,21 @@ esp_err_t display_driver_init(void)
     }
 
     /* ── 6. Reset, init and turn on the panel ─────────────────────── */
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(dpi_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(dpi_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(dpi_panel, true));
+    ret = esp_lcd_panel_reset(dpi_panel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Panel reset failed: 0x%x", ret);
+        return ret;
+    }
+    ret = esp_lcd_panel_init(dpi_panel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Panel init failed: 0x%x", ret);
+        return ret;
+    }
+    ret = esp_lcd_panel_disp_on_off(dpi_panel, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Panel display-on failed: 0x%x", ret);
+        return ret;
+    }
 
     /* Turn on backlight */
 #if CONFIG_DISPLAY_BK_LIGHT_GPIO >= 0
@@ -287,8 +299,12 @@ esp_err_t display_driver_init(void)
     esp_lcd_dpi_panel_event_callbacks_t panel_cbs = {
         .on_color_trans_done = dpi_flush_ready_cb,
     };
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(
-        dpi_panel, &panel_cbs, s_display));
+    ret = esp_lcd_dpi_panel_register_event_callbacks(
+        dpi_panel, &panel_cbs, s_display);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DPI panel event callback registration failed: 0x%x", ret);
+        return ret;
+    }
 
     /* Register LVGL touch input device (if touch available) */
     if (s_touch) {
@@ -305,9 +321,16 @@ esp_err_t display_driver_init(void)
         .name     = "lvgl_tick",
     };
     esp_timer_handle_t tick_timer = NULL;
-    ESP_ERROR_CHECK(esp_timer_create(&tick_args, &tick_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer,
-                                             LVGL_TICK_PERIOD_MS * 1000));
+    ret = esp_timer_create(&tick_args, &tick_timer);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL tick timer create failed: 0x%x", ret);
+        return ret;
+    }
+    ret = esp_timer_start_periodic(tick_timer, LVGL_TICK_PERIOD_MS * 1000);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LVGL tick timer start failed: 0x%x", ret);
+        return ret;
+    }
 
     /* ── 11. Start LVGL handler task ──────────────────────────────── */
     BaseType_t xr = xTaskCreate(lvgl_task, "lvgl", LVGL_TASK_STACK_SIZE,
