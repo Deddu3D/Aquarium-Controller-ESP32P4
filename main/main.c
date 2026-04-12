@@ -215,15 +215,17 @@ void app_main(void)
     }
 
     /* ── 9b. Initialise MIPI DSI display + LVGL + touch ───────────── */
-    /* Run display init in a background task so that a disconnected
-     * panel does not block the web server and other services.
-     * The ILI9881C panel init sends many DSI commands with busy-wait
-     * read-backs; if no display is connected, these may hang
-     * indefinitely – a separate task isolates the rest of the system. */
+    /* Run display init in a background task **pinned to CPU 1** so
+     * that the ILI9881C busy-wait DSI read-backs cannot starve the
+     * main task on CPU 0 (which feeds the task watchdog).
+     * If no display is connected these polls may spin indefinitely –
+     * isolating them on the second core keeps every other service
+     * (WiFi, web server, sensors, relays) fully responsive.          */
     esp_task_wdt_reset();
     {
-        BaseType_t xr = xTaskCreate(display_init_task, "disp_init",
-                                    8192, NULL, 5, NULL);
+        BaseType_t xr = xTaskCreatePinnedToCore(
+                            display_init_task, "disp_init",
+                            8192, NULL, 5, NULL, 1);  /* pin to CPU 1 */
         if (xr != pdPASS) {
             ESP_LOGE(TAG, "Failed to create display init task");
         }
