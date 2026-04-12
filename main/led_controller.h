@@ -139,6 +139,37 @@ esp_err_t led_controller_fade_off(uint32_t duration_ms);
  */
 bool led_controller_is_fading(void);
 
+/**
+ * @brief Cancel any running fade ramp immediately.
+ *
+ * Stops the background ramp timer without changing the current
+ * brightness or on/off state.  Safe to call even when no ramp
+ * is active.
+ */
+void led_controller_cancel_fade(void);
+
+/**
+ * @brief Acquire the LED controller mutex.
+ *
+ * Use this together with @ref led_controller_unlock to serialise
+ * multi-step pixel updates (set_pixel + refresh) with other tasks
+ * that drive the LED strip.  The caller must not call any other
+ * public LED controller function that internally acquires the
+ * same mutex while holding the lock (e.g. set_brightness,
+ * set_color, on, off, fade_on, fade_off).
+ *
+ * Safe to call from any FreeRTOS task; blocks until the mutex
+ * is available.
+ */
+void led_controller_lock(void);
+
+/**
+ * @brief Release the LED controller mutex.
+ *
+ * Must be called exactly once for every @ref led_controller_lock.
+ */
+void led_controller_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif

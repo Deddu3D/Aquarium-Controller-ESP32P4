@@ -438,3 +438,24 @@ bool led_controller_is_fading(void)
     xSemaphoreGive(s_mutex);
     return fading;
 }
+
+void led_controller_cancel_fade(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_ramp_active && s_ramp_timer != NULL) {
+        esp_timer_stop(s_ramp_timer);
+        s_ramp_active = false;
+        ESP_LOGI(TAG, "Fade ramp cancelled");
+    }
+    xSemaphoreGive(s_mutex);
+}
+
+void led_controller_lock(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+}
+
+void led_controller_unlock(void)
+{
+    xSemaphoreGive(s_mutex);
+}
