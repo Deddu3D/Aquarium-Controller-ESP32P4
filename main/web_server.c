@@ -643,7 +643,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "var _tab=0;"
     "function switchTab(n){"
     "  var tabs=document.querySelectorAll('.tab');"
-    "  for(var i=0;i<4;i++){"
+    "  for(var i=0;i<tabs.length;i++){"
     "    $('p'+i).classList.remove('active');"
     "    tabs[i].classList.remove('active')}"
     "  $('p'+n).classList.add('active');"
@@ -1178,10 +1178,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "setInterval(loadTemp,5000);"
     "setInterval(loadHistory,60000);"
     "</script>"
-    "</body></html>"
-    "";
-
-
+    "</body></html>";
 
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
@@ -1199,7 +1196,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     time_t now_t = time(NULL);
     struct tm ti;
     localtime_r(&now_t, &ti);
-    const char *ntp_status = (ti.tm_year >= (2024 - 1900)) ? "OK" : "No sync";
+    const char *ntp_status = (ti.tm_year >= (2024 - 1900)) ? "OK" : "Non sincr.";
 
     /* Running OTA partition label */
     const esp_partition_t *part = esp_ota_get_running_partition();
