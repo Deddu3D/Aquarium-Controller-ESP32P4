@@ -32,6 +32,8 @@
 #include "telegram_notify.h"
 #include "relay_controller.h"
 #include "duckdns.h"
+#include "ota_update.h"
+#include "auto_heater.h"
 
 static const char *TAG = "web_srv";
 
@@ -138,7 +140,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_GEO_BUF_SIZE      384
 #define JSON_TG_BUF_SIZE       768
 #define JSON_DDNS_BUF_SIZE     384
-#define JSON_RELAY_CHUNK_SIZE  128
+#define JSON_RELAY_CHUNK_SIZE  256
 #define JSON_TEMP_CHUNK_SIZE   64
 
 /* HTTP request body receive sizes */
@@ -151,7 +153,7 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  25
+#define HTTP_MAX_URI_HANDLERS  30
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -1011,6 +1013,54 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+/* ── Health check endpoint (/api/health  GET) ────────────────────── */
+
+/**
+ * @brief Lightweight health check endpoint for monitoring.
+ *
+ * Returns a JSON object with overall system health, subsystem status,
+ * free heap memory, minimum free heap, and uptime.  Useful for
+ * external monitoring tools and availability checks.
+ */
+static esp_err_t api_health_get_handler(httpd_req_t *req)
+{
+    bool wifi_ok = wifi_manager_is_connected();
+
+    float temp_c = 0.0f;
+    bool temp_ok = temperature_sensor_get(&temp_c);
+
+    bool led_ok  = (led_controller_get_num_leds() > 0);
+
+    /* Overall health: all critical subsystems must be OK */
+    bool healthy = wifi_ok;   /* WiFi is the only hard requirement */
+
+    int64_t uptime_s = esp_timer_get_time() / 1000000;
+
+    char buf[384];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"healthy\":%s,"
+        "\"wifi\":%s,"
+        "\"temperature_sensor\":%s,"
+        "\"led_strip\":%s,"
+        "\"scene\":\"%s\","
+        "\"temp_c\":%.1f,"
+        "\"free_heap\":%" PRIu32 ","
+        "\"min_free_heap\":%" PRIu32 ","
+        "\"uptime_s\":%" PRId64 "}",
+        healthy ? "true" : "false",
+        wifi_ok ? "true" : "false",
+        temp_ok ? "true" : "false",
+        led_ok  ? "true" : "false",
+        led_scenes_get_name(led_scenes_get()),
+        temp_ok ? (double)temp_c : 0.0,
+        esp_get_free_heap_size(),
+        esp_get_minimum_free_heap_size(),
+        uptime_s);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
 /* ── LED status endpoint (/api/leds  GET) ─────────────────────────── */
 
 static esp_err_t api_leds_get_handler(httpd_req_t *req)
@@ -1602,11 +1652,15 @@ static esp_err_t api_relays_get_handler(httpd_req_t *req)
     for (int i = 0; i < RELAY_COUNT; i++) {
         json_escape(relays[i].name, escaped_name, sizeof(escaped_name));
         n = snprintf(chunk, sizeof(chunk),
-            "%s{\"index\":%d,\"on\":%s,\"name\":\"%s\"}",
+            "%s{\"index\":%d,\"on\":%s,\"name\":\"%s\","
+            "\"schedule\":{\"enabled\":%s,\"on_min\":%d,\"off_min\":%d}}",
             i > 0 ? "," : "",
             i,
             relays[i].on ? "true" : "false",
-            escaped_name);
+            escaped_name,
+            relays[i].schedule.enabled ? "true" : "false",
+            relays[i].schedule.on_min,
+            relays[i].schedule.off_min);
         httpd_resp_send_chunk(req, chunk, n);
     }
 
@@ -1648,6 +1702,29 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
         if (name[0] != '\0') {
             relay_controller_set_name(idx, name);
         }
+    }
+
+    /* Apply schedule if provided */
+    int sched_en = json_get_bool(buf, "\"schedule_enabled\"");
+    if (sched_en >= 0) {
+        /* Read current schedule, then update provided fields */
+        relay_state_t all[RELAY_COUNT];
+        relay_controller_get_all(all);
+        relay_schedule_t sched = all[idx].schedule;
+
+        sched.enabled = (sched_en == 1);
+
+        double dval;
+        if (json_get_double(buf, "\"schedule_on_min\"", &dval) == 0) {
+            int v = (int)dval;
+            if (v >= 0 && v <= 1439) sched.on_min = (uint16_t)v;
+        }
+        if (json_get_double(buf, "\"schedule_off_min\"", &dval) == 0) {
+            int v = (int)dval;
+            if (v >= 0 && v <= 1439) sched.off_min = (uint16_t)v;
+        }
+
+        relay_controller_set_schedule(idx, &sched);
     }
 
     /* Respond with full relay state */
@@ -1738,6 +1815,127 @@ static esp_err_t api_duckdns_update_handler(httpd_req_t *req)
     return httpd_resp_send(req, resp, len);
 }
 
+/* ── Auto-heater GET endpoint (/api/heater  GET) ─────────────────── */
+
+static esp_err_t api_heater_get_handler(httpd_req_t *req)
+{
+    auto_heater_config_t cfg = auto_heater_get_config();
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"enabled\":%s,"
+        "\"relay_index\":%d,"
+        "\"target_temp_c\":%.1f,"
+        "\"hysteresis_c\":%.1f}",
+        cfg.enabled ? "true" : "false",
+        cfg.relay_index,
+        (double)cfg.target_temp_c,
+        (double)cfg.hysteresis_c);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Auto-heater POST endpoint (/api/heater  POST) ───────────────── */
+
+static esp_err_t api_heater_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_RELAY_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+    ESP_LOGI(TAG, "Heater POST body: %s", buf);
+
+    auto_heater_config_t cfg = auto_heater_get_config();
+
+    int bval = json_get_bool(buf, "\"enabled\"");
+    if (bval >= 0) cfg.enabled = (bval == 1);
+
+    double dval;
+    if (json_get_double(buf, "\"relay_index\"", &dval) == 0)
+        cfg.relay_index = (int)dval;
+    if (json_get_double(buf, "\"target_temp_c\"", &dval) == 0)
+        cfg.target_temp_c = (float)dval;
+    if (json_get_double(buf, "\"hysteresis_c\"", &dval) == 0)
+        cfg.hysteresis_c = (float)dval;
+
+    auto_heater_set_config(&cfg);
+
+    return api_heater_get_handler(req);
+}
+
+/* ── OTA update endpoints ────────────────────────────────────────── */
+
+/**
+ * @brief Start an OTA firmware update.  POST body: {"url":"https://…"}
+ */
+static esp_err_t api_ota_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_DDNS_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+    ESP_LOGI(TAG, "OTA POST body: %s", buf);
+
+    char url[256];
+    if (json_get_str(buf, "\"url\"", url, sizeof(url)) != 0 ||
+        url[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'url' field");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = ota_update_start(url);
+    char resp[128];
+    int len;
+    if (err == ESP_OK) {
+        len = snprintf(resp, sizeof(resp), "{\"ok\":true}");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        len = snprintf(resp, sizeof(resp),
+            "{\"ok\":false,\"error\":\"update_already_in_progress\"}");
+    } else {
+        len = snprintf(resp, sizeof(resp),
+            "{\"ok\":false,\"error\":\"start_failed\"}");
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, len);
+}
+
+/**
+ * @brief Get the current OTA update progress.
+ */
+static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
+{
+    ota_progress_t p = ota_update_get_progress();
+
+    static const char *const status_names[] = {
+        [OTA_STATUS_IDLE]        = "idle",
+        [OTA_STATUS_DOWNLOADING] = "downloading",
+        [OTA_STATUS_FLASHING]    = "flashing",
+        [OTA_STATUS_DONE]        = "done",
+        [OTA_STATUS_ERROR]       = "error",
+    };
+    const char *sn = (p.status <= OTA_STATUS_ERROR) ?
+                     status_names[p.status] : "unknown";
+
+    char escaped_err[128];
+    json_escape(p.error_msg, escaped_err, sizeof(escaped_err));
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"status\":\"%s\",\"progress\":%d,\"error\":\"%s\"}",
+        sn, p.progress_pct, escaped_err);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -1751,6 +1949,13 @@ static const httpd_uri_t uri_api_status = {
     .uri      = "/api/status",
     .method   = HTTP_GET,
     .handler  = api_status_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_health = {
+    .uri      = "/api/health",
+    .method   = HTTP_GET,
+    .handler  = api_health_get_handler,
     .user_ctx = NULL,
 };
 
@@ -1880,6 +2085,34 @@ static const httpd_uri_t uri_api_ddns_update = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_ota_post = {
+    .uri      = "/api/ota",
+    .method   = HTTP_POST,
+    .handler  = api_ota_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ota_status = {
+    .uri      = "/api/ota_status",
+    .method   = HTTP_GET,
+    .handler  = api_ota_status_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_heater_get = {
+    .uri      = "/api/heater",
+    .method   = HTTP_GET,
+    .handler  = api_heater_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_heater_post = {
+    .uri      = "/api/heater",
+    .method   = HTTP_POST,
+    .handler  = api_heater_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -1903,6 +2136,7 @@ esp_err_t web_server_start(void)
 
     httpd_register_uri_handler(s_server, &uri_root);
     httpd_register_uri_handler(s_server, &uri_api_status);
+    httpd_register_uri_handler(s_server, &uri_api_health);
     httpd_register_uri_handler(s_server, &uri_api_leds_get);
     httpd_register_uri_handler(s_server, &uri_api_leds_post);
     httpd_register_uri_handler(s_server, &uri_api_scenes_get);
@@ -1921,6 +2155,10 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_ddns_get);
     httpd_register_uri_handler(s_server, &uri_api_ddns_post);
     httpd_register_uri_handler(s_server, &uri_api_ddns_update);
+    httpd_register_uri_handler(s_server, &uri_api_ota_post);
+    httpd_register_uri_handler(s_server, &uri_api_ota_status);
+    httpd_register_uri_handler(s_server, &uri_api_heater_get);
+    httpd_register_uri_handler(s_server, &uri_api_heater_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

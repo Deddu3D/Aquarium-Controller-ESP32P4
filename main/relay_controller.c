@@ -11,9 +11,14 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 
@@ -40,8 +45,9 @@ static const char *s_default_names[RELAY_COUNT] = {
     "Relay 4",
 };
 
-/* Runtime state */
-static relay_state_t s_relay[RELAY_COUNT];
+/* Runtime state – protected by s_mutex for thread safety */
+static relay_state_t     s_relay[RELAY_COUNT];
+static SemaphoreHandle_t s_mutex = NULL;
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -55,6 +61,7 @@ static void nvs_load(void)
             strncpy(s_relay[i].name, s_default_names[i],
                     RELAY_NAME_MAX - 1);
             s_relay[i].name[RELAY_NAME_MAX - 1] = '\0';
+            memset(&s_relay[i].schedule, 0, sizeof(relay_schedule_t));
         }
         return;
     }
@@ -78,6 +85,12 @@ static void nvs_load(void)
                     RELAY_NAME_MAX - 1);
             s_relay[i].name[RELAY_NAME_MAX - 1] = '\0';
         }
+
+        /* Load schedule */
+        memset(&s_relay[i].schedule, 0, sizeof(relay_schedule_t));
+        snprintf(key, sizeof(key), "sched%d", i);
+        size_t sched_len = sizeof(relay_schedule_t);
+        nvs_get_blob(h, key, &s_relay[i].schedule, &sched_len);
     }
 
     nvs_close(h);
@@ -138,6 +151,13 @@ static void gpio_apply(int index)
 
 esp_err_t relay_controller_init(void)
 {
+    /* Create mutex for thread-safe state access */
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create relay mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     /* Load persisted state and names from NVS */
     nvs_load();
 
@@ -172,8 +192,10 @@ esp_err_t relay_controller_set(int index, bool on)
     if (index < 0 || index >= RELAY_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_relay[index].on = on;
     gpio_apply(index);
+    xSemaphoreGive(s_mutex);
     nvs_save_state(index);
     ESP_LOGI(TAG, "Relay %d (%s) → %s",
              index, s_relay[index].name, on ? "ON" : "OFF");
@@ -185,7 +207,10 @@ bool relay_controller_get(int index)
     if (index < 0 || index >= RELAY_COUNT) {
         return false;
     }
-    return s_relay[index].on;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool on = s_relay[index].on;
+    xSemaphoreGive(s_mutex);
+    return on;
 }
 
 esp_err_t relay_controller_set_name(int index, const char *name)
@@ -193,8 +218,10 @@ esp_err_t relay_controller_set_name(int index, const char *name)
     if (index < 0 || index >= RELAY_COUNT || name == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     strncpy(s_relay[index].name, name, RELAY_NAME_MAX - 1);
     s_relay[index].name[RELAY_NAME_MAX - 1] = '\0';
+    xSemaphoreGive(s_mutex);
     nvs_save_name(index);
     ESP_LOGI(TAG, "Relay %d renamed to \"%s\"", index, s_relay[index].name);
     return ESP_OK;
@@ -208,11 +235,93 @@ void relay_controller_get_name(int index, char *name, size_t len)
         }
         return;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     strncpy(name, s_relay[index].name, len - 1);
     name[len - 1] = '\0';
+    xSemaphoreGive(s_mutex);
 }
 
 void relay_controller_get_all(relay_state_t out[RELAY_COUNT])
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     memcpy(out, s_relay, sizeof(s_relay));
+    xSemaphoreGive(s_mutex);
+}
+
+static void nvs_save_schedule(int index)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed for schedule save");
+        return;
+    }
+    char key[12];
+    snprintf(key, sizeof(key), "sched%d", index);
+    nvs_set_blob(h, key, &s_relay[index].schedule, sizeof(relay_schedule_t));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+esp_err_t relay_controller_set_schedule(int index,
+                                        const relay_schedule_t *schedule)
+{
+    if (index < 0 || index >= RELAY_COUNT || schedule == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    relay_schedule_t safe = *schedule;
+    if (safe.on_min > 1439)  safe.on_min = 1439;
+    if (safe.off_min > 1439) safe.off_min = 1439;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_relay[index].schedule = safe;
+    xSemaphoreGive(s_mutex);
+
+    nvs_save_schedule(index);
+    ESP_LOGI(TAG, "Relay %d schedule: enabled=%d on=%02d:%02d off=%02d:%02d",
+             index, safe.enabled,
+             safe.on_min / 60, safe.on_min % 60,
+             safe.off_min / 60, safe.off_min % 60);
+    return ESP_OK;
+}
+
+void relay_controller_tick_schedules(void)
+{
+    time_t now = time(NULL);
+    struct tm ti;
+    localtime_r(&now, &ti);
+
+    /* Skip if clock not synced */
+    if (ti.tm_year < (2024 - 1900)) {
+        return;
+    }
+
+    int now_min = ti.tm_hour * 60 + ti.tm_min;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (int i = 0; i < RELAY_COUNT; i++) {
+        if (!s_relay[i].schedule.enabled) {
+            continue;
+        }
+
+        uint16_t on_m  = s_relay[i].schedule.on_min;
+        uint16_t off_m = s_relay[i].schedule.off_min;
+        bool should_be_on;
+
+        if (on_m <= off_m) {
+            /* Normal: on_min < off_min (e.g. 08:00–18:00) */
+            should_be_on = (now_min >= (int)on_m && now_min < (int)off_m);
+        } else {
+            /* Overnight: on_min > off_min (e.g. 22:00–06:00) */
+            should_be_on = (now_min >= (int)on_m || now_min < (int)off_m);
+        }
+
+        if (should_be_on != s_relay[i].on) {
+            s_relay[i].on = should_be_on;
+            gpio_apply(i);
+            ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
+                     i, s_relay[i].name, should_be_on ? "ON" : "OFF");
+        }
+    }
+    xSemaphoreGive(s_mutex);
 }

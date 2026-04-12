@@ -26,11 +26,21 @@ extern "C" {
 #define RELAY_NAME_MAX 32
 
 /**
+ * @brief Relay schedule entry – time-of-day on/off automation.
+ */
+typedef struct {
+    bool     enabled;       /**< Schedule active                   */
+    uint16_t on_min;        /**< Turn-on time (minutes from midnight, 0-1439) */
+    uint16_t off_min;       /**< Turn-off time (minutes from midnight, 0-1439) */
+} relay_schedule_t;
+
+/**
  * @brief State of a single relay channel.
  */
 typedef struct {
     bool on;                        /**< true = energised / closed   */
     char name[RELAY_NAME_MAX];      /**< user-assigned display name  */
+    relay_schedule_t schedule;      /**< time-of-day schedule        */
 } relay_state_t;
 
 /**
@@ -86,6 +96,24 @@ void relay_controller_get_name(int index, char *name, size_t len);
  * @param[out] out  Array of RELAY_COUNT elements to fill.
  */
 void relay_controller_get_all(relay_state_t out[RELAY_COUNT]);
+
+/**
+ * @brief Set the time-of-day schedule for a relay channel.
+ *
+ * @param index    Relay index (0 – RELAY_COUNT-1).
+ * @param schedule Pointer to the schedule configuration.
+ * @return ESP_OK or ESP_ERR_INVALID_ARG.
+ */
+esp_err_t relay_controller_set_schedule(int index,
+                                        const relay_schedule_t *schedule);
+
+/**
+ * @brief Evaluate relay schedules against the current time.
+ *
+ * Call this periodically (e.g. every 60 s from the main loop) to
+ * turn relays on/off according to their configured schedules.
+ */
+void relay_controller_tick_schedules(void);
 
 #ifdef __cplusplus
 }

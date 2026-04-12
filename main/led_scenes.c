@@ -963,6 +963,12 @@ esp_err_t led_scenes_set_config(const led_scene_config_t *cfg)
     if (safe.transition_duration_min > 120) safe.transition_duration_min = 120;
     if (safe.siesta_start_min > 1439)    safe.siesta_start_min = 1439;
     if (safe.siesta_end_min > 1439)      safe.siesta_end_min = 1439;
+    /* Enforce siesta_start < siesta_end; disable if invalid */
+    if (safe.siesta_enabled && safe.siesta_start_min >= safe.siesta_end_min) {
+        ESP_LOGW(TAG, "Siesta start (%d) >= end (%d) – disabling siesta",
+                 safe.siesta_start_min, safe.siesta_end_min);
+        safe.siesta_enabled = false;
+    }
     if (safe.siesta_intensity_pct > 100) safe.siesta_intensity_pct = 100;
     if (safe.color_temp_kelvin < 6500)   safe.color_temp_kelvin = 6500;
     if (safe.color_temp_kelvin > 20000)  safe.color_temp_kelvin = 20000;

@@ -54,6 +54,7 @@ static const char *TAG = "telegram";
 #define TASK_STACK_SIZE    12288   /* TLS handshake needs generous stack */
 #define TASK_PERIOD_MS     60000   /* Check every 60 seconds */
 #define TEMP_ALARM_COOLDOWN_S  1800  /* 30 minutes between repeated alarms */
+#define SEND_RATE_LIMIT_MS     3000  /* Min 3 s between consecutive API calls */
 
 #define TELEGRAM_API_URL   "https://api.telegram.org/bot"
 #define MSG_BUF_SIZE       1024
@@ -75,6 +76,7 @@ static int64_t s_last_fertilizer    = 0;
 static int64_t s_last_temp_high_alarm_time = 0;
 static int64_t s_last_temp_low_alarm_time  = 0;
 static int     s_last_summary_day          = -1; /* day-of-year for dedup */
+static int64_t s_last_send_time_us         = 0;  /* rate-limit tracking */
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -200,6 +202,30 @@ static void json_msg_escape(const char *src, char *dst, size_t dst_size)
 static esp_err_t send_telegram_message(const char *token, const char *chat_id,
                                        const char *text)
 {
+    /* Rate limiting – avoid flooding the Telegram API.
+     * s_last_send_time_us is accessed under s_mutex for thread safety
+     * since this function can be called from both the telegram task
+     * and the HTTP server task (via telegram_notify_send).            */
+    int64_t now_us = esp_timer_get_time();
+    int64_t elapsed_ms;
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        elapsed_ms = (now_us - s_last_send_time_us) / 1000;
+        xSemaphoreGive(s_mutex);
+    } else {
+        elapsed_ms = SEND_RATE_LIMIT_MS;   /* skip if mutex not ready */
+    }
+    if (s_last_send_time_us > 0 && elapsed_ms < SEND_RATE_LIMIT_MS) {
+        int delay_ms = (int)(SEND_RATE_LIMIT_MS - elapsed_ms);
+        ESP_LOGD(TAG, "Rate limit: waiting %d ms before next send", delay_ms);
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_last_send_time_us = esp_timer_get_time();
+        xSemaphoreGive(s_mutex);
+    }
+
     /* Guard: TLS certificate validation requires a valid system clock.
      * If SNTP has not synchronised yet the handshake will fail with
      * MBEDTLS_ERR_X509_CERT_VERIFY_FAILED (-0x3000).                   */
@@ -547,6 +573,14 @@ esp_err_t telegram_notify_set_config(const telegram_config_t *cfg)
     if (safe.temp_high_c > 50.0f)  safe.temp_high_c = 50.0f;
     if (safe.temp_low_c < -10.0f)  safe.temp_low_c = -10.0f;
     if (safe.temp_low_c > 50.0f)   safe.temp_low_c = 50.0f;
+
+    /* Enforce temp_high > temp_low with minimum 0.5°C gap */
+    if (safe.temp_high_c <= safe.temp_low_c) {
+        float mid = (safe.temp_high_c + safe.temp_low_c) / 2.0f;
+        safe.temp_low_c  = mid - 0.25f;
+        safe.temp_high_c = mid + 0.25f;
+    }
+
     if (safe.water_change_days < 1)  safe.water_change_days = 1;
     if (safe.water_change_days > 90) safe.water_change_days = 90;
     if (safe.fertilizer_days < 1)    safe.fertilizer_days = 1;
