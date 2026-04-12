@@ -370,7 +370,7 @@ esp_err_t led_controller_fade_on(uint32_t duration_ms)
     s_ramp_off      = false;
     s_ramp_active   = true;
 
-    ESP_LOGI(TAG, "Fade ON: 0 → %d over %"PRIu32" ms", target, duration_ms);
+    ESP_LOGI(TAG, "Fade ON: 0 -> %d over %"PRIu32" ms", target, duration_ms);
 
     xSemaphoreGive(s_mutex);
 
@@ -418,7 +418,7 @@ esp_err_t led_controller_fade_off(uint32_t duration_ms)
     s_ramp_off      = true;
     s_ramp_active   = true;
 
-    ESP_LOGI(TAG, "Fade OFF: %d → 0 over %"PRIu32" ms",
+    ESP_LOGI(TAG, "Fade OFF: %d -> 0 over %"PRIu32" ms",
              s_brightness, duration_ms);
 
     xSemaphoreGive(s_mutex);

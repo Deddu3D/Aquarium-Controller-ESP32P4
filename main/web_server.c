@@ -35,6 +35,11 @@
 
 static const char *TAG = "web_srv";
 
+/* Kconfig fallback for acclimatization ramp duration */
+#ifndef CONFIG_LED_RAMP_DURATION_SEC
+#define CONFIG_LED_RAMP_DURATION_SEC 30
+#endif
+
 static httpd_handle_t s_server = NULL;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
@@ -123,12 +128,12 @@ static void get_wifi_status(wifi_status_t *out)
  * with mobile-optimized UI and temperature chart; 52 KiB gives
  * comfortable margin.
  */
-#define HTML_BUF_SIZE          53248
+#define HTML_BUF_SIZE          57344
 
 /* JSON response buffer sizes */
 #define JSON_STATUS_BUF_SIZE   384
 #define JSON_LEDS_BUF_SIZE     256
-#define JSON_SCENES_BUF_SIZE   256
+#define JSON_SCENES_BUF_SIZE   768
 #define JSON_TEMP_BUF_SIZE     128
 #define JSON_GEO_BUF_SIZE      384
 #define JSON_TG_BUF_SIZE       768
@@ -138,7 +143,7 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE     256
-#define POST_BODY_SCENE_SIZE   256
+#define POST_BODY_SCENE_SIZE   512
 #define POST_BODY_GEO_SIZE     256
 #define POST_BODY_TG_SIZE      512
 #define POST_BODY_RELAY_SIZE   256
@@ -358,6 +363,45 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</select></div>"
     "<div class=\"led-preview\" id=\"led-preview\"></div>"
     "</div></div></div>"
+    /* Scene Settings card */
+    "<div class=\"card\" id=\"scfg-card\">"
+    "<div class=\"card-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x2699;&#xFE0F; Scene Settings</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"card-body\"><div class=\"card-inner\">"
+    "<div class=\"sect\">&#x2600;&#xFE0F; Transitions</div>"
+    "<div class=\"row\"><span class=\"label\">Sunrise (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-sr\" min=\"1\" max=\"120\""
+    " style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Sunset (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-ss\" min=\"1\" max=\"120\""
+    " style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Full Day trans. (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-fd\" min=\"1\" max=\"120\""
+    " style=\"max-width:80px\"></div>"
+    "<div class=\"sect\">&#x1F3A8; Colour</div>"
+    "<div class=\"row\"><span class=\"label\">Daylight (K)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-colk\" min=\"6500\" max=\"20000\""
+    " step=\"500\" style=\"max-width:100px\"></div>"
+    "<div class=\"sect\">&#x1F319; Moonlight</div>"
+    "<div class=\"row\"><span class=\"label\">Lunar phase</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-lunar\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"sect\">&#x2615; Siesta (anti-algae)</div>"
+    "<div class=\"row\"><span class=\"label\">Enabled</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-sien\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Start (HH:MM)</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sc-sist\""
+    " style=\"max-width:120px\"></div>"
+    "<div class=\"row\"><span class=\"label\">End (HH:MM)</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sc-sied\""
+    " style=\"max-width:120px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Intensity %%</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-sipct\" min=\"0\" max=\"100\""
+    " style=\"max-width:80px\"></div>"
+    "<button class=\"btn\" onclick=\"saveSceneCfg()\">Save Settings</button>"
+    "</div></div></div>"
     /* Geolocation card */
     "<div class=\"card\" id=\"geo-card\">"
     "<div class=\"card-hdr\" onclick=\"tog(this)\">"
@@ -573,7 +617,39 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  fetch('/api/scenes').then(function(r){return r.json()})"
     "  .then(function(d){"
     "    $('led-scene').value=d.active_scene;"
-    "    $('q-scene').value=d.active_scene})}"
+    "    $('q-scene').value=d.active_scene;"
+    "    $('sc-sr').value=d.sunrise_duration_min;"
+    "    $('sc-ss').value=d.sunset_duration_min;"
+    "    $('sc-fd').value=d.transition_duration_min;"
+    "    $('sc-colk').value=d.color_temp_kelvin;"
+    "    $('sc-lunar').checked=d.lunar_moonlight;"
+    "    $('sc-sien').checked=d.siesta_enabled;"
+    "    var sh=Math.floor(d.siesta_start_min/60);"
+    "    var sm=d.siesta_start_min%60;"
+    "    $('sc-sist').value=(sh<10?'0':'')+sh+':'+(sm<10?'0':'')+sm;"
+    "    var eh=Math.floor(d.siesta_end_min/60);"
+    "    var em=d.siesta_end_min%60;"
+    "    $('sc-sied').value=(eh<10?'0':'')+eh+':'+(em<10?'0':'')+em;"
+    "    $('sc-sipct').value=d.siesta_intensity_pct})}"
+    "function saveSceneCfg(){"
+    "  var st=$('sc-sist').value.split(':');"
+    "  var ed=$('sc-sied').value.split(':');"
+    "  var data={"
+    "    sunrise_duration_min:parseInt($('sc-sr').value),"
+    "    sunset_duration_min:parseInt($('sc-ss').value),"
+    "    transition_duration_min:parseInt($('sc-fd').value),"
+    "    color_temp_kelvin:parseInt($('sc-colk').value),"
+    "    lunar_moonlight:$('sc-lunar').checked,"
+    "    siesta_enabled:$('sc-sien').checked,"
+    "    siesta_start_min:parseInt(st[0])*60+parseInt(st[1]),"
+    "    siesta_end_min:parseInt(ed[0])*60+parseInt(ed[1]),"
+    "    siesta_intensity_pct:parseInt($('sc-sipct').value)};"
+    "  fetch('/api/scenes',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Settings saved',1)}).catch(function(){"
+    "    toast('Save error',0)})}"
     /* ── Quick Actions (Dashboard) ── */
     "function toggleQuickLed(){"
     "  var on=$('q-led').checked;"
@@ -1059,11 +1135,14 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
         led_controller_set_brightness((uint8_t)(br_val > 255 ? 255 : br_val));
     }
 
-    /* Apply on/off */
-    if (on_val == 1) {
-        led_controller_on();
-    } else if (on_val == 0) {
-        led_controller_off();
+    /* Apply on/off with acclimatization ramp (fade) */
+    {
+        uint32_t ramp_ms = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000;
+        if (on_val == 1) {
+            led_controller_fade_on(ramp_ms);
+        } else if (on_val == 0) {
+            led_controller_fade_off(ramp_ms);
+        }
     }
 
     /* Respond with updated state */
@@ -1075,13 +1154,32 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
 static esp_err_t api_scenes_get_handler(httpd_req_t *req)
 {
     const char *active = led_scenes_get_name(led_scenes_get());
+    led_scene_config_t cfg = led_scenes_get_config();
 
     char buf[JSON_SCENES_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"active_scene\":\"%s\","
         "\"scenes\":[\"off\",\"daylight\",\"sunrise\",\"sunset\","
-        "\"moonlight\",\"cloudy\",\"storm\",\"full_day_cycle\"]}",
-        active);
+        "\"moonlight\",\"cloudy\",\"storm\",\"full_day_cycle\"],"
+        "\"sunrise_duration_min\":%d,"
+        "\"sunset_duration_min\":%d,"
+        "\"transition_duration_min\":%d,"
+        "\"siesta_enabled\":%s,"
+        "\"siesta_start_min\":%d,"
+        "\"siesta_end_min\":%d,"
+        "\"siesta_intensity_pct\":%d,"
+        "\"color_temp_kelvin\":%d,"
+        "\"lunar_moonlight\":%s}",
+        active,
+        cfg.sunrise_duration_min,
+        cfg.sunset_duration_min,
+        cfg.transition_duration_min,
+        cfg.siesta_enabled ? "true" : "false",
+        cfg.siesta_start_min,
+        cfg.siesta_end_min,
+        cfg.siesta_intensity_pct,
+        cfg.color_temp_kelvin,
+        cfg.lunar_moonlight ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1101,10 +1199,47 @@ static esp_err_t api_scenes_post_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Scene POST body: %s", buf);
 
+    /* Set active scene if provided */
     char scene_name[32];
     if (json_get_str(buf, "\"scene\"", scene_name, sizeof(scene_name)) == 0) {
         led_scene_t scene = led_scenes_from_name(scene_name);
         led_scenes_set(scene);
+    }
+
+    /* Update scene configuration if any config keys are present */
+    led_scene_config_t cfg = led_scenes_get_config();
+    bool cfg_changed = false;
+
+    int val;
+    val = json_get_int(buf, "\"sunrise_duration_min\"");
+    if (val >= 0) { cfg.sunrise_duration_min = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_int(buf, "\"sunset_duration_min\"");
+    if (val >= 0) { cfg.sunset_duration_min = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_int(buf, "\"transition_duration_min\"");
+    if (val >= 0) { cfg.transition_duration_min = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_bool(buf, "\"siesta_enabled\"");
+    if (val >= 0) { cfg.siesta_enabled = (val == 1); cfg_changed = true; }
+
+    val = json_get_int(buf, "\"siesta_start_min\"");
+    if (val >= 0) { cfg.siesta_start_min = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_int(buf, "\"siesta_end_min\"");
+    if (val >= 0) { cfg.siesta_end_min = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_int(buf, "\"siesta_intensity_pct\"");
+    if (val >= 0) { cfg.siesta_intensity_pct = (uint8_t)val; cfg_changed = true; }
+
+    val = json_get_int(buf, "\"color_temp_kelvin\"");
+    if (val >= 0) { cfg.color_temp_kelvin = (uint16_t)val; cfg_changed = true; }
+
+    val = json_get_bool(buf, "\"lunar_moonlight\"");
+    if (val >= 0) { cfg.lunar_moonlight = (val == 1); cfg_changed = true; }
+
+    if (cfg_changed) {
+        led_scenes_set_config(&cfg);
     }
 
     return api_scenes_get_handler(req);
