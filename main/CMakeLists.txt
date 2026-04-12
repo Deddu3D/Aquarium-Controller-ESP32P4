@@ -6,6 +6,6 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_timer log led_strip driver
              onewire_bus ds18b20 esp_http_client esp-tls app_update esp_app_format
-             esp_lcd esp_ldo_regulator esp_lcd_touch
+             esp_lcd esp_hw_support esp_lcd_touch
     EMBED_TXTFILES "telegram_root_cert.pem"
 )
