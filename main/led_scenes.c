@@ -4,6 +4,13 @@
  * Aquarium Controller - LED Scene Engine implementation
  * Drives automatic LED animations via a dedicated FreeRTOS task.
  *
+ * Features:
+ *   - NVS persistence of active scene and configuration
+ *   - Configurable sunrise/sunset transition durations
+ *   - Lunar-phase modulated moonlight
+ *   - Midday siesta (anti-algae dimming) in Full Day Cycle
+ *   - Configurable daylight colour temperature (6500–20000 K)
+ *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
  */
@@ -20,6 +27,8 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "led_controller.h"
 #include "led_scenes.h"
@@ -28,15 +37,48 @@
 
 static const char *TAG = "led_scene";
 
+/* ── Kconfig defaults ────────────────────────────────────────────── */
+
+#ifndef CONFIG_LED_SUNRISE_DURATION_MIN
+#define CONFIG_LED_SUNRISE_DURATION_MIN 30
+#endif
+
+#ifndef CONFIG_LED_SUNSET_DURATION_MIN
+#define CONFIG_LED_SUNSET_DURATION_MIN 30
+#endif
+
+#ifndef CONFIG_LED_DEFAULT_COLOR_TEMP_K
+#define CONFIG_LED_DEFAULT_COLOR_TEMP_K 10000
+#endif
+
 /* ── Constants ───────────────────────────────────────────────────── */
 
 #define SCENE_TICK_MS          30
-#define SUNRISE_DURATION_MS    (5 * 60 * 1000)   /* 5 minutes */
-#define SUNSET_DURATION_MS     (5 * 60 * 1000)   /* 5 minutes */
 #define CLOUDY_PERIOD_FRAMES   267                /* ~8 s at 30 ms/tick */
 #define MAX_STORM_FLASHES      3
 #define SCENE_TASK_STACK       4096
 #define PI_F                   3.14159265f
+
+/* Siesta smooth-transition duration in minutes */
+#define SIESTA_RAMP_MIN        5
+
+/* Lunar synodic month (days) and reference new-moon Julian Day */
+#define SYNODIC_MONTH          29.530588853
+#define NEW_MOON_JD            2451550.1   /* Jan 6, 2000 */
+
+/* ── NVS keys ────────────────────────────────────────────────────── */
+
+#define NVS_NAMESPACE   "led_scenes"
+#define NVS_KEY_SCENE   "active"
+#define NVS_KEY_SR_DUR  "sr_dur"
+#define NVS_KEY_SS_DUR  "ss_dur"
+#define NVS_KEY_FD_TR   "fd_trans"
+#define NVS_KEY_SIEN    "siesta_en"
+#define NVS_KEY_SIST    "siesta_s"
+#define NVS_KEY_SIED    "siesta_e"
+#define NVS_KEY_SIPCT   "siesta_pct"
+#define NVS_KEY_COLK    "color_k"
+#define NVS_KEY_LUNAR   "lunar_en"
 
 /* ── Scene name table ────────────────────────────────────────────── */
 
@@ -58,18 +100,23 @@ typedef struct {
     uint8_t r, g, b;
 } keyframe_t;
 
-static const keyframe_t sunrise_kf[] = {
+/*
+ * The final keyframe in sunrise and first keyframe in sunset use the
+ * configurable daylight colour; these are overwritten at scene-enter
+ * time by apply_daylight_color_to_keyframes().
+ */
+static keyframe_t sunrise_kf[] = {
     { 0.00f,   0,   0,   0 },   /* black             */
     { 0.15f,  30,   0,   5 },   /* dark red          */
     { 0.30f, 180,  50,   5 },   /* deep orange       */
     { 0.50f, 255, 140,  30 },   /* warm orange       */
     { 0.70f, 255, 200, 100 },   /* warm white        */
-    { 1.00f, 200, 220, 255 },   /* daylight          */
+    { 1.00f, 200, 220, 255 },   /* daylight (patched)*/
 };
 #define SUNRISE_KF_COUNT  (sizeof(sunrise_kf) / sizeof(sunrise_kf[0]))
 
-static const keyframe_t sunset_kf[] = {
-    { 0.00f, 200, 220, 255 },   /* daylight          */
+static keyframe_t sunset_kf[] = {
+    { 0.00f, 200, 220, 255 },   /* daylight (patched)*/
     { 0.25f, 255, 160,  50 },   /* warm orange       */
     { 0.45f, 200,  60,  10 },   /* deep orange/red   */
     { 0.65f,  60,  10,  20 },   /* dark red          */
@@ -80,9 +127,10 @@ static const keyframe_t sunset_kf[] = {
 
 /* ── Private state ───────────────────────────────────────────────── */
 
-static SemaphoreHandle_t s_mutex        = NULL;
-static TaskHandle_t      s_task         = NULL;
-static led_scene_t       s_active_scene = LED_SCENE_OFF;
+static SemaphoreHandle_t  s_mutex        = NULL;
+static TaskHandle_t       s_task         = NULL;
+static led_scene_t        s_active_scene = LED_SCENE_OFF;
+static led_scene_config_t s_config;
 
 /* Storm lightning flash tracking */
 static struct {
@@ -90,6 +138,117 @@ static struct {
     uint8_t  frames_left;
     bool     active;
 } s_storm_flashes[MAX_STORM_FLASHES];
+
+/* ── Daylight colour temperature ─────────────────────────────────── */
+
+/* Pre-defined colour-temperature presets for WS2812B aquarium LEDs.
+ * Values are subjective and tuned for visual effect, not CIE accuracy. */
+typedef struct {
+    uint16_t kelvin;
+    uint8_t  r, g, b;
+} color_temp_preset_t;
+
+static const color_temp_preset_t CT_PRESETS[] = {
+    {  6500, 255, 244, 230 },   /* warm white – planted tanks  */
+    {  8000, 230, 232, 255 },   /* neutral white               */
+    { 10000, 200, 220, 255 },   /* cool daylight (old default) */
+    { 14000, 170, 200, 255 },   /* marine reef                 */
+    { 20000, 140, 170, 255 },   /* actinic blue                */
+};
+#define CT_PRESET_COUNT  (sizeof(CT_PRESETS) / sizeof(CT_PRESETS[0]))
+
+/* Current daylight RGB (derived from s_config.color_temp_kelvin) */
+static uint8_t s_day_r = 200, s_day_g = 220, s_day_b = 255;
+
+/**
+ * @brief Linearly interpolate the colour-temperature presets to get
+ *        an RGB triplet for the requested Kelvin value.
+ */
+static void kelvin_to_rgb(uint16_t kelvin, uint8_t *r, uint8_t *g, uint8_t *b)
+{
+    if (kelvin <= CT_PRESETS[0].kelvin) {
+        *r = CT_PRESETS[0].r;
+        *g = CT_PRESETS[0].g;
+        *b = CT_PRESETS[0].b;
+        return;
+    }
+    if (kelvin >= CT_PRESETS[CT_PRESET_COUNT - 1].kelvin) {
+        *r = CT_PRESETS[CT_PRESET_COUNT - 1].r;
+        *g = CT_PRESETS[CT_PRESET_COUNT - 1].g;
+        *b = CT_PRESETS[CT_PRESET_COUNT - 1].b;
+        return;
+    }
+    for (size_t i = 0; i < CT_PRESET_COUNT - 1; i++) {
+        if (kelvin >= CT_PRESETS[i].kelvin &&
+            kelvin <= CT_PRESETS[i + 1].kelvin)
+        {
+            float t = (float)(kelvin - CT_PRESETS[i].kelvin) /
+                      (float)(CT_PRESETS[i + 1].kelvin - CT_PRESETS[i].kelvin);
+            *r = (uint8_t)((float)CT_PRESETS[i].r +
+                           ((float)CT_PRESETS[i + 1].r - (float)CT_PRESETS[i].r) * t);
+            *g = (uint8_t)((float)CT_PRESETS[i].g +
+                           ((float)CT_PRESETS[i + 1].g - (float)CT_PRESETS[i].g) * t);
+            *b = (uint8_t)((float)CT_PRESETS[i].b +
+                           ((float)CT_PRESETS[i + 1].b - (float)CT_PRESETS[i].b) * t);
+            return;
+        }
+    }
+    /* Fallback – should not be reached */
+    *r = 200; *g = 220; *b = 255;
+}
+
+/**
+ * @brief Update the daylight RGB from the current colour-temperature
+ *        setting and patch the sunrise/sunset keyframes.
+ */
+static void update_daylight_color(void)
+{
+    kelvin_to_rgb(s_config.color_temp_kelvin,
+                  &s_day_r, &s_day_g, &s_day_b);
+
+    /* Patch sunrise endpoint and sunset start-point */
+    sunrise_kf[SUNRISE_KF_COUNT - 1].r = s_day_r;
+    sunrise_kf[SUNRISE_KF_COUNT - 1].g = s_day_g;
+    sunrise_kf[SUNRISE_KF_COUNT - 1].b = s_day_b;
+
+    sunset_kf[0].r = s_day_r;
+    sunset_kf[0].g = s_day_g;
+    sunset_kf[0].b = s_day_b;
+
+    ESP_LOGI(TAG, "Daylight color: %d K → R=%d G=%d B=%d",
+             s_config.color_temp_kelvin, s_day_r, s_day_g, s_day_b);
+}
+
+/* ── Lunar phase ─────────────────────────────────────────────────── */
+
+/**
+ * @brief Compute Julian Day Number from calendar date.
+ */
+static int julian_day(int year, int month, int day)
+{
+    int a = (14 - month) / 12;
+    int y = year + 4800 - a;
+    int m = month + 12 * a - 3;
+    return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+}
+
+/**
+ * @brief Return the moon illumination fraction (0.0–1.0) for a date.
+ *
+ * 0.0 = new moon (dark), 1.0 = full moon (bright).
+ */
+static float moon_illumination(int year, int month, int day)
+{
+    int jdn = julian_day(year, month, day);
+    double days_since = (double)jdn - NEW_MOON_JD;
+    double phase = fmod(days_since, SYNODIC_MONTH) / SYNODIC_MONTH;
+    if (phase < 0.0) {
+        phase += 1.0;
+    }
+    /* 0.0 = new moon, 0.5 = full moon, 1.0 = new moon again
+     * Illumination follows a cosine curve centred on 0.5            */
+    return 0.5f * (1.0f - cosf(2.0f * PI_F * (float)phase));
+}
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -134,15 +293,138 @@ static void interp_kf(const keyframe_t *kf, int count, float t,
     *b = kf[count - 1].b;
 }
 
+/* ── NVS persistence ─────────────────────────────────────────────── */
+
+/**
+ * @brief Load scene configuration from NVS.
+ */
+static void nvs_load_config(void)
+{
+    /* Defaults */
+    s_config.sunrise_duration_min    = CONFIG_LED_SUNRISE_DURATION_MIN;
+    s_config.sunset_duration_min     = CONFIG_LED_SUNSET_DURATION_MIN;
+    s_config.transition_duration_min = CONFIG_LED_SUNRISE_DURATION_MIN;
+    s_config.siesta_enabled          = false;
+    s_config.siesta_start_min        = 12 * 60;    /* noon    */
+    s_config.siesta_end_min          = 14 * 60;    /* 14:00   */
+    s_config.siesta_intensity_pct    = 40;
+    s_config.color_temp_kelvin       = CONFIG_LED_DEFAULT_COLOR_TEMP_K;
+    s_config.lunar_moonlight         = true;
+
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        ESP_LOGI(TAG, "No saved scene config – using defaults");
+        return;
+    }
+
+    /* Active scene */
+    uint8_t scn = 0;
+    if (nvs_get_u8(h, NVS_KEY_SCENE, &scn) == ESP_OK && scn < LED_SCENE_MAX) {
+        s_active_scene = (led_scene_t)scn;
+        ESP_LOGI(TAG, "Restored scene: %s", s_scene_names[s_active_scene]);
+    }
+
+    uint16_t u16;
+    uint8_t  u8;
+
+    if (nvs_get_u16(h, NVS_KEY_SR_DUR, &u16) == ESP_OK)
+        s_config.sunrise_duration_min = u16;
+    if (nvs_get_u16(h, NVS_KEY_SS_DUR, &u16) == ESP_OK)
+        s_config.sunset_duration_min = u16;
+    if (nvs_get_u16(h, NVS_KEY_FD_TR, &u16) == ESP_OK)
+        s_config.transition_duration_min = u16;
+    if (nvs_get_u8(h, NVS_KEY_SIEN, &u8) == ESP_OK)
+        s_config.siesta_enabled = (u8 != 0);
+    if (nvs_get_u16(h, NVS_KEY_SIST, &u16) == ESP_OK)
+        s_config.siesta_start_min = u16;
+    if (nvs_get_u16(h, NVS_KEY_SIED, &u16) == ESP_OK)
+        s_config.siesta_end_min = u16;
+    if (nvs_get_u8(h, NVS_KEY_SIPCT, &u8) == ESP_OK)
+        s_config.siesta_intensity_pct = u8;
+    if (nvs_get_u16(h, NVS_KEY_COLK, &u16) == ESP_OK)
+        s_config.color_temp_kelvin = u16;
+    if (nvs_get_u8(h, NVS_KEY_LUNAR, &u8) == ESP_OK)
+        s_config.lunar_moonlight = (u8 != 0);
+
+    nvs_close(h);
+
+    ESP_LOGI(TAG, "Config loaded: sr=%d ss=%d fdtr=%d siesta=%d "
+             "color_k=%d lunar=%d",
+             s_config.sunrise_duration_min,
+             s_config.sunset_duration_min,
+             s_config.transition_duration_min,
+             s_config.siesta_enabled,
+             s_config.color_temp_kelvin,
+             s_config.lunar_moonlight);
+}
+
+/**
+ * @brief Save the current configuration to NVS.
+ */
+static esp_err_t nvs_save_config(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    nvs_set_u16(h, NVS_KEY_SR_DUR, s_config.sunrise_duration_min);
+    nvs_set_u16(h, NVS_KEY_SS_DUR, s_config.sunset_duration_min);
+    nvs_set_u16(h, NVS_KEY_FD_TR,  s_config.transition_duration_min);
+    nvs_set_u8(h,  NVS_KEY_SIEN,   s_config.siesta_enabled ? 1 : 0);
+    nvs_set_u16(h, NVS_KEY_SIST,   s_config.siesta_start_min);
+    nvs_set_u16(h, NVS_KEY_SIED,   s_config.siesta_end_min);
+    nvs_set_u8(h,  NVS_KEY_SIPCT,  s_config.siesta_intensity_pct);
+    nvs_set_u16(h, NVS_KEY_COLK,   s_config.color_temp_kelvin);
+    nvs_set_u8(h,  NVS_KEY_LUNAR,  s_config.lunar_moonlight ? 1 : 0);
+
+    err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+/**
+ * @brief Save just the active scene to NVS.
+ */
+static void nvs_save_scene(led_scene_t scene)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, NVS_KEY_SCENE, (uint8_t)scene);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
 /* ── Render functions ────────────────────────────────────────────── */
 
 /**
- * @brief Render static moonlight (dim blue) across the whole strip.
+ * @brief Render moonlight across the whole strip.
+ *
+ * If lunar_moonlight is enabled, intensity is modulated by the real
+ * moon phase.  Otherwise uses a fixed dim blue.
  */
-static void render_moonlight(uint16_t num_leds)
+static void render_moonlight(uint16_t num_leds,
+                             int year, int month, int day)
 {
+    /* Base moonlight colour */
+    const uint8_t base_r = 5, base_g = 8, base_b = 40;
+
+    float scale = 1.0f;
+    if (s_config.lunar_moonlight) {
+        float illum = moon_illumination(year, month, day);
+        /* Map illumination 0.0–1.0 to intensity 0.05–1.0
+         * (never completely dark – fish need some light)    */
+        scale = 0.05f + 0.95f * illum;
+    }
+
     for (uint16_t i = 0; i < num_leds; i++) {
-        led_controller_set_pixel(i, 5, 8, 40);
+        led_controller_set_pixel(i,
+            clamp_u8((float)base_r * scale),
+            clamp_u8((float)base_g * scale),
+            clamp_u8((float)base_b * scale));
     }
     led_controller_refresh();
 }
@@ -219,16 +501,20 @@ static void render_sunset(float progress, uint16_t num_leds)
  *
  * Daylight base with a sinusoidal brightness wave (~±15 %)
  * travelling across the strip (~8 s period).
+ *
+ * @param dim  Optional dimming factor 0.0–1.0 (1.0 = full intensity).
  */
-static void render_cloudy(uint32_t frame, uint16_t num_leds)
+static void render_cloudy(uint32_t frame, uint16_t num_leds, float dim)
 {
-    const float base_r = 200.0f, base_g = 220.0f, base_b = 255.0f;
+    const float base_r = (float)s_day_r;
+    const float base_g = (float)s_day_g;
+    const float base_b = (float)s_day_b;
 
     for (uint16_t i = 0; i < num_leds; i++) {
         float phase = (float)i / (float)num_leds * 2.0f * PI_F;
         float wave  = sinf(2.0f * PI_F * (float)frame
                            / (float)CLOUDY_PERIOD_FRAMES + phase);
-        float factor = 1.0f + wave * 0.15f;
+        float factor = (1.0f + wave * 0.15f) * dim;
 
         led_controller_set_pixel(i,
             clamp_u8(base_r * factor),
@@ -284,6 +570,58 @@ static void render_storm(uint16_t num_leds)
     led_controller_refresh();
 }
 
+/* ── Siesta helper ───────────────────────────────────────────────── */
+
+/**
+ * @brief Compute the daylight dimming factor for siesta.
+ *
+ * Returns 1.0 during normal daytime, and ramps smoothly down to the
+ * siesta intensity percentage during the siesta window.
+ *
+ * @param now_min  Current time in minutes from midnight.
+ * @return Dimming factor 0.0–1.0.
+ */
+static float siesta_dim_factor(int now_min)
+{
+    if (!s_config.siesta_enabled) {
+        return 1.0f;
+    }
+    int start = (int)s_config.siesta_start_min;
+    int end   = (int)s_config.siesta_end_min;
+    if (start >= end) {
+        return 1.0f;   /* invalid config – skip */
+    }
+
+    float target = (float)s_config.siesta_intensity_pct / 100.0f;
+
+    /* Ramp-in zone: [start - RAMP, start] */
+    int ramp_in_start = start - SIESTA_RAMP_MIN;
+    if (ramp_in_start < 0) ramp_in_start = 0;
+
+    /* Ramp-out zone: [end, end + RAMP] */
+    int ramp_out_end = end + SIESTA_RAMP_MIN;
+    if (ramp_out_end > 1439) ramp_out_end = 1439;
+
+    if (now_min >= ramp_in_start && now_min < start) {
+        /* Ramping into siesta */
+        float t = (float)(now_min - ramp_in_start) /
+                  (float)(start - ramp_in_start);
+        return 1.0f - (1.0f - target) * t;
+    }
+    if (now_min >= start && now_min < end) {
+        /* Inside siesta */
+        return target;
+    }
+    if (now_min >= end && now_min < ramp_out_end) {
+        /* Ramping out of siesta */
+        float t = (float)(now_min - end) /
+                  (float)(ramp_out_end - end);
+        return target + (1.0f - target) * t;
+    }
+
+    return 1.0f;   /* outside siesta window */
+}
+
 /* ── Scene enter (one-time setup on scene change) ────────────────── */
 
 static void scene_enter(led_scene_t scene)
@@ -293,10 +631,13 @@ static void scene_enter(led_scene_t scene)
     /* Reset storm flash state for all scenes */
     memset(s_storm_flashes, 0, sizeof(s_storm_flashes));
 
+    /* Update daylight colour from config (may have changed) */
+    update_daylight_color();
+
     switch (scene) {
     case LED_SCENE_DAYLIGHT:
         led_controller_set_brightness(255);
-        led_controller_set_color(200, 220, 255);
+        led_controller_set_color(s_day_r, s_day_g, s_day_b);
         led_controller_on();
         break;
 
@@ -325,44 +666,88 @@ static void scene_enter(led_scene_t scene)
 
 /* ── Scene task ──────────────────────────────────────────────────── */
 
+/**
+ * @brief Get current date/time info.  Falls back to uptime if NTP
+ *        has not synchronised yet.
+ */
+static void get_current_time(int *out_min, int *out_year,
+                             int *out_month, int *out_day)
+{
+    time_t now;
+    time(&now);
+    struct tm ti;
+    localtime_r(&now, &ti);
+
+    if (ti.tm_year >= (2024 - 1900)) {
+        *out_min   = ti.tm_hour * 60 + ti.tm_min;
+        *out_year  = ti.tm_year + 1900;
+        *out_month = ti.tm_mon + 1;
+        *out_day   = ti.tm_mday;
+    } else {
+        /* Fallback: use uptime mapped to a 24 h day */
+        int64_t up_s = esp_timer_get_time() / 1000000;
+        int sec_of_day = (int)(up_s % 86400);
+        *out_min   = sec_of_day / 60;
+        *out_year  = 2026;
+        *out_month = 6;
+        *out_day   = 21;   /* summer solstice as default */
+    }
+}
+
 static void led_scene_task(void *arg)
 {
     (void)arg;
     uint32_t    frame      = 0;
     led_scene_t last_scene = LED_SCENE_OFF;
 
+    /* If a scene was restored from NVS, force an initial enter */
+    bool first_tick = true;
+
     while (1) {
-        /* Read current scene under mutex */
+        /* Read current scene and config under mutex */
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         led_scene_t scene = s_active_scene;
+        led_scene_config_t cfg = s_config;
         xSemaphoreGive(s_mutex);
 
         /* Detect scene change */
-        if (scene != last_scene) {
+        if (scene != last_scene || first_tick) {
             frame = 0;
             last_scene = scene;
+            first_tick = false;
             scene_enter(scene);
         }
 
         uint16_t num_leds = led_controller_get_num_leds();
 
+        /* Get current date/time (used by moonlight, full-day, etc.) */
+        int now_min, cur_year, cur_month, cur_day;
+        get_current_time(&now_min, &cur_year, &cur_month, &cur_day);
+
         switch (scene) {
         /* ── Static scenes: idle after initial setup ────────────── */
         case LED_SCENE_OFF:
         case LED_SCENE_DAYLIGHT:
-        case LED_SCENE_MOONLIGHT:
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;   /* skip frame++ and normal tick delay */
 
+        /* ── Moonlight (lunar-phase aware) ─────────────────────── */
+        case LED_SCENE_MOONLIGHT:
+            render_moonlight(num_leds, cur_year, cur_month, cur_day);
+            vTaskDelay(pdMS_TO_TICKS(1000));  /* update once per second */
+            continue;
+
         /* ── Sunrise animation ──────────────────────────────────── */
         case LED_SCENE_SUNRISE: {
-            uint32_t total = SUNRISE_DURATION_MS / SCENE_TICK_MS;
+            uint32_t dur_ms = (uint32_t)cfg.sunrise_duration_min * 60 * 1000;
+            uint32_t total  = dur_ms / SCENE_TICK_MS;
             float progress = (float)frame / (float)total;
             if (progress >= 1.0f) {
                 /* Auto-transition to daylight */
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_active_scene = LED_SCENE_DAYLIGHT;
                 xSemaphoreGive(s_mutex);
+                nvs_save_scene(LED_SCENE_DAYLIGHT);
             } else {
                 render_sunrise(progress, num_leds);
             }
@@ -371,13 +756,15 @@ static void led_scene_task(void *arg)
 
         /* ── Sunset animation ───────────────────────────────────── */
         case LED_SCENE_SUNSET: {
-            uint32_t total = SUNSET_DURATION_MS / SCENE_TICK_MS;
+            uint32_t dur_ms = (uint32_t)cfg.sunset_duration_min * 60 * 1000;
+            uint32_t total  = dur_ms / SCENE_TICK_MS;
             float progress = (float)frame / (float)total;
             if (progress >= 1.0f) {
                 /* Auto-transition to moonlight */
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_active_scene = LED_SCENE_MOONLIGHT;
                 xSemaphoreGive(s_mutex);
+                nvs_save_scene(LED_SCENE_MOONLIGHT);
             } else {
                 render_sunset(progress, num_leds);
             }
@@ -386,7 +773,7 @@ static void led_scene_task(void *arg)
 
         /* ── Cloudy (continuous) ────────────────────────────────── */
         case LED_SCENE_CLOUDY:
-            render_cloudy(frame, num_leds);
+            render_cloudy(frame, num_leds, 1.0f);
             break;
 
         /* ── Storm (continuous) ─────────────────────────────────── */
@@ -396,48 +783,20 @@ static void led_scene_task(void *arg)
 
         /* ── Full 24 h day cycle (real-time + geolocation) ────────── */
         case LED_SCENE_FULL_DAY_CYCLE: {
-            /* Get current wall-clock time */
-            time_t now;
-            time(&now);
-            struct tm timeinfo;
-            localtime_r(&now, &timeinfo);
-
-            /* If system time is not set (year < 2024) fall back to
-             * uptime so the scene still works without NTP.          */
-            int now_min;    /* minutes since local midnight */
-            int cur_year, cur_month, cur_day;
-            bool have_time = (timeinfo.tm_year >= (2024 - 1900));
-
-            if (have_time) {
-                now_min   = timeinfo.tm_hour * 60 + timeinfo.tm_min;
-                cur_year  = timeinfo.tm_year + 1900;
-                cur_month = timeinfo.tm_mon + 1;
-                cur_day   = timeinfo.tm_mday;
-            } else {
-                /* Fallback: use uptime mapped to a 24 h day */
-                int64_t up_s = esp_timer_get_time() / 1000000;
-                int     sec_of_day = (int)(up_s % 86400);
-                now_min   = sec_of_day / 60;
-                cur_year  = 2026;
-                cur_month = 6;
-                cur_day   = 21;   /* summer solstice as default */
-            }
-
             /* Compute sunrise / sunset from geolocation */
             geolocation_config_t geo = geolocation_get();
             sun_times_t st = sun_position_calc(
                 geo.latitude, geo.longitude, geo.utc_offset_min,
                 cur_year, cur_month, cur_day);
 
+            int half_tr = (int)cfg.transition_duration_min / 2;
             int sr_start, sr_end, ss_start, ss_end;
 
             if (st.valid) {
-                /* 30-min sunrise transition centred on calculated time */
-                sr_start = st.sunrise_min - 15;
-                sr_end   = st.sunrise_min + 15;
-                /* 30-min sunset transition centred on calculated time */
-                ss_start = st.sunset_min - 15;
-                ss_end   = st.sunset_min + 15;
+                sr_start = st.sunrise_min - half_tr;
+                sr_end   = st.sunrise_min + half_tr;
+                ss_start = st.sunset_min - half_tr;
+                ss_end   = st.sunset_min + half_tr;
             } else {
                 /* Polar edge-case: default to fixed schedule */
                 sr_start = 6 * 60;
@@ -461,16 +820,17 @@ static void led_scene_task(void *arg)
                           (float)(sr_end - sr_start);
                 render_sunrise(p, num_leds);
             } else if (now_min >= sr_end && now_min < ss_start) {
-                /* Daytime – cloudy variation */
-                render_cloudy(frame, num_leds);
+                /* Daytime – cloudy variation with optional siesta */
+                float dim = siesta_dim_factor(now_min);
+                render_cloudy(frame, num_leds, dim);
             } else if (now_min >= ss_start && now_min < ss_end) {
                 /* Sunset transition */
                 float p = (float)(now_min - ss_start) /
                           (float)(ss_end - ss_start);
                 render_sunset(p, num_leds);
             } else {
-                /* Night – moonlight */
-                render_moonlight(num_leds);
+                /* Night – lunar moonlight */
+                render_moonlight(num_leds, cur_year, cur_month, cur_day);
             }
             break;
         }
@@ -493,6 +853,10 @@ esp_err_t led_scenes_init(void)
         ESP_LOGE(TAG, "Failed to create scene mutex");
         return ESP_ERR_NO_MEM;
     }
+
+    /* Load persisted config and last-active scene from NVS */
+    nvs_load_config();
+    update_daylight_color();
 
     BaseType_t ret = xTaskCreate(led_scene_task, "led_scene",
                                  SCENE_TASK_STACK, NULL,
@@ -519,6 +883,10 @@ esp_err_t led_scenes_set(led_scene_t scene)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_active_scene = scene;
     xSemaphoreGive(s_mutex);
+
+    /* Persist to NVS */
+    nvs_save_scene(scene);
+
     ESP_LOGI(TAG, "Scene set: %s", s_scene_names[scene]);
     return ESP_OK;
 }
@@ -558,4 +926,55 @@ led_scene_t led_scenes_from_name(const char *name)
 void led_scenes_stop(void)
 {
     led_scenes_set(LED_SCENE_OFF);
+}
+
+led_scene_config_t led_scenes_get_config(void)
+{
+    led_scene_config_t cfg;
+    if (s_mutex == NULL) {
+        memset(&cfg, 0, sizeof(cfg));
+        return cfg;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    cfg = s_config;
+    xSemaphoreGive(s_mutex);
+    return cfg;
+}
+
+esp_err_t led_scenes_set_config(const led_scene_config_t *cfg)
+{
+    if (cfg == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Clamp values to valid ranges */
+    led_scene_config_t safe = *cfg;
+    if (safe.sunrise_duration_min < 1)   safe.sunrise_duration_min = 1;
+    if (safe.sunrise_duration_min > 120) safe.sunrise_duration_min = 120;
+    if (safe.sunset_duration_min < 1)    safe.sunset_duration_min = 1;
+    if (safe.sunset_duration_min > 120)  safe.sunset_duration_min = 120;
+    if (safe.transition_duration_min < 1)   safe.transition_duration_min = 1;
+    if (safe.transition_duration_min > 120) safe.transition_duration_min = 120;
+    if (safe.siesta_start_min > 1439)    safe.siesta_start_min = 1439;
+    if (safe.siesta_end_min > 1439)      safe.siesta_end_min = 1439;
+    if (safe.siesta_intensity_pct > 100) safe.siesta_intensity_pct = 100;
+    if (safe.color_temp_kelvin < 6500)   safe.color_temp_kelvin = 6500;
+    if (safe.color_temp_kelvin > 20000)  safe.color_temp_kelvin = 20000;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_config = safe;
+    xSemaphoreGive(s_mutex);
+
+    update_daylight_color();
+
+    esp_err_t err = nvs_save_config();
+    ESP_LOGI(TAG, "Config updated: sr=%d ss=%d fdtr=%d siesta=%d "
+             "color_k=%d lunar=%d",
+             safe.sunrise_duration_min, safe.sunset_duration_min,
+             safe.transition_duration_min, safe.siesta_enabled,
+             safe.color_temp_kelvin, safe.lunar_moonlight);
+    return err;
 }

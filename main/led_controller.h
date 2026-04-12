@@ -112,6 +112,33 @@ bool led_controller_is_on(void);
  */
 uint16_t led_controller_get_num_leds(void);
 
+/**
+ * @brief Turn the strip on with a gradual brightness ramp.
+ *
+ * Smoothly ramps brightness from 0 to the stored brightness over
+ * the given duration.  Non-blocking – the ramp runs in the background.
+ *
+ * @param duration_ms  Ramp duration in milliseconds (0 = instant on).
+ * @return ESP_OK on success.
+ */
+esp_err_t led_controller_fade_on(uint32_t duration_ms);
+
+/**
+ * @brief Turn the strip off with a gradual brightness ramp.
+ *
+ * Smoothly ramps brightness from the current level down to 0, then
+ * marks the strip as off.  Non-blocking.
+ *
+ * @param duration_ms  Ramp duration in milliseconds (0 = instant off).
+ * @return ESP_OK on success.
+ */
+esp_err_t led_controller_fade_off(uint32_t duration_ms);
+
+/**
+ * @brief Return true if a fade ramp is currently in progress.
+ */
+bool led_controller_is_fading(void);
+
 #ifdef __cplusplus
 }
 #endif
