@@ -36,6 +36,7 @@
 #include "telegram_notify.h"
 #include "relay_controller.h"
 #include "duckdns.h"
+#include "auto_heater.h"
 
 static const char *TAG = "aquarium";
 
@@ -169,6 +170,14 @@ void app_main(void)
         ESP_LOGI(TAG, "Relay controller ready (4 channels)");
     }
 
+    /* ── 8b. Initialise auto-heater thermostat ───────────────────── */
+    ret = auto_heater_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Auto-heater init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "Auto-heater module ready");
+    }
+
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
     ret = duckdns_init();
     if (ret != ESP_OK) {
@@ -195,6 +204,12 @@ void app_main(void)
         }
 
         /* Placeholder – aquarium control logic goes here */
+
+        /* Evaluate relay time-of-day schedules */
+        relay_controller_tick_schedules();
+
+        /* Evaluate auto-heater thermostat logic */
+        auto_heater_tick();
 
         esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
