@@ -223,6 +223,9 @@ static void update_daylight_color(void)
 
 /**
  * @brief Compute Julian Day Number from calendar date.
+ *
+ * Uses the standard Gregorian-to-Julian Day conversion formula.
+ * Reference: Meeus, J. "Astronomical Algorithms", 2nd ed., ch. 7.
  */
 static int julian_day(int year, int month, int day)
 {

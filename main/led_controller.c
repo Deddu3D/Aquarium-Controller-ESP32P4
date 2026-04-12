@@ -292,6 +292,10 @@ uint16_t led_controller_get_num_leds(void)
 
 /**
  * @brief Periodic timer callback that drives the brightness ramp.
+ *
+ * Note: esp_timer callbacks run in the esp_timer FreeRTOS task
+ * context (ESP_TIMER_TASK dispatch, the default), not in ISR
+ * context, so mutex usage and LED strip operations are safe.
  */
 static void ramp_timer_cb(void *arg)
 {
