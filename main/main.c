@@ -24,6 +24,7 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_netif_sntp.h"
+#include "esp_task_wdt.h"
 
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -55,6 +56,25 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "NVS initialised");
+
+    /* ── 1b. Initialise Task Watchdog Timer ───────────────────── */
+    {
+        esp_task_wdt_config_t wdt_cfg = {
+            .timeout_ms    = 30000,  /* 30 s watchdog timeout */
+            .idle_core_mask = 0,     /* do not monitor idle tasks */
+            .trigger_panic = true,   /* reboot on WDT timeout */
+        };
+        ret = esp_task_wdt_reconfigure(&wdt_cfg);
+        if (ret != ESP_OK) {
+            ret = esp_task_wdt_init(&wdt_cfg);
+        }
+        if (ret == ESP_OK) {
+            esp_task_wdt_add(NULL);  /* subscribe main task */
+            ESP_LOGI(TAG, "Task watchdog initialised (30 s timeout)");
+        } else {
+            ESP_LOGW(TAG, "Task WDT init failed (0x%x) – continuing", ret);
+        }
+    }
 
     /* ── 2. Bring up WiFi via C6 coprocessor ──────────────────── */
     ret = wifi_manager_init();
@@ -176,6 +196,7 @@ void app_main(void)
 
         /* Placeholder – aquarium control logic goes here */
 
+        esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
     }
 }

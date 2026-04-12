@@ -12,6 +12,9 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -40,8 +43,9 @@ static const char *s_default_names[RELAY_COUNT] = {
     "Relay 4",
 };
 
-/* Runtime state */
-static relay_state_t s_relay[RELAY_COUNT];
+/* Runtime state – protected by s_mutex for thread safety */
+static relay_state_t     s_relay[RELAY_COUNT];
+static SemaphoreHandle_t s_mutex = NULL;
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -138,6 +142,13 @@ static void gpio_apply(int index)
 
 esp_err_t relay_controller_init(void)
 {
+    /* Create mutex for thread-safe state access */
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create relay mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     /* Load persisted state and names from NVS */
     nvs_load();
 
@@ -172,8 +183,10 @@ esp_err_t relay_controller_set(int index, bool on)
     if (index < 0 || index >= RELAY_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_relay[index].on = on;
     gpio_apply(index);
+    xSemaphoreGive(s_mutex);
     nvs_save_state(index);
     ESP_LOGI(TAG, "Relay %d (%s) → %s",
              index, s_relay[index].name, on ? "ON" : "OFF");
@@ -185,7 +198,10 @@ bool relay_controller_get(int index)
     if (index < 0 || index >= RELAY_COUNT) {
         return false;
     }
-    return s_relay[index].on;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool on = s_relay[index].on;
+    xSemaphoreGive(s_mutex);
+    return on;
 }
 
 esp_err_t relay_controller_set_name(int index, const char *name)
@@ -193,8 +209,10 @@ esp_err_t relay_controller_set_name(int index, const char *name)
     if (index < 0 || index >= RELAY_COUNT || name == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     strncpy(s_relay[index].name, name, RELAY_NAME_MAX - 1);
     s_relay[index].name[RELAY_NAME_MAX - 1] = '\0';
+    xSemaphoreGive(s_mutex);
     nvs_save_name(index);
     ESP_LOGI(TAG, "Relay %d renamed to \"%s\"", index, s_relay[index].name);
     return ESP_OK;
@@ -208,11 +226,15 @@ void relay_controller_get_name(int index, char *name, size_t len)
         }
         return;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     strncpy(name, s_relay[index].name, len - 1);
     name[len - 1] = '\0';
+    xSemaphoreGive(s_mutex);
 }
 
 void relay_controller_get_all(relay_state_t out[RELAY_COUNT])
 {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     memcpy(out, s_relay, sizeof(s_relay));
+    xSemaphoreGive(s_mutex);
 }

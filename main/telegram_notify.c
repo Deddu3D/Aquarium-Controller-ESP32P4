@@ -547,6 +547,14 @@ esp_err_t telegram_notify_set_config(const telegram_config_t *cfg)
     if (safe.temp_high_c > 50.0f)  safe.temp_high_c = 50.0f;
     if (safe.temp_low_c < -10.0f)  safe.temp_low_c = -10.0f;
     if (safe.temp_low_c > 50.0f)   safe.temp_low_c = 50.0f;
+
+    /* Enforce temp_high > temp_low with minimum 0.5°C gap */
+    if (safe.temp_high_c <= safe.temp_low_c) {
+        float mid = (safe.temp_high_c + safe.temp_low_c) / 2.0f;
+        safe.temp_low_c  = mid - 0.25f;
+        safe.temp_high_c = mid + 0.25f;
+    }
+
     if (safe.water_change_days < 1)  safe.water_change_days = 1;
     if (safe.water_change_days > 90) safe.water_change_days = 90;
     if (safe.fertilizer_days < 1)    safe.fertilizer_days = 1;
