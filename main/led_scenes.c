@@ -631,6 +631,10 @@ static void scene_enter(led_scene_t scene)
 {
     ESP_LOGI(TAG, "Entering scene: %s", s_scene_names[scene]);
 
+    /* Cancel any running fade ramp so that the ramp timer does not
+     * compete with the scene task for RMT channel access.           */
+    led_controller_cancel_fade();
+
     /* Reset storm flash state for all scenes */
     memset(s_storm_flashes, 0, sizeof(s_storm_flashes));
 
@@ -736,7 +740,9 @@ static void led_scene_task(void *arg)
 
         /* ── Moonlight (lunar-phase aware) ─────────────────────── */
         case LED_SCENE_MOONLIGHT:
+            led_controller_lock();
             render_moonlight(num_leds, cur_year, cur_month, cur_day);
+            led_controller_unlock();
             vTaskDelay(pdMS_TO_TICKS(1000));  /* update once per second */
             continue;
 
@@ -752,7 +758,9 @@ static void led_scene_task(void *arg)
                 xSemaphoreGive(s_mutex);
                 nvs_save_scene(LED_SCENE_DAYLIGHT);
             } else {
+                led_controller_lock();
                 render_sunrise(progress, num_leds);
+                led_controller_unlock();
             }
             break;
         }
@@ -769,19 +777,25 @@ static void led_scene_task(void *arg)
                 xSemaphoreGive(s_mutex);
                 nvs_save_scene(LED_SCENE_MOONLIGHT);
             } else {
+                led_controller_lock();
                 render_sunset(progress, num_leds);
+                led_controller_unlock();
             }
             break;
         }
 
         /* ── Cloudy (continuous) ────────────────────────────────── */
         case LED_SCENE_CLOUDY:
+            led_controller_lock();
             render_cloudy(frame, num_leds, 1.0f);
+            led_controller_unlock();
             break;
 
         /* ── Storm (continuous) ─────────────────────────────────── */
         case LED_SCENE_STORM:
+            led_controller_lock();
             render_storm(num_leds);
+            led_controller_unlock();
             break;
 
         /* ── Full 24 h day cycle (real-time + geolocation) ────────── */
@@ -817,6 +831,7 @@ static void led_scene_task(void *arg)
             if (ss_start >= ss_end) { ss_start = 18 * 60; ss_end = 19 * 60; }
             if (sr_end > ss_start)  { sr_end = ss_start; }
 
+            led_controller_lock();
             if (now_min >= sr_start && now_min < sr_end) {
                 /* Sunrise transition */
                 float p = (float)(now_min - sr_start) /
@@ -835,6 +850,7 @@ static void led_scene_task(void *arg)
                 /* Night – lunar moonlight */
                 render_moonlight(num_leds, cur_year, cur_month, cur_day);
             }
+            led_controller_unlock();
             break;
         }
 
