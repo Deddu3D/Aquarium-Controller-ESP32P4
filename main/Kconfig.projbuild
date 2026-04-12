@@ -178,12 +178,11 @@ menu "Aquarium MIPI DSI Display Settings"
 
     config DISPLAY_TOUCH_I2C_SCL_GPIO
         int "Touch I2C SCL GPIO"
-        default 8
+        default 9
         help
             GPIO pin for the GT911 touch controller I2C clock line (SCL).
-            Default is GPIO 8 for the Waveshare ESP32-P4-WiFi6 DSI connector.
-            NOTE: This conflicts with the default LED strip GPIO (also 8).
-            If you use both, change one of them via menuconfig.
+            Default is GPIO 9 for the Waveshare ESP32-P4-WiFi6 DSI connector.
+            Ensure this does not conflict with other peripherals (e.g. LED strip).
 
     config DISPLAY_TOUCH_INT_GPIO
         int "Touch interrupt GPIO (-1 = polling)"

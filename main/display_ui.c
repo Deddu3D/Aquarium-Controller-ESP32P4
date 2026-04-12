@@ -135,7 +135,7 @@ esp_err_t display_ui_init(void)
 
     /* ── Temperature card ─────────────────────────────────────────── */
     lv_obj_t *card_temp = make_card(body, 170, 390);
-    make_label(card_temp, LV_SYMBOL_WARNING "  Temperature",
+    make_label(card_temp, LV_SYMBOL_EYE_OPEN "  Temperature",
                &lv_font_montserrat_14, CLR_ACCENT);
     s_lbl_temp = make_label(card_temp, "-- °C",
                             &lv_font_montserrat_28, CLR_TEXT);

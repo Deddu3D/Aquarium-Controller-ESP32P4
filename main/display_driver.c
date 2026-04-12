@@ -275,6 +275,8 @@ esp_err_t display_driver_init(void)
     void *buf2 = heap_caps_calloc(1, buf_sz, MALLOC_CAP_SPIRAM);
     if (!buf1 || !buf2) {
         ESP_LOGE(TAG, "Failed to allocate LVGL draw buffers (%u bytes)", (unsigned)buf_sz);
+        free(buf1);   /* safe if NULL */
+        free(buf2);
         return ESP_ERR_NO_MEM;
     }
     lv_display_set_buffers(s_display, buf1, buf2, buf_sz,
