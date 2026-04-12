@@ -42,6 +42,24 @@
 
 static const char *TAG = "aquarium";
 
+/* ── Background task: initialise MIPI DSI display + LVGL + touch ── */
+/* Runs outside app_main so that a disconnected panel cannot block
+ * WiFi, web server, or any other service from starting.             */
+static void display_init_task(void *arg)
+{
+    esp_err_t ret = display_driver_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Display init failed (0x%x) – continuing without display", ret);
+    } else {
+        ESP_LOGI(TAG, "MIPI DSI display ready (800x480)");
+        ret = display_ui_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Display UI init failed (0x%x)", ret);
+        }
+    }
+    vTaskDelete(NULL);   /* one-shot task */
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "========================================");
@@ -197,21 +215,17 @@ void app_main(void)
     }
 
     /* ── 9b. Initialise MIPI DSI display + LVGL + touch ───────────── */
-    /* The ILI9881C panel init sends many DSI commands with busy-wait
-     * read-backs in the HAL. Temporarily remove the main task from WDT
-     * monitoring so these blocking exchanges do not trigger a timeout. */
+    /* Run display init in a background task so that a disconnected
+     * panel does not block the web server and other services.
+     * The ILI9881C panel init sends many DSI commands with busy-wait
+     * read-backs; if no display is connected, these may hang
+     * indefinitely – a separate task isolates the rest of the system. */
     esp_task_wdt_reset();
-    esp_task_wdt_delete(NULL);
-    ret = display_driver_init();
-    esp_task_wdt_add(NULL);
-    esp_task_wdt_reset();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Display init failed (0x%x) – continuing without display", ret);
-    } else {
-        ESP_LOGI(TAG, "MIPI DSI display ready (800x480)");
-        ret = display_ui_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Display UI init failed (0x%x)", ret);
+    {
+        BaseType_t xr = xTaskCreate(display_init_task, "disp_init",
+                                    8192, NULL, 5, NULL);
+        if (xr != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create display init task");
         }
     }
 

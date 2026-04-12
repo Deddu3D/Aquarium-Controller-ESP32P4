@@ -180,11 +180,12 @@ esp_err_t display_ui_init(void)
 
 void display_ui_refresh(void)
 {
+    display_lock();
+
     if (!s_lbl_clock) {
+        display_unlock();
         return;   /* UI not created yet */
     }
-
-    display_lock();
 
     /* ── Clock ────────────────────────────────────────────────────── */
     {
