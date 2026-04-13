@@ -45,11 +45,27 @@ esp_err_t led_controller_off(void);
  * @brief Set the global brightness level.
  *
  * The brightness value scales the RGB output of every LED.
+ * If the strip is on, all LEDs are immediately refreshed with the
+ * stored solid colour at the new brightness.
  *
  * @param brightness  0 (off) – 255 (full brightness).
  * @return ESP_OK on success.
  */
 esp_err_t led_controller_set_brightness(uint8_t brightness);
+
+/**
+ * @brief Set the global brightness level without refreshing the strip.
+ *
+ * Updates the internal brightness value so that subsequent
+ * @ref led_controller_set_pixel calls use the new brightness for
+ * scaling, but does **not** push any data to the LEDs.
+ *
+ * Use this when per-pixel rendering will follow immediately (e.g.
+ * inside the scene engine), to avoid an unwanted solid-colour flash.
+ *
+ * @param brightness  0 (off) – 255 (full brightness).
+ */
+void led_controller_set_brightness_no_refresh(uint8_t brightness);
 
 /**
  * @brief Set a uniform colour for the entire strip.

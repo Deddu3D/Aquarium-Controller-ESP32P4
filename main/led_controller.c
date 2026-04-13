@@ -219,6 +219,13 @@ esp_err_t led_controller_set_brightness(uint8_t brightness)
     return ret;
 }
 
+void led_controller_set_brightness_no_refresh(uint8_t brightness)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_brightness = brightness;
+    xSemaphoreGive(s_mutex);
+}
+
 esp_err_t led_controller_set_color(uint8_t red, uint8_t green, uint8_t blue)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);

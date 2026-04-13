@@ -782,9 +782,9 @@ static void scene_enter(led_scene_t scene)
         break;
 
     case LED_SCENE_FULL_DAY_CYCLE: {
-        /* Don't set colour to black – the task loop will immediately
-         * render the correct phase based on the current time of day. */
-        led_controller_set_brightness(
+        /* Set brightness without refreshing – the task loop will
+         * immediately render the correct phase on its first tick. */
+        led_controller_set_brightness_no_refresh(
             fullday_brightness(s_config.fullday_max_brightness_pct));
         led_controller_on();
         break;
@@ -963,8 +963,9 @@ static void led_scene_task(void *arg)
          *   5. Night (after dusk_end):  all LEDs OFF
          */
         case LED_SCENE_FULL_DAY_CYCLE: {
-            /* Apply the configurable maximum brightness for this scene. */
-            led_controller_set_brightness(
+            /* Update brightness without refreshing – the per-pixel
+             * render below will push the correct colours to the strip. */
+            led_controller_set_brightness_no_refresh(
                 fullday_brightness(cfg.fullday_max_brightness_pct));
 
             /* Compute sunrise / sunset for Cagliari using current UTC
