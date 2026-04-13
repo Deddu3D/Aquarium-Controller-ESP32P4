@@ -25,7 +25,6 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_scenes.h"
-#include "geolocation.h"
 #include "sun_position.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
@@ -126,7 +125,6 @@ static void get_wifi_status(wifi_status_t *out)
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE     256
 #define POST_BODY_SCENE_SIZE   512
-#define POST_BODY_GEO_SIZE     256
 #define POST_BODY_TG_SIZE      512
 #define POST_BODY_RELAY_SIZE   256
 #define POST_BODY_DDNS_SIZE    256
@@ -435,27 +433,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     " style=\"max-width:80px\"></div>"
     "<button class=\"btn\" onclick=\"saveSceneCfg()\">Salva Impostazioni</button>"
     "</div></div></div>"
-    "<!-- Geolocation -->"
-    "<div class=\"ccard\" id=\"geo-card\">"
-    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
-    "<h2>&#x1F30D; Geolocalizzazione</h2>"
-    "<span class=\"arr\">&#x25BC;</span></div>"
-    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
-    "<div class=\"row\"><span class=\"label\">Latitudine</span>"
-    "<input type=\"number\" class=\"fin\" id=\"geo-lat\""
-    " step=\"0.0001\" min=\"-90\" max=\"90\" style=\"max-width:130px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Longitudine</span>"
-    "<input type=\"number\" class=\"fin\" id=\"geo-lng\""
-    " step=\"0.0001\" min=\"-180\" max=\"180\" style=\"max-width:130px\"></div>"
-    "<div class=\"row\"><span class=\"label\">UTC Offset (min)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"geo-utc\""
-    " step=\"30\" min=\"-720\" max=\"840\" style=\"max-width:100px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Alba</span>"
-    "<span class=\"value\" id=\"geo-sunrise\">--:--</span></div>"
-    "<div class=\"row\"><span class=\"label\">Tramonto</span>"
-    "<span class=\"value\" id=\"geo-sunset\">--:--</span></div>"
-    "<button class=\"btn\" onclick=\"sendGeo()\">Salva Posizione</button>"
-    "</div></div></div>"
     "</div>"
     ""
     "<!-- ═══ Panel 2: Telegram ═══ -->"
@@ -639,7 +616,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  tabs[n].classList.add('active');"
     "  _tab=n;"
     "  if(n===0){loadDash()}"
-    "  if(n===1){loadLeds();loadScene();loadGeo()}"
+    "  if(n===1){loadLeds();loadScene()}"
     "  if(n===2){loadTg()}"
     "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays()}}"
     "/* ── Color helpers ── */"
@@ -954,27 +931,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    else{"
     "      el.className='rule-box inactive';"
     "      el.textContent='\\u2699 Nessuna regola attiva'}})}"
-    "/* ── Geolocation (LED Strip tab) ── */"
-    "function loadGeo(){"
-    "  fetch('/api/geolocation').then(function(r){return r.json()})"
-    "  .then(function(d){"
-    "    $('geo-lat').value=d.latitude;"
-    "    $('geo-lng').value=d.longitude;"
-    "    $('geo-utc').value=d.utc_offset_min;"
-    "    $('geo-sunrise').textContent=d.sunrise||'--:--';"
-    "    $('geo-sunset').textContent=d.sunset||'--:--'})}"
-    "function sendGeo(){"
-    "  var lat=parseFloat($('geo-lat').value);"
-    "  var lng=parseFloat($('geo-lng').value);"
-    "  var utc=parseInt($('geo-utc').value);"
-    "  fetch('/api/geolocation',{method:'POST',"
-    "    headers:{'Content-Type':'application/json'},"
-    "    body:JSON.stringify({latitude:lat,longitude:lng,utc_offset_min:utc})"
-    "  }).then(function(r){return r.json()}).then(function(d){"
-    "    $('geo-sunrise').textContent=d.sunrise||'--:--';"
-    "    $('geo-sunset').textContent=d.sunset||'--:--';"
-    "    toast('Posizione salvata',1)"
-    "  }).catch(function(){toast('Errore salvataggio',0)})}"
     "/* ── Telegram ── */"
     "function tgTs(id,ts){"
     "  var el=$(id);"
@@ -1633,13 +1589,17 @@ static esp_err_t api_temp_csv_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* ── Geolocation GET endpoint (/api/geolocation  GET) ────────────── */
+/* ── Sunlight GET endpoint (/api/geolocation  GET) ───────────────── */
+/* Returns sunrise/sunset for Cagliari (hardcoded). Kept at the same
+ * URL so the dashboard JavaScript works without changes.             */
+
+/* Cagliari, Sardinia – fixed location */
+#define WEB_CAGLIARI_LAT    39.2238
+#define WEB_CAGLIARI_LON     9.1217
 
 static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
 {
-    geolocation_config_t cfg = geolocation_get();
-
-    /* Also compute today's sunrise/sunset for display */
+    /* Compute today's sunrise/sunset for Cagliari */
     time_t now;
     time(&now);
     struct tm ti;
@@ -1648,15 +1608,16 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
     int year  = ti.tm_year + 1900;
     int month = ti.tm_mon + 1;
     int day   = ti.tm_mday;
+    int utc_off_min = (int)(ti.tm_gmtoff / 60);
 
     /* If time not set, use a default date */
     if (ti.tm_year < (2024 - 1900)) {
         year = 2026; month = 6; day = 21;
+        utc_off_min = 60;   /* CET fallback */
     }
 
-    sun_times_t st = sun_position_calc(cfg.latitude, cfg.longitude,
-                                       cfg.utc_offset_min,
-                                       year, month, day);
+    sun_times_t st = sun_position_calc(WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON,
+                                       utc_off_min, year, month, day);
 
     char buf[JSON_GEO_BUF_SIZE];
     int len;
@@ -1667,7 +1628,7 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
             "\"utc_offset_min\":%d,"
             "\"sunrise\":\"%02d:%02d\","
             "\"sunset\":\"%02d:%02d\"}",
-            cfg.latitude, cfg.longitude, cfg.utc_offset_min,
+            WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON, utc_off_min,
             st.sunrise_min / 60, st.sunrise_min % 60,
             st.sunset_min / 60, st.sunset_min % 60);
     } else {
@@ -1677,53 +1638,11 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
             "\"utc_offset_min\":%d,"
             "\"sunrise\":null,"
             "\"sunset\":null}",
-            cfg.latitude, cfg.longitude, cfg.utc_offset_min);
+            WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON, utc_off_min);
     }
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
-}
-
-/* ── Geolocation POST endpoint (/api/geolocation  POST) ─────────── */
-
-static esp_err_t api_geolocation_post_handler(httpd_req_t *req)
-{
-    char buf[POST_BODY_GEO_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    ESP_LOGI(TAG, "Geolocation POST body: %s", buf);
-
-    geolocation_config_t cfg = geolocation_get();
-
-    double lat, lng, utc_off;
-    if (json_get_double(buf, "\"latitude\"", &lat) == 0) {
-        cfg.latitude = lat;
-    }
-    if (json_get_double(buf, "\"longitude\"", &lng) == 0) {
-        cfg.longitude = lng;
-    }
-    if (json_get_double(buf, "\"utc_offset_min\"", &utc_off) == 0) {
-        cfg.utc_offset_min = (int)utc_off;
-    }
-
-    geolocation_set(&cfg);
-
-    /* Update system timezone offset for localtime_r */
-    char tz[16];
-    int abs_off = cfg.utc_offset_min < 0 ? -cfg.utc_offset_min : cfg.utc_offset_min;
-    /* POSIX TZ sign is inverted: +60 min offset → UTC-1 */
-    snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
-             cfg.utc_offset_min >= 0 ? '-' : '+',
-             abs_off / 60, abs_off % 60);
-    setenv("TZ", tz, 1);
-    tzset();
-
-    return api_geolocation_get_handler(req);
 }
 
 /* ── Telegram GET endpoint (/api/telegram  GET) ──────────────────── */
@@ -2272,13 +2191,6 @@ static const httpd_uri_t uri_api_geo_get = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_geo_post = {
-    .uri      = "/api/geolocation",
-    .method   = HTTP_POST,
-    .handler  = api_geolocation_post_handler,
-    .user_ctx = NULL,
-};
-
 static const httpd_uri_t uri_api_temp_get = {
     .uri      = "/api/temperature",
     .method   = HTTP_GET,
@@ -2427,7 +2339,6 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scenes_get);
     httpd_register_uri_handler(s_server, &uri_api_scenes_post);
     httpd_register_uri_handler(s_server, &uri_api_geo_get);
-    httpd_register_uri_handler(s_server, &uri_api_geo_post);
     httpd_register_uri_handler(s_server, &uri_api_temp_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_hist_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_csv_get);
