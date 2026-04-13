@@ -46,6 +46,7 @@ typedef struct {
     uint8_t  siesta_intensity_pct;    /**< Siesta dimming level 0-100 %        */
     uint16_t color_temp_kelvin;       /**< Daylight colour temperature (K)     */
     bool     lunar_moonlight;         /**< Modulate moonlight by moon phase    */
+    uint8_t  fullday_max_brightness_pct; /**< Full Day Cycle max brightness 1-100% */
 } led_scene_config_t;
 
 /**
