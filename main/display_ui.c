@@ -410,6 +410,10 @@ esp_err_t display_ui_init(void)
     lv_obj_set_size(tv, 800, 440);
     lv_obj_align(tv, LV_ALIGN_BOTTOM_MID, 0, 0);
 
+    /* Disable horizontal swipe between tabs – switch only via tab buttons */
+    lv_obj_t *content = lv_tabview_get_content(tv);
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+
     /* Style the tab bar (top buttons) */
     lv_obj_t *tab_bar = lv_tabview_get_tab_bar(tv);
     lv_obj_set_style_bg_color(tab_bar, CLR_PRIMARY, 0);
