@@ -23,17 +23,17 @@
 
 ### Display LVGL (5″ 800×480)
 
-Dashboard on-screen con temperatura, scena LED attiva, stato WiFi, stato 4 relè e orologio real-time.
+Dashboard on-screen con 4 tab a scorrimento (stessa struttura della Web UI): **Riepilogo** (temperatura, WiFi, scena LED, relè), **LED Strip** (scena, luminosità, RGB, configurazione), **Telegram** (stato notifiche, promemoria), **Manutenzione** (WiFi/IP, heap, uptime, termostato, DuckDNS). Refresh ogni 10 s, touch capacitivo GT911.
 
 ![Display LVGL Dashboard](https://github.com/user-attachments/assets/97c94714-cc51-4dab-95f7-3573bac166da)
 
 ### Web UI – 4 Tab
 
-Dashboard web responsive con 4 tab: **Riepilogo**, **LED Strip**, **Telegram**, **Manutenzione**. Accessibile da qualsiasi browser sulla rete locale.
+Dashboard web responsive con 4 tab: **Riepilogo**, **LED Strip**, **Telegram**, **Manutenzione**. Accessibile da qualsiasi browser sulla rete locale. Auto-refresh ogni 2 s per dati real-time.
 
 #### Tab Riepilogo
 
-Temperatura in tempo reale, grafico storico 24h, stato sensore, WiFi RSSI, regola termostato.
+Temperatura in tempo reale, grafico storico 24h, stato sensore, WiFi RSSI, scena LED con campione colore RGB, stato 4 relè con toggle, regola termostato, fase solare.
 
 ![Web UI – Riepilogo](docs/screenshots/web_ui_riepilogo.png)
 
@@ -51,7 +51,7 @@ Configurazione bot token e chat ID, allarmi temperatura, promemoria manutenzione
 
 #### Tab Manutenzione
 
-Controllo 4 relè con nomi e scheduling, DuckDNS DDNS, aggiornamento firmware OTA con progress bar, configurazione termostato automatico, info sistema.
+Stato sistema (WiFi, IP, SSID, RSSI, heap, uptime), aggiornamento firmware OTA con progress bar, configurazione termostato automatico, DuckDNS DDNS, controllo 4 relè con nomi e toggle.
 
 ![Web UI – Manutenzione](docs/screenshots/web_ui_manutenzione.png)
 
@@ -65,15 +65,15 @@ Controllo 4 relè con nomi e scheduling, DuckDNS DDNS, aggiornamento firmware OT
 
 | Categoria | Descrizione |
 |-----------|-------------|
-| 🖥️ **Display touch MIPI DSI** | Schermo 5″ 800×480 con dashboard LVGL: temperatura, grafico 24h, scena LED, stato WiFi, 4 relè, orologio. Refresh ogni 10s, touch capacitivo GT911. Init non bloccante su CPU 1 |
-| 🐟 **Illuminazione LED WS2812B** | Controllo colore RGB con correzione gamma 2.2, **8 scene** predefinite + ciclo giornaliero automatico basato su alba/tramonto reali. Fade-in/fade-out graduali (default 30s). Siesta anti-alghe configurabile |
+| 🖥️ **Display touch MIPI DSI** | Schermo 5″ 800×480 con dashboard LVGL a 4 tab (stessa struttura della Web UI): temperatura, grafico 24h, scena LED, stato WiFi, 4 relè, orologio. Refresh ogni 10s, touch capacitivo GT911. Init non bloccante su CPU 1 |
+| 🐟 **Illuminazione LED WS2812B** | Controllo colore RGB con correzione gamma 2.2, **8 scene** predefinite + ciclo giornaliero automatico basato su alba/tramonto reali con ripresa dalla fase corrente. Fade-in/fade-out graduali (default 30s). Siesta anti-alghe configurabile |
 | 🌡️ **Sensore temperatura DS18B20** | Lettura ogni 5s con media mobile a 3 campioni, storico 24h (288 campioni), grafico su display e web, esportazione CSV, offset di calibrazione configurabile |
 | 🔥 **Termostato automatico** | Controllo termostatico relè + DS18B20 con isteresi configurabile (0.1–3.0 °C), target 15–35 °C, logica anti-oscillazione |
 | 📱 **Notifiche Telegram** | Allarmi temperatura (alta/bassa), promemoria cambio acqua e fertilizzante con intervallo configurabile, riepilogo giornaliero programmabile. TLS con certificato embedded |
 | 🔌 **4 Relè configurabili** | Nomi personalizzabili (32 char), stato persistente NVS, **scheduling time-of-day** con granularità 1 minuto e supporto finestre overnight |
 | 🌐 **DuckDNS DDNS** | Aggiornamento automatico IP ogni 5 minuti con stato diagnostico |
 | 📡 **WiFi con riconnessione** | Backoff esponenziale (1s → 60s cap), riconnessione infinita in background, timeout init 30s non bloccante |
-| 📊 **Dashboard web** | UI responsive con 4 tab, tema scuro, grafico canvas temperatura, aggiornamento AJAX real-time, interfaccia italiana |
+| 📊 **Dashboard web** | UI responsive con 4 tab, tema scuro, grafico canvas temperatura, auto-refresh ogni 2s, campione colore RGB in tempo reale, interfaccia italiana |
 | 🔄 **OTA Firmware Update** | Aggiornamento firmware via HTTP/HTTPS in background con progress tracking e reboot automatico 3s dopo completamento |
 | 🐕 **Task Watchdog** | Watchdog 30s con panic e reboot automatico in caso di blocco |
 | 📦 **Persistenza NVS** | Tutte le configurazioni salvate in flash: scene LED, relè, termostato, Telegram, DuckDNS, geolocalizzazione |
@@ -89,7 +89,7 @@ Controllo 4 relè con nomi e scheduling, DuckDNS DDNS, aggiornamento firmware OT
 | `moonlight` | Luce lunare blu tenue con modulazione opzionale fase lunare reale |
 | `cloudy` | Onde sinusoidali di luminosità (effetto nuvole) |
 | `storm` | Base scura con lampi casuali (effetto temporale) |
-| `full_day_cycle` | Ciclo completo 24h automatico: alba → luce diurna → (siesta) → tramonto → luna. Orari reali via geolocalizzazione + SNTP |
+| `full_day_cycle` | Ciclo completo 24h automatico: alba → luce diurna → (siesta) → tramonto → luna. Orari reali via geolocalizzazione + SNTP. Ripresa automatica dalla fase corrente dopo riavvio |
 
 ---
 
@@ -156,7 +156,7 @@ che il polling busy-wait del pannello DSI blocchi CPU 0 e faccia scattare il wat
 |--------|------|-------------|
 | WiFi Manager | `wifi_manager.h/.c` | Connessione STA con backoff esponenziale (1s → 60s) |
 | LED Controller | `led_controller.h/.c` | Driver WS2812B thread-safe: mutex, gamma LUT 2.2, fade ramp, lock/unlock API |
-| LED Scenes | `led_scenes.h/.c` | Engine 8 scene + ciclo giornaliero con alba/tramonto, siesta anti-alghe, fase lunare |
+| LED Scenes | `led_scenes.h/.c` | Engine 8 scene + ciclo giornaliero con alba/tramonto, siesta anti-alghe, fase lunare, ripresa dalla fase corrente |
 | Temperature | `temperature_sensor.h/.c` | DS18B20 con media mobile 3 campioni e calibrazione offset |
 | Temp History | `temperature_history.h/.c` | Ring buffer 24h (288 campioni × 5 min) |
 | Telegram | `telegram_notify.h/.c` | Bot API TLS, allarmi, promemoria, riepilogo giornaliero, tracking manutenzione |
@@ -165,7 +165,7 @@ che il polling busy-wait del pannello DSI blocchi CPU 0 e faccia scattare il wat
 | DuckDNS | `duckdns.h/.c` | Client DDNS con aggiornamento periodico (5 min), diagnostica stato |
 | OTA Update | `ota_update.h/.c` | Aggiornamento firmware HTTP/HTTPS con progress % e reboot automatico |
 | Display Driver | `display_driver.h/.c` | MIPI DSI 2-lane + ILI9881C + GT911 I2C + LVGL 9.x init + PSRAM draw buffers |
-| Display UI | `display_ui.h/.c` | Dashboard LVGL: temperatura, grafico 24h, WiFi, relè, LED, orologio |
+| Display UI | `display_ui.h/.c` | Dashboard LVGL a 4 tab: Riepilogo, LED Strip, Telegram, Manutenzione (layout speculare alla Web UI) |
 | Geolocation | `geolocation.h/.c` | Lat/lng/UTC per calcolo alba/tramonto (default: Roma, mutex-protected) |
 | Sun Position | `sun_position.h/.c` | Algoritmo NOAA semplificato per alba/tramonto (±1 min accuratezza) |
 | Web Server | `web_server.h/.c` | HTTP server porta 80 con dashboard 4-tab e 26 endpoint REST API |
@@ -464,7 +464,7 @@ Il menu **"Aquarium Controller Settings"** in `idf.py menuconfig` permette di co
 
 - Le credenziali WiFi sono in `sdkconfig.defaults` – **non committare** password reali
 - Il bot token Telegram e il token DuckDNS sono salvati in NVS (flash interna), non nel codice
-- L'SSID WiFi è HTML-escaped nella dashboard tramite `html_escape()` per prevenire XSS
+- L'SSID WiFi è servito esclusivamente tramite API JSON con `json_escape()` – non è incorporato nel template HTML
 - Le risposte JSON utilizzano `json_escape()` per prevenire injection
 - Le API non hanno autenticazione – **limitare l'accesso alla rete locale**
 - Il certificato TLS per Telegram include Go Daddy Root CA G2 embedded con fallback al bundle ESP-IDF
