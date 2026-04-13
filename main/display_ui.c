@@ -125,6 +125,21 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text,
     return lbl;
 }
 
+/** Convert 0-255 brightness to 0-100 percentage. */
+static inline int brightness_pct(uint8_t br)
+{
+    return (int)(br * 100 / 255);
+}
+
+/** Scale an RGB colour by brightness and return an lv_color_t. */
+static inline lv_color_t scaled_color(uint8_t r, uint8_t g, uint8_t b,
+                                      uint8_t br)
+{
+    float s = (float)br / 255.0f;
+    return lv_color_make((uint8_t)(r * s), (uint8_t)(g * s),
+                         (uint8_t)(b * s));
+}
+
 /** Key → value row inside a card. */
 static lv_obj_t *make_row(lv_obj_t *parent, const char *key,
                           const lv_font_t *val_font,
@@ -236,7 +251,7 @@ static void build_tab_riepilogo(lv_obj_t *parent)
     /* Relays card */
     {
         lv_obj_t *card = make_card(right);
-        make_card_header(card, LV_SYMBOL_POWER "  RELÈ");
+        make_card_header(card, LV_SYMBOL_POWER "  Relè");
 
         for (int i = 0; i < RELAY_COUNT; i++) {
             lv_obj_t *row = lv_obj_create(card);
@@ -508,17 +523,14 @@ void display_ui_refresh(void)
         bool on = led_controller_is_on();
         uint8_t br = led_controller_get_brightness();
         char buf[32];
-        snprintf(buf, sizeof(buf), "Luminosità: %d%%", (int)(br * 100 / 255));
+        snprintf(buf, sizeof(buf), "Luminosità: %d%%", brightness_pct(br));
         lv_label_set_text(s_lbl_led_bright, buf);
 
         uint8_t r, g, b;
         led_controller_get_color(&r, &g, &b);
         if (on) {
-            float s_factor = (float)br / 255.0f;
             lv_obj_set_style_bg_color(s_obj_led_swatch,
-                lv_color_make((uint8_t)(r * s_factor),
-                              (uint8_t)(g * s_factor),
-                              (uint8_t)(b * s_factor)), 0);
+                                      scaled_color(r, g, b, br), 0);
         } else {
             lv_obj_set_style_bg_color(s_obj_led_swatch,
                                       CLR_TEXT_DIM, 0);
@@ -580,11 +592,8 @@ void display_ui_refresh(void)
 
         /* Preview bar */
         if (on) {
-            float s_factor = (float)br / 255.0f;
             lv_obj_set_style_bg_color(s_obj_led_preview,
-                lv_color_make((uint8_t)(r * s_factor),
-                              (uint8_t)(g * s_factor),
-                              (uint8_t)(b * s_factor)), 0);
+                                      scaled_color(r, g, b, br), 0);
         } else {
             lv_obj_set_style_bg_color(s_obj_led_preview, CLR_BG_DARK, 0);
         }
