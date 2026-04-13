@@ -832,7 +832,7 @@ static void scene_enter(led_scene_t scene)
  * @param out_month       Calendar month (1–12).
  * @param out_day         Calendar day (1–31).
  * @param out_sec_of_day  Seconds from midnight (0–86399), or NULL.
- * @param out_utc_off_min UTC offset in minutes (from tm_gmtoff), or NULL.
+ * @param out_utc_off_min UTC offset in minutes, or NULL.
  */
 static void get_current_time(int *out_min, int *out_year,
                              int *out_month, int *out_day,
@@ -851,8 +851,16 @@ static void get_current_time(int *out_min, int *out_year,
         *out_day   = ti.tm_mday;
         if (out_sec_of_day)
             *out_sec_of_day = ti.tm_hour * 3600 + ti.tm_min * 60 + ti.tm_sec;
-        if (out_utc_off_min)
-            *out_utc_off_min = (int)(ti.tm_gmtoff / 60);
+        if (out_utc_off_min) {
+            struct tm gt;
+            gmtime_r(&now, &gt);
+            /* Day-of-year difference; clamp ±1 to handle Dec 31→Jan 1 year wrap */
+            int dd = ti.tm_yday - gt.tm_yday;
+            if (dd > 1) dd = -1; else if (dd < -1) dd = 1;
+            *out_utc_off_min = (ti.tm_hour - gt.tm_hour) * 60
+                             + (ti.tm_min  - gt.tm_min)
+                             + dd * 1440;
+        }
     } else {
         /* Fallback: use uptime mapped to a 24 h day */
         int64_t up_s = esp_timer_get_time() / 1000000;
