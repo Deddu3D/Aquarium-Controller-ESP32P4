@@ -32,7 +32,6 @@
 
 #include "led_controller.h"
 #include "led_scenes.h"
-#include "geolocation.h"
 #include "sun_position.h"
 
 static const char *TAG = "led_scene";
@@ -65,6 +64,10 @@ static const char *TAG = "led_scene";
 /* Lunar synodic month (days) and reference new-moon Julian Day */
 #define SYNODIC_MONTH          29.530588853
 #define NEW_MOON_JD            2451550.1   /* Jan 6, 2000 */
+
+/* Cagliari, Sardinia – fixed location for sun position calculation */
+#define CAGLIARI_LAT           39.2238
+#define CAGLIARI_LON            9.1217
 
 /* ── NVS keys ────────────────────────────────────────────────────── */
 
@@ -823,10 +826,18 @@ static void scene_enter(led_scene_t scene)
 /**
  * @brief Get current date/time info.  Falls back to uptime if NTP
  *        has not synchronised yet.
+ *
+ * @param out_min         Minutes from midnight (0–1439).
+ * @param out_year        Calendar year.
+ * @param out_month       Calendar month (1–12).
+ * @param out_day         Calendar day (1–31).
+ * @param out_sec_of_day  Seconds from midnight (0–86399), or NULL.
+ * @param out_utc_off_min UTC offset in minutes (from tm_gmtoff), or NULL.
  */
 static void get_current_time(int *out_min, int *out_year,
                              int *out_month, int *out_day,
-                             int *out_sec_of_day)
+                             int *out_sec_of_day,
+                             int *out_utc_off_min)
 {
     time_t now;
     time(&now);
@@ -840,6 +851,8 @@ static void get_current_time(int *out_min, int *out_year,
         *out_day   = ti.tm_mday;
         if (out_sec_of_day)
             *out_sec_of_day = ti.tm_hour * 3600 + ti.tm_min * 60 + ti.tm_sec;
+        if (out_utc_off_min)
+            *out_utc_off_min = (int)(ti.tm_gmtoff / 60);
     } else {
         /* Fallback: use uptime mapped to a 24 h day */
         int64_t up_s = esp_timer_get_time() / 1000000;
@@ -850,6 +863,8 @@ static void get_current_time(int *out_min, int *out_year,
         *out_day   = 21;   /* summer solstice as default */
         if (out_sec_of_day)
             *out_sec_of_day = sec_of_day;
+        if (out_utc_off_min)
+            *out_utc_off_min = 60;   /* CET fallback */
     }
 }
 
@@ -880,9 +895,9 @@ static void led_scene_task(void *arg)
         uint16_t num_leds = led_controller_get_num_leds();
 
         /* Get current date/time (used by moonlight, full-day, etc.) */
-        int now_min, cur_year, cur_month, cur_day, sec_of_day;
+        int now_min, cur_year, cur_month, cur_day, sec_of_day, utc_off_min;
         get_current_time(&now_min, &cur_year, &cur_month, &cur_day,
-                         &sec_of_day);
+                         &sec_of_day, &utc_off_min);
 
         switch (scene) {
         /* ── Static scenes: idle after initial setup ────────────── */
@@ -951,7 +966,7 @@ static void led_scene_task(void *arg)
             led_controller_unlock();
             break;
 
-        /* ── Full 24 h day cycle (real-time + geolocation) ────────── */
+        /* ── Full 24 h day cycle (Cagliari, second-level precision) ── */
         case LED_SCENE_FULL_DAY_CYCLE: {
             /* Apply the configurable maximum brightness for this scene.
              * set_brightness acquires the controller mutex internally,
@@ -959,69 +974,77 @@ static void led_scene_task(void *arg)
             led_controller_set_brightness(
                 fullday_brightness(cfg.fullday_max_brightness_pct));
 
-            /* Compute sunrise / sunset from geolocation */
-            geolocation_config_t geo = geolocation_get();
+            /* Compute sunrise / sunset for Cagliari using current UTC
+             * offset (includes DST thanks to the POSIX TZ string).   */
             sun_times_t st = sun_position_calc(
-                geo.latitude, geo.longitude, geo.utc_offset_min,
+                CAGLIARI_LAT, CAGLIARI_LON, utc_off_min,
                 cur_year, cur_month, cur_day);
 
-            int half_tr = (int)cfg.transition_duration_min / 2;
-            int sr_start, sr_end, ss_start, ss_end;
+            /* Phase boundaries in *seconds* from midnight for smooth
+             * sub-minute interpolation.  The transition_duration_min
+             * config parameter controls how long sunrise/sunset last. */
+            int trans_sec = (int)cfg.transition_duration_min * 60;
+            int half_tr   = trans_sec / 2;
 
+            int sr_center_sec, ss_center_sec;
             if (st.valid) {
-                sr_start = st.sunrise_min - half_tr;
-                sr_end   = st.sunrise_min + half_tr;
-                ss_start = st.sunset_min - half_tr;
-                ss_end   = st.sunset_min + half_tr;
+                sr_center_sec = st.sunrise_min * 60;
+                ss_center_sec = st.sunset_min  * 60;
             } else {
-                /* Polar edge-case: default to fixed schedule */
-                sr_start = 6 * 60;
-                sr_end   = 7 * 60;
-                ss_start = 18 * 60;
-                ss_end   = 19 * 60;
+                /* Fallback if computation fails */
+                sr_center_sec =  7 * 3600;   /*  7:00 */
+                ss_center_sec = 19 * 3600;   /* 19:00 */
             }
 
-            /* Clamp to valid range and ensure start < end */
-            if (sr_start < 0)     sr_start = 0;
-            if (sr_end   > 1439)  sr_end   = 1439;
-            if (ss_start < 0)     ss_start = 0;
-            if (ss_end   > 1439)  ss_end   = 1439;
-            if (sr_start >= sr_end) { sr_start = 6 * 60;  sr_end = 7 * 60;  }
-            if (ss_start >= ss_end) { ss_start = 18 * 60; ss_end = 19 * 60; }
-            if (sr_end > ss_start)  { sr_end = ss_start; }
+            int sr_start = sr_center_sec - half_tr;
+            int sr_end   = sr_center_sec + half_tr;
+            int ss_start = ss_center_sec - half_tr;
+            int ss_end   = ss_center_sec + half_tr;
+
+            /* Clamp to valid range and ensure phase ordering */
+            if (sr_start < 0)      sr_start = 0;
+            if (ss_end   > 86399)  ss_end   = 86399;
+            if (sr_start >= sr_end) { sr_start =  6 * 3600; sr_end =  7 * 3600; }
+            if (ss_start >= ss_end) { ss_start = 18 * 3600; ss_end = 19 * 3600; }
+            if (sr_end > ss_start)   sr_end = ss_start;
 
             led_controller_lock();
-            if (now_min >= sr_start && now_min < sr_end) {
-                /* Sunrise transition (warm amber endpoint) */
-                float p = (float)(now_min - sr_start) /
+
+            if (sec_of_day >= sr_start && sec_of_day < sr_end) {
+                /* ── Sunrise phase ── warm amber endpoint */
+                float p = (float)(sec_of_day - sr_start) /
                           (float)(sr_end - sr_start);
                 render_sunrise_kf(fullday_sunrise_kf,
                                   (int)FULLDAY_SUNRISE_KF_COUNT,
                                   p, num_leds);
-            } else if (now_min >= sr_end && now_min < ss_start) {
-                /* Daytime – gradual colour & brightness progression
+
+            } else if (sec_of_day >= sr_end && sec_of_day < ss_start) {
+                /* ── Daytime phase ── colour & brightness bell-curve
                  * with optional siesta dimming.
                  * progress 0.0 = just after sunrise (warm amber),
                  * progress 0.5 = solar noon (configured daylight),
                  * progress 1.0 = just before sunset (warm amber).  */
-                float day_progress = (float)(now_min - sr_end) /
+                float day_progress = (float)(sec_of_day - sr_end) /
                                      (float)(ss_start - sr_end);
                 float dim = siesta_dim_factor(now_min);
                 uint32_t time_frame = (uint32_t)(
                     (uint64_t)sec_of_day * 1000 / SCENE_TICK_MS);
                 render_fullday_daytime(day_progress, time_frame,
                                        num_leds, dim);
-            } else if (now_min >= ss_start && now_min < ss_end) {
-                /* Sunset transition (warm amber startpoint) */
-                float p = (float)(now_min - ss_start) /
+
+            } else if (sec_of_day >= ss_start && sec_of_day < ss_end) {
+                /* ── Sunset phase ── warm amber start */
+                float p = (float)(sec_of_day - ss_start) /
                           (float)(ss_end - ss_start);
                 render_sunset_kf(fullday_sunset_kf,
                                  (int)FULLDAY_SUNSET_KF_COUNT,
                                  p, num_leds);
+
             } else {
-                /* Night – lunar moonlight */
+                /* ── Night phase ── lunar moonlight */
                 render_moonlight(num_leds, cur_year, cur_month, cur_day);
             }
+
             led_controller_unlock();
             break;
         }

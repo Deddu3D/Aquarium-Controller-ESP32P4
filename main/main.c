@@ -30,7 +30,6 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_scenes.h"
-#include "geolocation.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -104,26 +103,10 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
     }
 
-    /* ── 3. Initialise geolocation (NVS-backed lat/lng/UTC) ──── */
-    ret = geolocation_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Geolocation init failed (0x%x)", ret);
-    }
-
-    /* Set POSIX timezone from geolocation UTC offset */
-    {
-        geolocation_config_t geo = geolocation_get();
-        int abs_off = geo.utc_offset_min < 0 ? -geo.utc_offset_min : geo.utc_offset_min;
-        char tz[16];
-        /* POSIX TZ sign is inverted: a geolocation offset of +60 min
-         * (1 h east of Greenwich) is expressed as UTC-1.              */
-        snprintf(tz, sizeof(tz), "UTC%c%d:%02d",
-                 geo.utc_offset_min >= 0 ? '-' : '+',
-                 abs_off / 60, abs_off % 60);
-        setenv("TZ", tz, 1);
-        tzset();
-        ESP_LOGI(TAG, "Timezone set: %s", tz);
-    }
+    /* ── 3. Set POSIX timezone for Cagliari, Italy (CET/CEST) ── */
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+    tzset();
+    ESP_LOGI(TAG, "Timezone set: CET-1CEST (Cagliari, Italy)");
 
     /* ── 4. Start SNTP time synchronisation ─────────────────── */
     esp_task_wdt_reset();
