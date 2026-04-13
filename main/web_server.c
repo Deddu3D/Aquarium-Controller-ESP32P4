@@ -1608,7 +1608,15 @@ static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
     int year  = ti.tm_year + 1900;
     int month = ti.tm_mon + 1;
     int day   = ti.tm_mday;
-    int utc_off_min = (int)(ti.tm_gmtoff / 60);
+    /* Compute UTC offset portably (tm_gmtoff is non-standard) */
+    struct tm utc_tm;
+    gmtime_r(&now, &utc_tm);
+    /* Day-of-year difference; clamp ±1 to handle Dec 31→Jan 1 year wrap */
+    int dd = ti.tm_yday - utc_tm.tm_yday;
+    if (dd > 1) dd = -1; else if (dd < -1) dd = 1;
+    int utc_off_min = (ti.tm_hour - utc_tm.tm_hour) * 60
+                    + (ti.tm_min  - utc_tm.tm_min)
+                    + dd * 1440;
 
     /* If time not set, use a default date */
     if (ti.tm_year < (2024 - 1900)) {
