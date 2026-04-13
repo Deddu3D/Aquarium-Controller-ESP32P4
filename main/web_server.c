@@ -409,6 +409,9 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Full Day trans. (min)</span>"
     "<input type=\"number\" class=\"fin\" id=\"sc-fd\" min=\"1\" max=\"120\""
     " style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Full Day max lum. %%</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-fdmax\" min=\"1\" max=\"100\""
+    " style=\"max-width:80px\"></div>"
     "<div class=\"sect\">&#x1F3A8; Colore</div>"
     "<div class=\"row\"><span class=\"label\">Daylight (K)</span>"
     "<input type=\"number\" class=\"fin\" id=\"sc-colk\" min=\"6500\" max=\"20000\""
@@ -693,6 +696,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    $('sc-sr').value=d.sunrise_duration_min;"
     "    $('sc-ss').value=d.sunset_duration_min;"
     "    $('sc-fd').value=d.transition_duration_min;"
+    "    $('sc-fdmax').value=d.fullday_max_brightness_pct;"
     "    $('sc-colk').value=d.color_temp_kelvin;"
     "    $('sc-lunar').checked=d.lunar_moonlight;"
     "    $('sc-sien').checked=d.siesta_enabled;"
@@ -710,6 +714,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    sunrise_duration_min:parseInt($('sc-sr').value),"
     "    sunset_duration_min:parseInt($('sc-ss').value),"
     "    transition_duration_min:parseInt($('sc-fd').value),"
+    "    fullday_max_brightness_pct:parseInt($('sc-fdmax').value),"
     "    color_temp_kelvin:parseInt($('sc-colk').value),"
     "    lunar_moonlight:$('sc-lunar').checked,"
     "    siesta_enabled:$('sc-sien').checked,"
@@ -1452,7 +1457,8 @@ static esp_err_t api_scenes_get_handler(httpd_req_t *req)
         "\"siesta_end_min\":%d,"
         "\"siesta_intensity_pct\":%d,"
         "\"color_temp_kelvin\":%d,"
-        "\"lunar_moonlight\":%s}",
+        "\"lunar_moonlight\":%s,"
+        "\"fullday_max_brightness_pct\":%d}",
         active,
         cfg.sunrise_duration_min,
         cfg.sunset_duration_min,
@@ -1462,7 +1468,8 @@ static esp_err_t api_scenes_get_handler(httpd_req_t *req)
         cfg.siesta_end_min,
         cfg.siesta_intensity_pct,
         cfg.color_temp_kelvin,
-        cfg.lunar_moonlight ? "true" : "false");
+        cfg.lunar_moonlight ? "true" : "false",
+        cfg.fullday_max_brightness_pct);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1520,6 +1527,9 @@ static esp_err_t api_scenes_post_handler(httpd_req_t *req)
 
     val = json_get_bool(buf, "\"lunar_moonlight\"");
     if (val >= 0) { cfg.lunar_moonlight = (val == 1); cfg_changed = true; }
+
+    val = json_get_int(buf, "\"fullday_max_brightness_pct\"");
+    if (val >= 0) { cfg.fullday_max_brightness_pct = (uint8_t)val; cfg_changed = true; }
 
     if (cfg_changed) {
         led_scenes_set_config(&cfg);

@@ -611,11 +611,13 @@ void display_ui_refresh(void)
                  "Sunrise: %d min\n"
                  "Sunset: %d min\n"
                  "Temp. colore: %d K\n"
-                 "Siesta: %s",
+                 "Siesta: %s\n"
+                 "Full Day max: %d%%",
                  cfg.sunrise_duration_min,
                  cfg.sunset_duration_min,
                  cfg.color_temp_kelvin,
-                 cfg.siesta_enabled ? "Attiva" : "Disattiva");
+                 cfg.siesta_enabled ? "Attiva" : "Disattiva",
+                 cfg.fullday_max_brightness_pct);
         lv_label_set_text(s_lbl_led_config, cfg_buf);
     }
 

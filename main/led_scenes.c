@@ -79,6 +79,7 @@ static const char *TAG = "led_scene";
 #define NVS_KEY_SIPCT   "siesta_pct"
 #define NVS_KEY_COLK    "color_k"
 #define NVS_KEY_LUNAR   "lunar_en"
+#define NVS_KEY_FDMAX   "fd_maxbr"
 
 /* ── Scene name table ────────────────────────────────────────────── */
 
@@ -371,6 +372,7 @@ static void nvs_load_config(void)
     s_config.siesta_intensity_pct    = 40;
     s_config.color_temp_kelvin       = CONFIG_LED_DEFAULT_COLOR_TEMP_K;
     s_config.lunar_moonlight         = true;
+    s_config.fullday_max_brightness_pct = 100;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
@@ -406,17 +408,20 @@ static void nvs_load_config(void)
         s_config.color_temp_kelvin = u16;
     if (nvs_get_u8(h, NVS_KEY_LUNAR, &u8) == ESP_OK)
         s_config.lunar_moonlight = (u8 != 0);
+    if (nvs_get_u8(h, NVS_KEY_FDMAX, &u8) == ESP_OK)
+        s_config.fullday_max_brightness_pct = u8;
 
     nvs_close(h);
 
     ESP_LOGI(TAG, "Config loaded: sr=%d ss=%d fdtr=%d siesta=%d "
-             "color_k=%d lunar=%d",
+             "color_k=%d lunar=%d fdmax=%d",
              s_config.sunrise_duration_min,
              s_config.sunset_duration_min,
              s_config.transition_duration_min,
              s_config.siesta_enabled,
              s_config.color_temp_kelvin,
-             s_config.lunar_moonlight);
+             s_config.lunar_moonlight,
+             s_config.fullday_max_brightness_pct);
 }
 
 /**
@@ -440,6 +445,7 @@ static esp_err_t nvs_save_config(void)
     nvs_set_u8(h,  NVS_KEY_SIPCT,  s_config.siesta_intensity_pct);
     nvs_set_u16(h, NVS_KEY_COLK,   s_config.color_temp_kelvin);
     nvs_set_u8(h,  NVS_KEY_LUNAR,  s_config.lunar_moonlight ? 1 : 0);
+    nvs_set_u8(h,  NVS_KEY_FDMAX,  s_config.fullday_max_brightness_pct);
 
     err = nvs_commit(h);
     nvs_close(h);
@@ -787,12 +793,15 @@ static void scene_enter(led_scene_t scene)
         led_controller_on();
         break;
 
-    case LED_SCENE_FULL_DAY_CYCLE:
+    case LED_SCENE_FULL_DAY_CYCLE: {
         /* Don't set colour to black – the task loop will immediately
          * render the correct phase based on the current time of day. */
-        led_controller_set_brightness(255);
+        uint8_t max_br = (uint8_t)((uint16_t)255 *
+                          s_config.fullday_max_brightness_pct / 100);
+        led_controller_set_brightness(max_br);
         led_controller_on();
         break;
+    }
 
     case LED_SCENE_OFF:
     default:
@@ -936,6 +945,13 @@ static void led_scene_task(void *arg)
 
         /* ── Full 24 h day cycle (real-time + geolocation) ────────── */
         case LED_SCENE_FULL_DAY_CYCLE: {
+            /* Apply the configurable maximum brightness for this scene.
+             * set_brightness acquires the controller mutex internally,
+             * so it must be called *before* led_controller_lock().    */
+            uint8_t max_br = (uint8_t)((uint16_t)255 *
+                              cfg.fullday_max_brightness_pct / 100);
+            led_controller_set_brightness(max_br);
+
             /* Compute sunrise / sunset from geolocation */
             geolocation_config_t geo = geolocation_get();
             sun_times_t st = sun_position_calc(
@@ -1137,6 +1153,8 @@ esp_err_t led_scenes_set_config(const led_scene_config_t *cfg)
     if (safe.siesta_intensity_pct > 100) safe.siesta_intensity_pct = 100;
     if (safe.color_temp_kelvin < 6500)   safe.color_temp_kelvin = 6500;
     if (safe.color_temp_kelvin > 20000)  safe.color_temp_kelvin = 20000;
+    if (safe.fullday_max_brightness_pct < 1)   safe.fullday_max_brightness_pct = 1;
+    if (safe.fullday_max_brightness_pct > 100)  safe.fullday_max_brightness_pct = 100;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config = safe;
@@ -1146,9 +1164,10 @@ esp_err_t led_scenes_set_config(const led_scene_config_t *cfg)
 
     esp_err_t err = nvs_save_config();
     ESP_LOGI(TAG, "Config updated: sr=%d ss=%d fdtr=%d siesta=%d "
-             "color_k=%d lunar=%d",
+             "color_k=%d lunar=%d fdmax=%d",
              safe.sunrise_duration_min, safe.sunset_duration_min,
              safe.transition_duration_min, safe.siesta_enabled,
-             safe.color_temp_kelvin, safe.lunar_moonlight);
+             safe.color_temp_kelvin, safe.lunar_moonlight,
+             safe.fullday_max_brightness_pct);
     return err;
 }
