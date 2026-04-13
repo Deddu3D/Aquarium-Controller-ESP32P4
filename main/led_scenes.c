@@ -658,9 +658,15 @@ static void scene_enter(led_scene_t scene)
     case LED_SCENE_SUNSET:
     case LED_SCENE_CLOUDY:
     case LED_SCENE_STORM:
-    case LED_SCENE_FULL_DAY_CYCLE:
         led_controller_set_brightness(255);
         led_controller_set_color(0, 0, 0);
+        led_controller_on();
+        break;
+
+    case LED_SCENE_FULL_DAY_CYCLE:
+        /* Don't set colour to black – the task loop will immediately
+         * render the correct phase based on the current time of day. */
+        led_controller_set_brightness(255);
         led_controller_on();
         break;
 
@@ -678,7 +684,8 @@ static void scene_enter(led_scene_t scene)
  *        has not synchronised yet.
  */
 static void get_current_time(int *out_min, int *out_year,
-                             int *out_month, int *out_day)
+                             int *out_month, int *out_day,
+                             int *out_sec_of_day)
 {
     time_t now;
     time(&now);
@@ -690,6 +697,8 @@ static void get_current_time(int *out_min, int *out_year,
         *out_year  = ti.tm_year + 1900;
         *out_month = ti.tm_mon + 1;
         *out_day   = ti.tm_mday;
+        if (out_sec_of_day)
+            *out_sec_of_day = ti.tm_hour * 3600 + ti.tm_min * 60 + ti.tm_sec;
     } else {
         /* Fallback: use uptime mapped to a 24 h day */
         int64_t up_s = esp_timer_get_time() / 1000000;
@@ -698,6 +707,8 @@ static void get_current_time(int *out_min, int *out_year,
         *out_year  = 2026;
         *out_month = 6;
         *out_day   = 21;   /* summer solstice as default */
+        if (out_sec_of_day)
+            *out_sec_of_day = sec_of_day;
     }
 }
 
@@ -728,8 +739,9 @@ static void led_scene_task(void *arg)
         uint16_t num_leds = led_controller_get_num_leds();
 
         /* Get current date/time (used by moonlight, full-day, etc.) */
-        int now_min, cur_year, cur_month, cur_day;
-        get_current_time(&now_min, &cur_year, &cur_month, &cur_day);
+        int now_min, cur_year, cur_month, cur_day, sec_of_day;
+        get_current_time(&now_min, &cur_year, &cur_month, &cur_day,
+                         &sec_of_day);
 
         switch (scene) {
         /* ── Static scenes: idle after initial setup ────────────── */
@@ -838,9 +850,14 @@ static void led_scene_task(void *arg)
                           (float)(sr_end - sr_start);
                 render_sunrise(p, num_leds);
             } else if (now_min >= sr_end && now_min < ss_start) {
-                /* Daytime – cloudy variation with optional siesta */
+                /* Daytime – cloudy variation with optional siesta.
+                 * Use a time-based frame so the animation resumes from
+                 * the correct position when the scene is (re-)entered
+                 * instead of restarting from frame 0 every time.      */
                 float dim = siesta_dim_factor(now_min);
-                render_cloudy(frame, num_leds, dim);
+                uint32_t time_frame = (uint32_t)(
+                    (uint64_t)sec_of_day * 1000 / SCENE_TICK_MS);
+                render_cloudy(time_frame, num_leds, dim);
             } else if (now_min >= ss_start && now_min < ss_end) {
                 /* Sunset transition */
                 float p = (float)(now_min - ss_start) /
