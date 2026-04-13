@@ -76,27 +76,6 @@ static void json_escape(const char *src, char *dst, size_t dst_size)
 }
 
 /**
- * @brief Escape a string for safe inclusion in HTML output.
- *
- * Prevents XSS injection by replacing &, <, >, ", ' with HTML entities.
- */
-static void html_escape(const char *src, char *dst, size_t dst_size)
-{
-    size_t j = 0;
-    for (size_t i = 0; src[i] != '\0' && j + 7 < dst_size; i++) {
-        switch (src[i]) {
-        case '&':  j += snprintf(dst + j, dst_size - j, "&amp;");   break;
-        case '<':  j += snprintf(dst + j, dst_size - j, "&lt;");    break;
-        case '>':  j += snprintf(dst + j, dst_size - j, "&gt;");    break;
-        case '"':  j += snprintf(dst + j, dst_size - j, "&quot;");  break;
-        case '\'': j += snprintf(dst + j, dst_size - j, "&#x27;"); break;
-        default:   dst[j++] = src[i]; break;
-        }
-    }
-    dst[j] = '\0';
-}
-
-/**
  * @brief Fill a wifi_status_t struct with current WiFi information.
  */
 typedef struct {
