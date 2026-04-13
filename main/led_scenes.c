@@ -786,6 +786,9 @@ static void scene_enter(led_scene_t scene)
          * immediately render the correct phase on its first tick. */
         led_controller_set_brightness_no_refresh(
             fullday_brightness(s_config.fullday_max_brightness_pct));
+        /* Start with black so that led_controller_on() does not flash
+         * the stale solid colour before the first phase render.      */
+        led_controller_set_color(0, 0, 0);
         led_controller_on();
         break;
     }
