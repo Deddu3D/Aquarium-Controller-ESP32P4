@@ -1175,8 +1175,9 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).catch(function(){toast('Errore salvataggio',0)})}"
     "/* ── Init ── */"
     "loadDash();"
-    "setInterval(loadTemp,5000);"
-    "setInterval(loadHistory,60000);"
+    "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
+    "  loadDashHeater()},2000);"
+    "setInterval(function(){loadHistory();loadDashGeo()},60000);"
     "</script>"
     "</body></html>";
 
