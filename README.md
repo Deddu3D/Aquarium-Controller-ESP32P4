@@ -23,13 +23,13 @@
 
 ### Display LVGL (5″ 800×480)
 
-Dashboard on-screen con 4 tab a scorrimento (stessa struttura della Web UI): **Riepilogo** (temperatura, WiFi, scena LED, relè), **LED Strip** (scena, luminosità, RGB, configurazione), **Telegram** (stato notifiche, promemoria), **Manutenzione** (WiFi/IP, heap, uptime, termostato, DuckDNS). Refresh ogni 10 s, touch capacitivo GT911.
+Dashboard on-screen con 4 tab a scorrimento (stessa struttura della Web UI): **Riepilogo** (temperatura, WiFi, scena LED, relè), **LED Strip** (scena, luminosità, RGB, configurazione), **Telegram** (stato notifiche, promemoria), **Manutenzione** (WiFi/IP, heap, uptime, termostato, DuckDNS). Refresh ogni 10s, touch capacitivo GT911.
 
 ![Display LVGL Dashboard](https://github.com/user-attachments/assets/97c94714-cc51-4dab-95f7-3573bac166da)
 
 ### Web UI – 4 Tab
 
-Dashboard web responsive con 4 tab: **Riepilogo**, **LED Strip**, **Telegram**, **Manutenzione**. Accessibile da qualsiasi browser sulla rete locale. Auto-refresh ogni 2 s per dati real-time.
+Dashboard web responsive con 4 tab: **Riepilogo**, **LED Strip**, **Telegram**, **Manutenzione**. Accessibile da qualsiasi browser sulla rete locale. Auto-refresh ogni 2s per dati real-time.
 
 #### Tab Riepilogo
 
@@ -65,7 +65,7 @@ Stato sistema (WiFi, IP, SSID, RSSI, heap, uptime), aggiornamento firmware OTA c
 
 | Categoria | Descrizione |
 |-----------|-------------|
-| 🖥️ **Display touch MIPI DSI** | Schermo 5″ 800×480 con dashboard LVGL a 4 tab (stessa struttura della Web UI): temperatura, grafico 24h, scena LED, stato WiFi, 4 relè, orologio. Refresh ogni 10s, touch capacitivo GT911. Init non bloccante su CPU 1 |
+| 🖥️ **Display touch MIPI DSI** | Schermo 5″ 800×480 con dashboard LVGL a 4 tab (stessa struttura della Web UI): temperatura, grafico 24h, scena LED, stato WiFi, 4 relè. Refresh ogni 10s, touch capacitivo GT911. Init non bloccante su CPU 1 |
 | 🐟 **Illuminazione LED WS2812B** | Controllo colore RGB con correzione gamma 2.2, **8 scene** predefinite + ciclo giornaliero automatico basato su alba/tramonto reali con ripresa dalla fase corrente. Fade-in/fade-out graduali (default 30s). Siesta anti-alghe configurabile |
 | 🌡️ **Sensore temperatura DS18B20** | Lettura ogni 5s con media mobile a 3 campioni, storico 24h (288 campioni), grafico su display e web, esportazione CSV, offset di calibrazione configurabile |
 | 🔥 **Termostato automatico** | Controllo termostatico relè + DS18B20 con isteresi configurabile (0.1–3.0 °C), target 15–35 °C, logica anti-oscillazione |
