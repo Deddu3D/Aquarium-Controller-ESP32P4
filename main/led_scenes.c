@@ -139,48 +139,31 @@ static keyframe_t sunset_kf[] = {
  * discontinuity at the sunrise→daytime and daytime→sunset boundaries.
  */
 
-/* Sunrise in full-day context: black → warm amber (not daylight) */
+/* Full Day Cycle sunrise: black → daylight (last entry patched) */
 static keyframe_t fullday_sunrise_kf[] = {
-    { 0.00f,   0,   0,   0 },   /* black             */
-    { 0.15f,  30,   0,   5 },   /* dark red          */
-    { 0.30f, 180,  50,   5 },   /* deep orange       */
-    { 0.55f, 255, 140,  30 },   /* warm orange       */
-    { 0.80f, 255, 180,  80 },   /* warm amber        */
-    { 1.00f, 255, 190, 100 },   /* warm amber end    */
+    { 0.00f,   0,   0,   0 },   /* black              */
+    { 0.15f,  30,   0,   5 },   /* dark red           */
+    { 0.30f, 180,  50,   5 },   /* deep orange        */
+    { 0.50f, 255, 140,  30 },   /* warm orange        */
+    { 0.75f, 255, 200, 100 },   /* warm white         */
+    { 1.00f, 200, 220, 255 },   /* daylight (patched) */
 };
 #define FULLDAY_SUNRISE_KF_COUNT \
     (sizeof(fullday_sunrise_kf) / sizeof(fullday_sunrise_kf[0]))
 
-/* Sunset in full-day context: warm amber → moonlight (not daylight →) */
+/* Full Day Cycle sunset: daylight → black (first entry patched) */
 static keyframe_t fullday_sunset_kf[] = {
-    { 0.00f, 255, 190, 100 },   /* warm amber start  */
-    { 0.20f, 255, 140,  30 },   /* warm orange       */
-    { 0.40f, 200,  60,  10 },   /* deep orange/red   */
-    { 0.60f,  60,  10,  20 },   /* dark red          */
-    { 0.80f,  10,   5,  30 },   /* dark blue         */
-    { 1.00f,   5,   8,  40 },   /* moonlight         */
+    { 0.00f, 200, 220, 255 },   /* daylight (patched) */
+    { 0.25f, 255, 200, 100 },   /* warm white         */
+    { 0.45f, 255, 140,  30 },   /* warm orange        */
+    { 0.65f, 180,  50,   5 },   /* deep orange        */
+    { 0.85f,  30,   0,   5 },   /* dark red           */
+    { 1.00f,   0,   0,   0 },   /* black (off)        */
 };
 #define FULLDAY_SUNSET_KF_COUNT \
     (sizeof(fullday_sunset_kf) / sizeof(fullday_sunset_kf[0]))
 
-/*
- * Daytime colour progression for the Full Day Cycle.
- * Warm amber at edges (matching sunrise end / sunset start) and the
- * configured daylight colour at noon.  The three central entries are
- * patched in update_daylight_color() to track the colour-temperature
- * setting.
- */
-static keyframe_t fullday_day_kf[] = {
-    { 0.00f, 255, 190, 100 },   /* warm amber  – just after sunrise  */
-    { 0.12f, 255, 225, 175 },   /* warm white  – mid-morning         */
-    { 0.30f, 200, 220, 255 },   /* daylight    – late morning (patched) */
-    { 0.50f, 200, 220, 255 },   /* daylight    – solar noon   (patched) */
-    { 0.70f, 200, 220, 255 },   /* daylight    – early afternoon (patched) */
-    { 0.88f, 255, 225, 175 },   /* warm white  – late afternoon      */
-    { 1.00f, 255, 190, 100 },   /* warm amber  – just before sunset  */
-};
-#define FULLDAY_DAY_KF_COUNT \
-    (sizeof(fullday_day_kf) / sizeof(fullday_day_kf[0]))
+
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -272,10 +255,14 @@ static void update_daylight_color(void)
     sunset_kf[0].g = s_day_g;
     sunset_kf[0].b = s_day_b;
 
-    /* Patch Full Day Cycle daytime keyframes (noon entries) */
-    fullday_day_kf[2].r = s_day_r; fullday_day_kf[2].g = s_day_g; fullday_day_kf[2].b = s_day_b;
-    fullday_day_kf[3].r = s_day_r; fullday_day_kf[3].g = s_day_g; fullday_day_kf[3].b = s_day_b;
-    fullday_day_kf[4].r = s_day_r; fullday_day_kf[4].g = s_day_g; fullday_day_kf[4].b = s_day_b;
+    /* Patch Full Day Cycle sunrise endpoint and sunset start-point */
+    fullday_sunrise_kf[FULLDAY_SUNRISE_KF_COUNT - 1].r = s_day_r;
+    fullday_sunrise_kf[FULLDAY_SUNRISE_KF_COUNT - 1].g = s_day_g;
+    fullday_sunrise_kf[FULLDAY_SUNRISE_KF_COUNT - 1].b = s_day_b;
+
+    fullday_sunset_kf[0].r = s_day_r;
+    fullday_sunset_kf[0].g = s_day_g;
+    fullday_sunset_kf[0].b = s_day_b;
 
     ESP_LOGI(TAG, "Daylight color: %d K → R=%d G=%d B=%d",
              s_config.color_temp_kelvin, s_day_r, s_day_g, s_day_b);
@@ -678,39 +665,28 @@ static void render_storm(uint16_t num_leds)
 /**
  * @brief Render one frame of the Full Day Cycle daytime phase.
  *
- * Interpolates colour from warm amber (morning / evening) through
- * the configured daylight colour (solar noon) using
- * fullday_day_kf[], applies a sinusoidal brightness bell-curve that
- * peaks at noon, optionally multiplied by the siesta dimming factor,
- * and overlays a subtle per-pixel cloudy wave for visual interest.
+ * Uses the configured daylight colour (s_day_r/g/b) at full brightness,
+ * optionally modulated by the siesta dimming factor, and overlays a
+ * subtle per-pixel cloudy wave for visual interest.
  *
- * @param progress   0.0 (just after sunrise) to 1.0 (just before sunset).
  * @param frame      Time-based animation frame counter for the wave.
  * @param num_leds   Number of LEDs in the strip.
  * @param siesta_dim Dimming factor from the siesta module (0.0–1.0).
  */
-static void render_fullday_daytime(float progress, uint32_t frame,
+static void render_fullday_daytime(uint32_t frame,
                                    uint16_t num_leds, float siesta_dim)
 {
-    uint8_t r, g, b;
-    interp_kf(fullday_day_kf, (int)FULLDAY_DAY_KF_COUNT, progress,
-              &r, &g, &b);
-
-    /* Brightness bell-curve: 70 % at edges → 100 % at noon */
-    float bright = 0.70f + 0.30f * sinf(PI_F * progress);
-    bright *= siesta_dim;
-
     for (uint16_t i = 0; i < num_leds; i++) {
         /* Subtle per-pixel cloudy wave (±8 %) */
         float phase = (float)i / (float)num_leds * 2.0f * PI_F;
         float wave  = sinf(2.0f * PI_F * (float)frame
                            / (float)CLOUDY_PERIOD_FRAMES + phase);
-        float factor = bright * (1.0f + wave * 0.08f);
+        float factor = siesta_dim * (1.0f + wave * 0.08f);
 
         led_controller_set_pixel(i,
-            clamp_u8((float)r * factor),
-            clamp_u8((float)g * factor),
-            clamp_u8((float)b * factor));
+            clamp_u8((float)s_day_r * factor),
+            clamp_u8((float)s_day_g * factor),
+            clamp_u8((float)s_day_b * factor));
     }
     led_controller_refresh();
 }
@@ -974,11 +950,20 @@ static void led_scene_task(void *arg)
             led_controller_unlock();
             break;
 
-        /* ── Full 24 h day cycle (Cagliari, second-level precision) ── */
+        /* ── Full 24 h day cycle (Cagliari) ────────────────────────── */
+        /*
+         * Simulates natural daylight: sunrise at dawn, full daylight
+         * during the day, sunset at dusk, LEDs OFF at night.
+         *
+         * Phases (based on real Cagliari sun times):
+         *   1. Night (before dawn_start):  all LEDs OFF
+         *   2. Sunrise (dawn_start → dawn_end):  black → daylight
+         *   3. Day (dawn_end → dusk_start):  configured daylight colour
+         *   4. Sunset (dusk_start → dusk_end):  daylight → black
+         *   5. Night (after dusk_end):  all LEDs OFF
+         */
         case LED_SCENE_FULL_DAY_CYCLE: {
-            /* Apply the configurable maximum brightness for this scene.
-             * set_brightness acquires the controller mutex internally,
-             * so it must be called *before* led_controller_lock().    */
+            /* Apply the configurable maximum brightness for this scene. */
             led_controller_set_brightness(
                 fullday_brightness(cfg.fullday_max_brightness_pct));
 
@@ -988,69 +973,66 @@ static void led_scene_task(void *arg)
                 CAGLIARI_LAT, CAGLIARI_LON, utc_off_min,
                 cur_year, cur_month, cur_day);
 
-            /* Phase boundaries in *seconds* from midnight for smooth
-             * sub-minute interpolation.  The transition_duration_min
-             * config parameter controls how long sunrise/sunset last. */
             int trans_sec = (int)cfg.transition_duration_min * 60;
             int half_tr   = trans_sec / 2;
 
-            int sr_center_sec, ss_center_sec;
+            int sr_sec, ss_sec;
             if (st.valid) {
-                sr_center_sec = st.sunrise_min * 60;
-                ss_center_sec = st.sunset_min  * 60;
+                sr_sec = st.sunrise_min * 60;
+                ss_sec = st.sunset_min  * 60;
             } else {
-                /* Fallback if computation fails */
-                sr_center_sec =  7 * 3600;   /*  7:00 */
-                ss_center_sec = 19 * 3600;   /* 19:00 */
+                sr_sec =  7 * 3600;   /*  7:00 fallback */
+                ss_sec = 19 * 3600;   /* 19:00 fallback */
             }
 
-            int sr_start = sr_center_sec - half_tr;
-            int sr_end   = sr_center_sec + half_tr;
-            int ss_start = ss_center_sec - half_tr;
-            int ss_end   = ss_center_sec + half_tr;
+            int dawn_start = sr_sec - half_tr;
+            int dawn_end   = sr_sec + half_tr;
+            int dusk_start = ss_sec - half_tr;
+            int dusk_end   = ss_sec + half_tr;
 
-            /* Clamp to valid range and ensure phase ordering */
-            if (sr_start < 0)      sr_start = 0;
-            if (ss_end   > 86399)  ss_end   = 86399;
-            if (sr_start >= sr_end) { sr_start =  6 * 3600; sr_end =  7 * 3600; }
-            if (ss_start >= ss_end) { ss_start = 18 * 3600; ss_end = 19 * 3600; }
-            if (sr_end > ss_start)   sr_end = ss_start;
+            /* Clamp to valid day range */
+            if (dawn_start < 0)     dawn_start = 0;
+            if (dusk_end   > 86399) dusk_end   = 86399;
+
+            /* Ensure sunrise and sunset phases don't overlap */
+            if (dawn_end > dusk_start) {
+                int midpoint = (sr_sec + ss_sec) / 2;
+                dawn_end   = midpoint;
+                dusk_start = midpoint;
+            }
 
             led_controller_lock();
 
-            if (sec_of_day >= sr_start && sec_of_day < sr_end) {
-                /* ── Sunrise phase ── warm amber endpoint */
-                float p = (float)(sec_of_day - sr_start) /
-                          (float)(sr_end - sr_start);
+            if (sec_of_day >= dawn_start && sec_of_day < dawn_end) {
+                /* ── Sunrise phase ── black → daylight */
+                float p = (float)(sec_of_day - dawn_start) /
+                          (float)(dawn_end - dawn_start);
                 render_sunrise_kf(fullday_sunrise_kf,
                                   (int)FULLDAY_SUNRISE_KF_COUNT,
                                   p, num_leds);
 
-            } else if (sec_of_day >= sr_end && sec_of_day < ss_start) {
-                /* ── Daytime phase ── colour & brightness bell-curve
-                 * with optional siesta dimming.
-                 * progress 0.0 = just after sunrise (warm amber),
-                 * progress 0.5 = solar noon (configured daylight),
-                 * progress 1.0 = just before sunset (warm amber).  */
-                float day_progress = (float)(sec_of_day - sr_end) /
-                                     (float)(ss_start - sr_end);
+            } else if (sec_of_day >= dawn_end && sec_of_day < dusk_start) {
+                /* ── Daytime phase ── configured daylight colour with
+                 * optional siesta dimming and subtle cloudy wave.    */
                 float dim = siesta_dim_factor(now_min);
                 uint32_t time_frame = (uint32_t)(
                     (uint64_t)sec_of_day * 1000 / SCENE_TICK_MS);
-                render_fullday_daytime(day_progress, time_frame,
-                                       num_leds, dim);
+                render_fullday_daytime(time_frame, num_leds, dim);
 
-            } else if (sec_of_day >= ss_start && sec_of_day < ss_end) {
-                /* ── Sunset phase ── warm amber start */
-                float p = (float)(sec_of_day - ss_start) /
-                          (float)(ss_end - ss_start);
+            } else if (sec_of_day >= dusk_start && sec_of_day < dusk_end) {
+                /* ── Sunset phase ── daylight → black */
+                float p = (float)(sec_of_day - dusk_start) /
+                          (float)(dusk_end - dusk_start);
                 render_sunset_kf(fullday_sunset_kf,
                                  (int)FULLDAY_SUNSET_KF_COUNT,
                                  p, num_leds);
 
             } else {
-                /* ── Night phase ── lunar moonlight */
-                render_moonlight(num_leds, cur_year, cur_month, cur_day);
+                /* ── Night phase ── all LEDs OFF */
+                for (uint16_t i = 0; i < num_leds; i++) {
+                    led_controller_set_pixel(i, 0, 0, 0);
+                }
+                led_controller_refresh();
             }
 
             led_controller_unlock();
