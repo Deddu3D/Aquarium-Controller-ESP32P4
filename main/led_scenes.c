@@ -314,6 +314,15 @@ static float moon_illumination(int year, int month, int day)
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
+/**
+ * @brief Compute the hardware brightness for the Full Day Cycle
+ *        from the configured maximum-brightness percentage (1–100).
+ */
+static inline uint8_t fullday_brightness(uint8_t max_pct)
+{
+    return (uint8_t)((uint16_t)255 * max_pct / 100);
+}
+
 static inline uint8_t clamp_u8(float v)
 {
     if (v < 0.0f)   return 0;
@@ -796,9 +805,8 @@ static void scene_enter(led_scene_t scene)
     case LED_SCENE_FULL_DAY_CYCLE: {
         /* Don't set colour to black – the task loop will immediately
          * render the correct phase based on the current time of day. */
-        uint8_t max_br = (uint8_t)((uint16_t)255 *
-                          s_config.fullday_max_brightness_pct / 100);
-        led_controller_set_brightness(max_br);
+        led_controller_set_brightness(
+            fullday_brightness(s_config.fullday_max_brightness_pct));
         led_controller_on();
         break;
     }
@@ -948,9 +956,8 @@ static void led_scene_task(void *arg)
             /* Apply the configurable maximum brightness for this scene.
              * set_brightness acquires the controller mutex internally,
              * so it must be called *before* led_controller_lock().    */
-            uint8_t max_br = (uint8_t)((uint16_t)255 *
-                              cfg.fullday_max_brightness_pct / 100);
-            led_controller_set_brightness(max_br);
+            led_controller_set_brightness(
+                fullday_brightness(cfg.fullday_max_brightness_pct));
 
             /* Compute sunrise / sunset from geolocation */
             geolocation_config_t geo = geolocation_get();

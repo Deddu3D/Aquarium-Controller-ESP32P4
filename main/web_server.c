@@ -409,7 +409,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Full Day trans. (min)</span>"
     "<input type=\"number\" class=\"fin\" id=\"sc-fd\" min=\"1\" max=\"120\""
     " style=\"max-width:80px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Full Day max lum. %%</span>"
+    "<div class=\"row\"><span class=\"label\">Full Day max luminosit&#xE0; %%</span>"
     "<input type=\"number\" class=\"fin\" id=\"sc-fdmax\" min=\"1\" max=\"100\""
     " style=\"max-width:80px\"></div>"
     "<div class=\"sect\">&#x1F3A8; Colore</div>"
