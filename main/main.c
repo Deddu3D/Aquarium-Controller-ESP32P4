@@ -29,7 +29,7 @@
 #include "wifi_manager.h"
 #include "web_server.h"
 #include "led_controller.h"
-#include "led_scenes.h"
+#include "led_schedule.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -139,10 +139,10 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "LED strip ready");
 
-        /* Initialise LED scene engine */
-        ret = led_scenes_init();
+        /* Initialise LED schedule module */
+        ret = led_schedule_init();
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "LED scene engine init failed (0x%x)", ret);
+            ESP_LOGE(TAG, "LED schedule init failed (0x%x)", ret);
         }
     }
 
@@ -232,6 +232,9 @@ void app_main(void)
         }
 
         /* Placeholder – aquarium control logic goes here */
+
+        /* Evaluate LED time-of-day schedule */
+        led_schedule_tick();
 
         /* Evaluate relay time-of-day schedules */
         relay_controller_tick_schedules();

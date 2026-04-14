@@ -83,7 +83,7 @@ static uint8_t             s_blue    = 255;
 
 /* ── Acclimatization ramp state ──────────────────────────────────── */
 
-#define RAMP_TICK_MS  30   /* ~33 fps, matches scene tick rate */
+#define RAMP_TICK_MS  30   /* ~33 fps */
 
 static esp_timer_handle_t s_ramp_timer  = NULL;
 static uint8_t  s_ramp_start_br  = 0;   /* brightness at ramp start  */
