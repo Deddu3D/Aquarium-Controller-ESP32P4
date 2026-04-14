@@ -30,6 +30,7 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_schedule.h"
+#include "led_scenes.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -143,6 +144,12 @@ void app_main(void)
         ret = led_schedule_init();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "LED schedule init failed (0x%x)", ret);
+        }
+
+        /* Initialise LED scene engine */
+        ret = led_scenes_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "LED scenes init failed (0x%x)", ret);
         }
     }
 
