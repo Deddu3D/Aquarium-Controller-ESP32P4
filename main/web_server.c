@@ -25,6 +25,7 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_schedule.h"
+#include "led_scenes.h"
 #include "sun_position.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
@@ -115,6 +116,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_STATUS_BUF_SIZE   384
 #define JSON_LEDS_BUF_SIZE     256
 #define JSON_SCHED_BUF_SIZE    384
+#define JSON_SCENES_BUF_SIZE   512
 #define JSON_TEMP_BUF_SIZE     128
 #define JSON_GEO_BUF_SIZE      384
 #define JSON_TG_BUF_SIZE       768
@@ -125,13 +127,14 @@ static void get_wifi_status(wifi_status_t *out)
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE     256
 #define POST_BODY_SCHED_SIZE   256
+#define POST_BODY_SCENES_SIZE  256
 #define POST_BODY_TG_SIZE      512
 #define POST_BODY_RELAY_SIZE   256
 #define POST_BODY_DDNS_SIZE    256
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  32
+#define HTTP_MAX_URI_HANDLERS  34
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -404,6 +407,56 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<input type=\"color\" id=\"sched-color\" value=\"#ffffff\"></div>"
     "<button class=\"btn\" onclick=\"saveSched()\">Salva Programmazione</button>"
     "</div></div></div>"
+    "<!-- LED Scenes -->"
+    "<div class=\"ccard\" id=\"scenes-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F305; Scene LED</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Scena attiva</span>"
+    "<select class=\"fin\" id=\"scene-sel\" style=\"max-width:200px\">"
+    "<option value=\"off\">Nessuna (manuale)</option>"
+    "<option value=\"daylight\">Luce del giorno</option>"
+    "<option value=\"sunrise\">Alba</option>"
+    "<option value=\"sunset\">Tramonto</option>"
+    "<option value=\"moonlight\">Chiaro di luna</option>"
+    "<option value=\"cloudy\">Nuvoloso</option>"
+    "<option value=\"storm\">Tempesta</option>"
+    "<option value=\"full_day_cycle\">Ciclo giorno completo</option>"
+    "</select></div>"
+    "<div class=\"sect-title\">Configurazione scene</div>"
+    "<div class=\"row\"><span class=\"label\">Durata alba (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-sr\" min=\"1\" max=\"120\""
+    " value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Durata tramonto (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-ss\" min=\"1\" max=\"120\""
+    " value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Transizione ciclo (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-tr\" min=\"1\" max=\"120\""
+    " value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; max ciclo (%%)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-mb\" min=\"1\" max=\"100\""
+    " value=\"100\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Temperatura colore (K)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-ct\" min=\"6500\" max=\"20000\""
+    " value=\"10000\" style=\"max-width:100px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Luna reale</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-lm\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Siesta anti-alghe</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-sie\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Inizio siesta (HH:MM)</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sc-sist\""
+    " style=\"max-width:120px\" value=\"12:00\"></div>"
+    "<div class=\"row\"><span class=\"label\">Fine siesta (HH:MM)</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sc-sien\""
+    " style=\"max-width:120px\" value=\"14:00\"></div>"
+    "<div class=\"row\"><span class=\"label\">Intensit&#xE0; siesta (%%)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-sip\" min=\"0\" max=\"100\""
+    " value=\"20\" style=\"max-width:80px\"></div>"
+    "<button class=\"btn\" onclick=\"saveScenes()\">Salva Scene</button>"
+    "</div></div></div>"
     "</div>"
     ""
     "<!-- ═══ Panel 2: Telegram ═══ -->"
@@ -587,7 +640,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  tabs[n].classList.add('active');"
     "  _tab=n;"
     "  if(n===0){loadDash()}"
-    "  if(n===1){loadLeds();loadSched()}"
+    "  if(n===1){loadLeds();loadSched();loadScenes()}"
     "  if(n===2){loadTg()}"
     "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays()}}"
     "/* ── Color helpers ── */"
@@ -659,6 +712,46 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).then(function(r){return r.json()}).then(function(){"
     "    toast('Programmazione salvata',1)}).catch(function(){"
     "    toast('Errore salvataggio',0)})}"
+    "/* ── LED Scenes ── */"
+    "function loadScenes(){"
+    "  fetch('/api/led_scenes').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('scene-sel').value=d.scene;"
+    "    $('sc-sr').value=d.sunrise_duration_min;"
+    "    $('sc-ss').value=d.sunset_duration_min;"
+    "    $('sc-tr').value=d.transition_duration_min;"
+    "    $('sc-mb').value=d.fullday_max_brightness_pct;"
+    "    $('sc-ct').value=d.color_temp_kelvin;"
+    "    $('sc-lm').checked=d.lunar_moonlight;"
+    "    $('sc-sie').checked=d.siesta_enabled;"
+    "    var sst=d.siesta_start_min;"
+    "    $('sc-sist').value=(sst/60<10?'0':'')+Math.floor(sst/60)+':'+"
+    "      (sst%%60<10?'0':'')+(sst%%60);"
+    "    var sen=d.siesta_end_min;"
+    "    $('sc-sien').value=(sen/60<10?'0':'')+Math.floor(sen/60)+':'+"
+    "      (sen%%60<10?'0':'')+(sen%%60);"
+    "    $('sc-sip').value=d.siesta_intensity_pct})}"
+    "function saveScenes(){"
+    "  var st=$('sc-sist').value.split(':');"
+    "  var en=$('sc-sien').value.split(':');"
+    "  var data={"
+    "    scene:$('scene-sel').value,"
+    "    sunrise_duration_min:parseInt($('sc-sr').value),"
+    "    sunset_duration_min:parseInt($('sc-ss').value),"
+    "    transition_duration_min:parseInt($('sc-tr').value),"
+    "    fullday_max_brightness_pct:parseInt($('sc-mb').value),"
+    "    color_temp_kelvin:parseInt($('sc-ct').value),"
+    "    lunar_moonlight:$('sc-lm').checked,"
+    "    siesta_enabled:$('sc-sie').checked,"
+    "    siesta_start_min:parseInt(st[0])*60+parseInt(st[1]),"
+    "    siesta_end_min:parseInt(en[0])*60+parseInt(en[1]),"
+    "    siesta_intensity_pct:parseInt($('sc-sip').value)};"
+    "  fetch('/api/led_scenes',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Scene salvate',1)}).catch(function(){"
+    "    toast('Errore scene',0)})}"
     "/* ── Quick LED on/off (Dashboard) ── */"
     "function ledQuickOn(){"
     "  fetch('/api/leds',{method:'POST',"
@@ -1425,7 +1518,100 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
     return api_led_schedule_get_handler(req);
 }
 
-/* ── Temperature GET endpoint (/api/temperature  GET) ────────────── */
+/* ── LED Scenes status endpoint (/api/led_scenes  GET) ─────────────── */
+
+static esp_err_t api_led_scenes_get_handler(httpd_req_t *req)
+{
+    led_scene_config_t cfg = led_scenes_get_config();
+    led_scene_t scene = led_scenes_get();
+
+    char buf[JSON_SCENES_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"scene\":\"%s\","
+        "\"sunrise_duration_min\":%d,"
+        "\"sunset_duration_min\":%d,"
+        "\"transition_duration_min\":%d,"
+        "\"fullday_max_brightness_pct\":%d,"
+        "\"color_temp_kelvin\":%d,"
+        "\"lunar_moonlight\":%s,"
+        "\"siesta_enabled\":%s,"
+        "\"siesta_start_min\":%d,"
+        "\"siesta_end_min\":%d,"
+        "\"siesta_intensity_pct\":%d}",
+        led_scenes_get_name(scene),
+        cfg.sunrise_duration_min,
+        cfg.sunset_duration_min,
+        cfg.transition_duration_min,
+        cfg.fullday_max_brightness_pct,
+        cfg.color_temp_kelvin,
+        cfg.lunar_moonlight  ? "true" : "false",
+        cfg.siesta_enabled   ? "true" : "false",
+        cfg.siesta_start_min,
+        cfg.siesta_end_min,
+        cfg.siesta_intensity_pct);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── LED Scenes control endpoint (/api/led_scenes  POST) ──────────── */
+
+static esp_err_t api_led_scenes_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_SCENES_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    ESP_LOGI(TAG, "LED Scenes POST body: %s", buf);
+
+    /* Update active scene if provided */
+    char scene_name[32] = {0};
+    if (json_get_str(buf, "\"scene\"", scene_name, sizeof(scene_name)) == 0) {
+        led_scenes_set(led_scenes_from_name(scene_name));
+    }
+
+    /* Update scene configuration */
+    led_scene_config_t cfg = led_scenes_get_config();
+    int val;
+
+    val = json_get_int(buf, "\"sunrise_duration_min\"");
+    if (val >= 1) cfg.sunrise_duration_min = (uint16_t)(val > 120 ? 120 : val);
+
+    val = json_get_int(buf, "\"sunset_duration_min\"");
+    if (val >= 1) cfg.sunset_duration_min = (uint16_t)(val > 120 ? 120 : val);
+
+    val = json_get_int(buf, "\"transition_duration_min\"");
+    if (val >= 1) cfg.transition_duration_min = (uint16_t)(val > 120 ? 120 : val);
+
+    val = json_get_int(buf, "\"fullday_max_brightness_pct\"");
+    if (val >= 1) cfg.fullday_max_brightness_pct = (uint8_t)(val > 100 ? 100 : val);
+
+    val = json_get_int(buf, "\"color_temp_kelvin\"");
+    if (val >= 1) cfg.color_temp_kelvin = (uint16_t)(val > 20000 ? 20000 : (val < 6500 ? 6500 : val));
+
+    val = json_get_bool(buf, "\"lunar_moonlight\"");
+    if (val >= 0) cfg.lunar_moonlight = (val == 1);
+
+    val = json_get_bool(buf, "\"siesta_enabled\"");
+    if (val >= 0) cfg.siesta_enabled = (val == 1);
+
+    val = json_get_int(buf, "\"siesta_start_min\"");
+    if (val >= 0) cfg.siesta_start_min = (uint16_t)(val > 1439 ? 1439 : val);
+
+    val = json_get_int(buf, "\"siesta_end_min\"");
+    if (val >= 0) cfg.siesta_end_min = (uint16_t)(val > 1439 ? 1439 : val);
+
+    val = json_get_int(buf, "\"siesta_intensity_pct\"");
+    if (val >= 0) cfg.siesta_intensity_pct = (uint8_t)(val > 100 ? 100 : val);
+
+    led_scenes_set_config(&cfg);
+
+    return api_led_scenes_get_handler(req);
+}
 
 static esp_err_t api_temperature_get_handler(httpd_req_t *req)
 {
@@ -2249,6 +2435,20 @@ static const httpd_uri_t uri_api_heater_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_led_scenes_get = {
+    .uri      = "/api/led_scenes",
+    .method   = HTTP_GET,
+    .handler  = api_led_scenes_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_led_scenes_post = {
+    .uri      = "/api/led_scenes",
+    .method   = HTTP_POST,
+    .handler  = api_led_scenes_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t web_server_start(void)
@@ -2295,6 +2495,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_ota_status);
     httpd_register_uri_handler(s_server, &uri_api_heater_get);
     httpd_register_uri_handler(s_server, &uri_api_heater_post);
+    httpd_register_uri_handler(s_server, &uri_api_led_scenes_get);
+    httpd_register_uri_handler(s_server, &uri_api_led_scenes_post);
 
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
     return ESP_OK;

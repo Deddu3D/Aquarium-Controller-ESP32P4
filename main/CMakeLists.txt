@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS "main.c" "wifi_manager.c" "web_server.c" "led_controller.c" "led_schedule.c"
-         "sun_position.c" "temperature_sensor.c" "temperature_history.c"
+         "led_scenes.c" "sun_position.c" "temperature_sensor.c" "temperature_history.c"
          "telegram_notify.c" "relay_controller.c" "duckdns.c" "ota_update.c"
          "auto_heater.c" "display_driver.c" "display_ui.c"
     INCLUDE_DIRS "."
