@@ -28,7 +28,7 @@
 
 #include "telegram_notify.h"
 #include "temperature_sensor.h"
-#include "led_scenes.h"
+#include "led_schedule.h"
 #include "led_controller.h"
 
 static const char *TAG = "telegram";
@@ -397,10 +397,21 @@ static void send_daily_summary(const telegram_config_t *cfg)
             "\xf0\x9f\x8c\xa1 Temperature: <i>no sensor</i>\n");
     }
 
-    /* LED scene */
-    pos += snprintf(msg + pos, sizeof(msg) - (size_t)pos,
-        "\xf0\x9f\x92\xa1 Scene: <b>%s</b>\n",
-        led_scenes_get_name(led_scenes_get()));
+    /* LED status */
+    {
+        led_schedule_config_t sched = led_schedule_get_config();
+        bool on = led_controller_is_on();
+        pos += snprintf(msg + pos, sizeof(msg) - (size_t)pos,
+            "\xf0\x9f\x92\xa1 LED: <b>%s</b>",
+            on ? "ON" : "OFF");
+        if (sched.enabled) {
+            pos += snprintf(msg + pos, sizeof(msg) - (size_t)pos,
+                " (auto %02d:%02d–%02d:%02d)",
+                sched.on_hour, sched.on_minute,
+                sched.off_hour, sched.off_minute);
+        }
+        pos += snprintf(msg + pos, sizeof(msg) - (size_t)pos, "\n");
+    }
 
     /* Water change status */
     time_t now = time(NULL);

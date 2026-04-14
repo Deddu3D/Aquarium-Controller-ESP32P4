@@ -36,22 +36,6 @@ menu "Aquarium LED Strip Settings"
         help
             Default brightness level for the LED strip at startup.
 
-    config LED_SUNRISE_DURATION_MIN
-        int "Standalone sunrise duration (minutes)"
-        default 30
-        range 1 120
-        help
-            Duration of the standalone sunrise animation, in minutes.
-            Also used as default for the Full Day Cycle sunrise transition.
-
-    config LED_SUNSET_DURATION_MIN
-        int "Standalone sunset duration (minutes)"
-        default 30
-        range 1 120
-        help
-            Duration of the standalone sunset animation, in minutes.
-            Also used as default for the Full Day Cycle sunset transition.
-
     config LED_RAMP_DURATION_SEC
         int "Manual on/off acclimatization ramp (seconds)"
         default 30
@@ -60,20 +44,6 @@ menu "Aquarium LED Strip Settings"
             Duration of the gradual fade-in / fade-out ramp when the
             LED strip is turned on or off manually.  Set to 0 to disable
             (instant on/off).  Recommended: 30 s for fish welfare.
-
-    config LED_DEFAULT_COLOR_TEMP_K
-        int "Default daylight colour temperature (Kelvin)"
-        default 10000
-        range 6500 20000
-        help
-            Colour temperature for the daylight scene and daytime base
-            colour in the Full Day Cycle.
-            Common aquarium values:
-              6500 K – warm white, best for planted tanks
-              8000 K – neutral white
-             10000 K – cool daylight (current default)
-             14000 K – marine reef
-             20000 K – deep actinic blue
 
 endmenu
 

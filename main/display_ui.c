@@ -7,8 +7,8 @@
  * shown on the 5″ MIPI DSI touch display (800×480).
  *
  * Layout mirrors the Web UI with four swipe-able tabs:
- *   Tab 0 – Riepilogo   : Temperature, LED scene, WiFi, Relay overview
- *   Tab 1 – LED Strip    : Scene name, brightness, colour, on/off
+ *   Tab 0 – Riepilogo   : Temperature, LED status, WiFi, Relay overview
+ *   Tab 1 – LED Strip    : Schedule, brightness, colour, on/off
  *   Tab 2 – Telegram     : Enabled, alarms, reminders status
  *   Tab 3 – Manutenzione : WiFi/IP, heap, uptime, heater, DuckDNS
  */
@@ -27,7 +27,7 @@
 #include "display_ui.h"
 #include "temperature_sensor.h"
 #include "led_controller.h"
-#include "led_scenes.h"
+#include "led_schedule.h"
 #include "relay_controller.h"
 #include "wifi_manager.h"
 #include "auto_heater.h"
@@ -55,7 +55,7 @@ static lv_obj_t *s_lbl_clock = NULL;
 /* Tab 0 – Riepilogo */
 static lv_obj_t *s_lbl_temp        = NULL;
 static lv_obj_t *s_lbl_temp_status = NULL;
-static lv_obj_t *s_lbl_scene_sum   = NULL;
+static lv_obj_t *s_lbl_scene_sum   = NULL;  /* LED status summary */
 static lv_obj_t *s_lbl_led_bright  = NULL;
 static lv_obj_t *s_obj_led_swatch  = NULL;
 static lv_obj_t *s_lbl_wifi_sum    = NULL;
@@ -64,7 +64,7 @@ static lv_obj_t *s_obj_relay_badge[RELAY_COUNT] = {NULL};
 
 /* Tab 1 – LED Strip */
 static lv_obj_t *s_lbl_led_power   = NULL;
-static lv_obj_t *s_lbl_led_scene   = NULL;
+static lv_obj_t *s_lbl_led_sched   = NULL;
 static lv_obj_t *s_lbl_led_bri2    = NULL;
 static lv_obj_t *s_lbl_led_rgb     = NULL;
 static lv_obj_t *s_obj_led_preview = NULL;
@@ -221,29 +221,29 @@ static void build_tab_riepilogo(lv_obj_t *parent)
     lv_obj_set_flex_flow(right, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(right, 8, 0);
 
-    /* LED scene status card */
+    /* LED status card */
     {
         lv_obj_t *card = make_card(right);
         make_card_header(card, LV_SYMBOL_IMAGE "  STATO LUCI");
 
-        lv_obj_t *scene_row = lv_obj_create(card);
-        lv_obj_set_width(scene_row, LV_PCT(100));
-        lv_obj_set_height(scene_row, LV_SIZE_CONTENT);
-        lv_obj_set_style_bg_opa(scene_row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(scene_row, 0, 0);
-        lv_obj_set_style_pad_all(scene_row, 0, 0);
-        lv_obj_set_flex_flow(scene_row, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_pad_column(scene_row, 6, 0);
+        lv_obj_t *led_row = lv_obj_create(card);
+        lv_obj_set_width(led_row, LV_PCT(100));
+        lv_obj_set_height(led_row, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(led_row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(led_row, 0, 0);
+        lv_obj_set_style_pad_all(led_row, 0, 0);
+        lv_obj_set_flex_flow(led_row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_column(led_row, 6, 0);
 
         /* Colour swatch */
-        s_obj_led_swatch = lv_obj_create(scene_row);
+        s_obj_led_swatch = lv_obj_create(led_row);
         lv_obj_set_size(s_obj_led_swatch, 18, 18);
         lv_obj_set_style_radius(s_obj_led_swatch, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(s_obj_led_swatch, CLR_ACCENT, 0);
         lv_obj_set_style_bg_opa(s_obj_led_swatch, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(s_obj_led_swatch, 0, 0);
 
-        s_lbl_scene_sum = make_label(scene_row, "Off",
+        s_lbl_scene_sum = make_label(led_row, "Off",
                                      &lv_font_montserrat_16, CLR_TEXT);
 
         s_lbl_led_bright = make_label(card, "Brightness: --%",
@@ -289,7 +289,7 @@ static void build_tab_led(lv_obj_t *parent)
 
     s_lbl_led_power = make_row(card, "Power",
                                &lv_font_montserrat_16, CLR_TEXT, "--");
-    s_lbl_led_scene = make_row(card, "Scena",
+    s_lbl_led_sched = make_row(card, "Programmazione",
                                &lv_font_montserrat_16, CLR_TEXT, "--");
     s_lbl_led_bri2  = make_row(card, "Luminosità",
                                &lv_font_montserrat_16, CLR_TEXT, "--");
@@ -305,13 +305,12 @@ static void build_tab_led(lv_obj_t *parent)
     lv_obj_set_style_border_color(s_obj_led_preview, CLR_BORDER, 0);
     lv_obj_set_style_border_width(s_obj_led_preview, 1, 0);
 
-    /* Scene settings info card */
+    /* Schedule info card */
     lv_obj_t *card2 = make_card(parent);
-    make_card_header(card2, LV_SYMBOL_SETTINGS "  Impostazioni Scena");
-    s_lbl_led_config = make_label(card2, "Sunrise: -- min\n"
-                                         "Sunset: -- min\n"
-                                         "Temp. colore: -- K\n"
-                                         "Siesta: --",
+    make_card_header(card2, LV_SYMBOL_SETTINGS "  Programmazione LED");
+    s_lbl_led_config = make_label(card2, "Orario: --:-- – --:--\n"
+                                         "Luminosità: --\n"
+                                         "Colore: --, --, --",
                                   &lv_font_montserrat_14, CLR_TEXT_DIM);
 }
 
@@ -520,11 +519,14 @@ void display_ui_refresh(void)
         }
     }
 
-    /* LED scene summary */
+    /* LED status summary */
     {
-        led_scene_t scene = led_scenes_get();
-        const char *name  = led_scenes_get_name(scene);
-        lv_label_set_text(s_lbl_scene_sum, name ? name : "Off");
+        led_schedule_config_t sched = led_schedule_get_config();
+        bool on = led_controller_is_on();
+        const char *status = sched.enabled
+            ? (on ? "Acceso (auto)" : "Spento (auto)")
+            : (on ? "Acceso" : "Spento");
+        lv_label_set_text(s_lbl_scene_sum, status);
 
         bool on = led_controller_is_on();
         uint8_t br = led_controller_get_brightness();
@@ -582,9 +584,16 @@ void display_ui_refresh(void)
         lv_obj_set_style_text_color(s_lbl_led_power,
                                     on ? CLR_GREEN : CLR_RED, 0);
 
-        led_scene_t scene = led_scenes_get();
-        const char *sname = led_scenes_get_name(scene);
-        lv_label_set_text(s_lbl_led_scene, sname ? sname : "Manuale");
+        led_schedule_config_t sched = led_schedule_get_config();
+        if (sched.enabled) {
+            char sbuf[32];
+            snprintf(sbuf, sizeof(sbuf), "%02d:%02d – %02d:%02d",
+                     sched.on_hour, sched.on_minute,
+                     sched.off_hour, sched.off_minute);
+            lv_label_set_text(s_lbl_led_sched, sbuf);
+        } else {
+            lv_label_set_text(s_lbl_led_sched, "Disattiva");
+        }
 
         uint8_t br = led_controller_get_brightness();
         char buf[16];
@@ -604,20 +613,18 @@ void display_ui_refresh(void)
             lv_obj_set_style_bg_color(s_obj_led_preview, CLR_BG_DARK, 0);
         }
 
-        /* Scene config info */
-        led_scene_config_t cfg = led_scenes_get_config();
+        /* Schedule config info */
         char cfg_buf[128];
         snprintf(cfg_buf, sizeof(cfg_buf),
-                 "Sunrise: %d min\n"
-                 "Sunset: %d min\n"
-                 "Temp. colore: %d K\n"
-                 "Siesta: %s\n"
-                 "Full Day max: %d%%",
-                 cfg.sunrise_duration_min,
-                 cfg.sunset_duration_min,
-                 cfg.color_temp_kelvin,
-                 cfg.siesta_enabled ? "Attiva" : "Disattiva",
-                 cfg.fullday_max_brightness_pct);
+                 "Programmazione: %s\n"
+                 "Orario: %02d:%02d – %02d:%02d\n"
+                 "Luminosità: %d\n"
+                 "Colore: %d, %d, %d",
+                 sched.enabled ? "Attiva" : "Disattiva",
+                 sched.on_hour, sched.on_minute,
+                 sched.off_hour, sched.off_minute,
+                 sched.brightness,
+                 sched.red, sched.green, sched.blue);
         lv_label_set_text(s_lbl_led_config, cfg_buf);
     }
 
