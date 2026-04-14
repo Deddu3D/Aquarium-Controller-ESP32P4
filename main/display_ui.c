@@ -528,7 +528,6 @@ void display_ui_refresh(void)
             : (on ? "Acceso" : "Spento");
         lv_label_set_text(s_lbl_scene_sum, status);
 
-        bool on = led_controller_is_on();
         uint8_t br = led_controller_get_brightness();
         char buf[32];
         snprintf(buf, sizeof(buf), "Luminosità: %d%%", brightness_pct(br));
@@ -592,7 +591,7 @@ void display_ui_refresh(void)
                      sched.off_hour, sched.off_minute);
             lv_label_set_text(s_lbl_led_sched, sbuf);
         } else {
-            lv_label_set_text(s_lbl_led_sched, "Disattiva");
+            lv_label_set_text(s_lbl_led_sched, "Disattivata");
         }
 
         uint8_t br = led_controller_get_brightness();
@@ -620,7 +619,7 @@ void display_ui_refresh(void)
                  "Orario: %02d:%02d – %02d:%02d\n"
                  "Luminosità: %d\n"
                  "Colore: %d, %d, %d",
-                 sched.enabled ? "Attiva" : "Disattiva",
+                 sched.enabled ? "Attiva" : "Disattivata",
                  sched.on_hour, sched.on_minute,
                  sched.off_hour, sched.off_minute,
                  sched.brightness,
