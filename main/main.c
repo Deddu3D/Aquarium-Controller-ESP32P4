@@ -37,10 +37,20 @@
 #include "relay_controller.h"
 #include "duckdns.h"
 #include "auto_heater.h"
+#include "co2_controller.h"
+#include "timezone_manager.h"
 #include "display_driver.h"
 #include "display_ui.h"
 
 static const char *TAG = "aquarium";
+
+/* ── Relay change callback → Telegram notification ─────────────── */
+static void on_relay_change(int index, bool on, const char *source)
+{
+    char name[RELAY_NAME_MAX];
+    relay_controller_get_name(index, name, sizeof(name));
+    telegram_notify_relay_change(index, on, name, source);
+}
 
 /* ── Background task: initialise MIPI DSI display + LVGL + touch ── */
 /* Runs outside app_main so that a disconnected panel cannot block
@@ -104,10 +114,9 @@ void app_main(void)
         ESP_LOGE(TAG, "WiFi connection failed (0x%x) – continuing without network", ret);
     }
 
-    /* ── 3. Set POSIX timezone for Cagliari, Italy (CET/CEST) ── */
-    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
-    tzset();
-    ESP_LOGI(TAG, "Timezone set: CET-1CEST (Cagliari, Italy)");
+    /* ── 3. Initialise timezone (load from NVS or use default) ──── */
+    timezone_manager_init();
+    ESP_LOGI(TAG, "Timezone initialised");
 
     /* ── 4. Start SNTP time synchronisation ─────────────────── */
     esp_task_wdt_reset();
@@ -184,6 +193,8 @@ void app_main(void)
         ESP_LOGE(TAG, "Relay controller init failed (0x%x)", ret);
     } else {
         ESP_LOGI(TAG, "Relay controller ready (4 channels)");
+        /* Register Telegram notification callback for relay state changes */
+        relay_controller_set_change_cb(on_relay_change);
     }
 
     /* ── 8b. Initialise auto-heater thermostat ───────────────────── */
@@ -193,6 +204,15 @@ void app_main(void)
         ESP_LOGE(TAG, "Auto-heater init failed (0x%x)", ret);
     } else {
         ESP_LOGI(TAG, "Auto-heater module ready");
+    }
+
+    /* ── 8c. Initialise CO2 solenoid controller ──────────────────── */
+    esp_task_wdt_reset();
+    ret = co2_controller_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "CO2 controller init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "CO2 controller module ready");
     }
 
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
@@ -227,6 +247,9 @@ void app_main(void)
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "HTTP server start failed (0x%x)", ret);
         }
+    } else if (wifi_manager_is_ap_mode()) {
+        ESP_LOGI(TAG, "AP mode active – captive portal at http://192.168.4.1");
+        ESP_LOGI(TAG, "Connect to '%s' WiFi to configure credentials", "AquariumSetup");
     }
 
     /* ── 11. Main application loop ─────────────────────────────────── */
@@ -248,6 +271,9 @@ void app_main(void)
 
         /* Evaluate auto-heater thermostat logic */
         auto_heater_tick();
+
+        /* Evaluate CO2 solenoid valve logic */
+        co2_controller_tick();
 
         /* Refresh on-screen LVGL dashboard */
         display_ui_refresh();

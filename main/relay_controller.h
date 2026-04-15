@@ -4,7 +4,8 @@
  * Aquarium Controller - 4-Channel Relay Controller
  * Controls four 3 V relays for external equipment such as pumps,
  * heaters, air stones, and filters.  States and custom names are
- * persisted in NVS.
+ * persisted in NVS.  Each relay supports up to RELAY_SCHEDULE_SLOTS
+ * independent daily time-of-day schedule slots.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -25,23 +26,35 @@ extern "C" {
 /** Maximum length of a relay custom name (including NUL) */
 #define RELAY_NAME_MAX 32
 
+/** Number of independent schedule slots per relay */
+#define RELAY_SCHEDULE_SLOTS 4
+
 /**
- * @brief Relay schedule entry – time-of-day on/off automation.
+ * @brief Relay schedule entry – single time-of-day on/off window.
  */
 typedef struct {
-    bool     enabled;       /**< Schedule active                   */
-    uint16_t on_min;        /**< Turn-on time (minutes from midnight, 0-1439) */
-    uint16_t off_min;       /**< Turn-off time (minutes from midnight, 0-1439) */
+    bool     enabled;   /**< This slot is active                          */
+    uint16_t on_min;    /**< Turn-on time  (minutes from midnight, 0–1439) */
+    uint16_t off_min;   /**< Turn-off time (minutes from midnight, 0–1439) */
 } relay_schedule_t;
 
 /**
  * @brief State of a single relay channel.
  */
 typedef struct {
-    bool on;                        /**< true = energised / closed   */
-    char name[RELAY_NAME_MAX];      /**< user-assigned display name  */
-    relay_schedule_t schedule;      /**< time-of-day schedule        */
+    bool on;                                            /**< true = energised */
+    char name[RELAY_NAME_MAX];                          /**< user display name */
+    relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS];   /**< time slots */
 } relay_state_t;
+
+/**
+ * @brief Callback invoked when a relay state changes.
+ *
+ * @param index  Relay index (0–RELAY_COUNT-1).
+ * @param on     New state (true = ON).
+ * @param source Either "manual" (direct set) or "schedule".
+ */
+typedef void (*relay_change_cb_t)(int index, bool on, const char *source);
 
 /**
  * @brief Initialise the relay controller.
@@ -98,14 +111,27 @@ void relay_controller_get_name(int index, char *name, size_t len);
 void relay_controller_get_all(relay_state_t out[RELAY_COUNT]);
 
 /**
- * @brief Set the time-of-day schedule for a relay channel.
+ * @brief Set a single schedule slot for a relay channel.
  *
- * @param index    Relay index (0 – RELAY_COUNT-1).
- * @param schedule Pointer to the schedule configuration.
+ * @param index     Relay index (0 – RELAY_COUNT-1).
+ * @param slot      Schedule slot (0 – RELAY_SCHEDULE_SLOTS-1).
+ * @param schedule  Pointer to the schedule configuration.
  * @return ESP_OK or ESP_ERR_INVALID_ARG.
  */
-esp_err_t relay_controller_set_schedule(int index,
+esp_err_t relay_controller_set_schedule(int index, int slot,
                                         const relay_schedule_t *schedule);
+
+/**
+ * @brief Set all schedule slots for a relay channel at once.
+ *
+ * Convenience wrapper that replaces the entire slots array.
+ *
+ * @param index     Relay index (0 – RELAY_COUNT-1).
+ * @param schedules Array of RELAY_SCHEDULE_SLOTS entries.
+ * @return ESP_OK or ESP_ERR_INVALID_ARG.
+ */
+esp_err_t relay_controller_set_all_schedules(int index,
+                                             const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS]);
 
 /**
  * @brief Evaluate relay schedules against the current time.
@@ -114,6 +140,16 @@ esp_err_t relay_controller_set_schedule(int index,
  * turn relays on/off according to their configured schedules.
  */
 void relay_controller_tick_schedules(void);
+
+/**
+ * @brief Register a callback for relay state changes.
+ *
+ * Only one callback is supported; pass NULL to unregister.
+ * The callback is invoked from the calling task context.
+ *
+ * @param cb  Callback function or NULL.
+ */
+void relay_controller_set_change_cb(relay_change_cb_t cb);
 
 #ifdef __cplusplus
 }

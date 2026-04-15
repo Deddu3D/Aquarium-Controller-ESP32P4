@@ -5,12 +5,31 @@ menu "Aquarium WiFi Settings"
         default "your_ssid"
         help
             SSID (network name) of the WiFi access point to connect to.
+            Can be overridden at runtime via the provisioning portal (AP mode).
 
     config WIFI_PASSWORD
         string "WiFi Password"
         default "your_password"
         help
             Password for the WiFi access point.
+            Can be overridden at runtime via the provisioning portal (AP mode).
+
+endmenu
+
+menu "Aquarium Timezone Settings"
+
+    config AQUARIUM_DEFAULT_TZ
+        string "Default POSIX timezone string"
+        default "CET-1CEST,M3.5.0/2,M10.5.0/3"
+        help
+            POSIX TZ string applied at startup if no timezone has been
+            saved in NVS.  Can be changed at runtime via the Web UI
+            (Manutenzione → Fuso Orario) and is stored in NVS.
+            Examples:
+              Italy (CET):   CET-1CEST,M3.5.0/2,M10.5.0/3
+              UK (GMT/BST):  GMT0BST,M3.5.0/1,M10.5.0
+              US East:       EST5EDT,M3.2.0,M11.1.0
+              Japan (JST):   JST-9
 
 endmenu
 
@@ -167,5 +186,19 @@ menu "Aquarium MIPI DSI Display Settings"
         help
             GPIO pin for the GT911 RST (reset) line.
             Set to -1 if not wired.
+
+endmenu
+
+menu "Aquarium HTTPS Settings"
+
+    config AQUARIUM_HTTPS_ENABLE
+        bool "Enable HTTPS for the web server"
+        default n
+        help
+            When enabled, the web server uses TLS (HTTPS) instead of plain HTTP.
+            server.crt and server.key are embedded from the main/ directory.
+            A self-signed certificate is pre-generated; the browser will show a
+            security warning which must be accepted once.
+            Protects Telegram credentials and WiFi passwords from LAN sniffing.
 
 endmenu

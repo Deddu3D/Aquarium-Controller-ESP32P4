@@ -34,6 +34,10 @@
 #include "telegram_notify.h"
 #include "duckdns.h"
 
+#ifndef CONFIG_LED_RAMP_DURATION_SEC
+#define CONFIG_LED_RAMP_DURATION_SEC 30
+#endif
+
 static const char *TAG = "disp_ui";
 
 /* ── Colours (same palette as the Web UI) ────────────────────────── */
@@ -171,6 +175,10 @@ static lv_obj_t *make_row(lv_obj_t *parent, const char *key,
     return lv;  /* return the value label for later updates */
 }
 
+/* ── Touch callback declarations (defined after build_tab_*) ────── */
+static void relay_toggle_cb(lv_event_t *e);
+static void led_toggle_cb(lv_event_t *e);
+
 /* ── Tab content builders ────────────────────────────────────────── */
 
 /** Tab 0 – Riepilogo (summary). */
@@ -253,7 +261,7 @@ static void build_tab_riepilogo(lv_obj_t *parent)
     /* Relays card */
     {
         lv_obj_t *card = make_card(right);
-        make_card_header(card, LV_SYMBOL_POWER "  Relè");
+        make_card_header(card, LV_SYMBOL_POWER "  Relè (tocca per cambiare)");
 
         for (int i = 0; i < RELAY_COUNT; i++) {
             lv_obj_t *row = lv_obj_create(card);
@@ -261,21 +269,30 @@ static void build_tab_riepilogo(lv_obj_t *parent)
             lv_obj_set_height(row, LV_SIZE_CONTENT);
             lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(row, 0, 0);
-            lv_obj_set_style_pad_all(row, 2, 0);
+            lv_obj_set_style_pad_all(row, 4, 0);
             lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
             lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
                                   LV_FLEX_ALIGN_CENTER,
                                   LV_FLEX_ALIGN_CENTER);
 
+            /* Make the whole row clickable to toggle the relay */
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_bg_opa(row, LV_OPA_0, LV_STATE_PRESSED);
+            lv_obj_add_event_cb(row, relay_toggle_cb, LV_EVENT_CLICKED,
+                                (void *)(intptr_t)i);
+
             char buf[32];
             snprintf(buf, sizeof(buf), "Relay %d", i + 1);
             s_lbl_relay[i] = make_label(row, buf,
                                         &lv_font_montserrat_14, CLR_TEXT);
+            /* Prevent label from capturing clicks intended for the row */
+            lv_obj_add_flag(s_lbl_relay[i], LV_OBJ_FLAG_EVENT_BUBBLE);
 
             /* Badge ON/OFF */
             s_obj_relay_badge[i] = make_label(row, "--",
                                               &lv_font_montserrat_14,
                                               CLR_TEXT_DIM);
+            lv_obj_add_flag(s_obj_relay_badge[i], LV_OBJ_FLAG_EVENT_BUBBLE);
         }
     }
 }
@@ -304,6 +321,45 @@ static void build_tab_led(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(s_obj_led_preview, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_obj_led_preview, CLR_BORDER, 0);
     lv_obj_set_style_border_width(s_obj_led_preview, 1, 0);
+
+    /* Touch ON / OFF buttons */
+    lv_obj_t *btn_row = lv_obj_create(card);
+    lv_obj_set_width(btn_row, LV_PCT(100));
+    lv_obj_set_height(btn_row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_style_pad_all(btn_row, 0, 0);
+    lv_obj_set_style_pad_top(btn_row, 8, 0);
+    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(btn_row, 8, 0);
+
+    /* ON button */
+    lv_obj_t *btn_on = lv_button_create(btn_row);
+    lv_obj_set_flex_grow(btn_on, 1);
+    lv_obj_set_height(btn_on, 44);
+    lv_obj_set_style_bg_color(btn_on, lv_color_hex(0x166534), 0);
+    lv_obj_set_style_radius(btn_on, 8, 0);
+    lv_obj_t *lbl_on = lv_label_create(btn_on);
+    lv_label_set_text(lbl_on, LV_SYMBOL_PLAY "  Accendi");
+    lv_obj_set_style_text_color(lbl_on, CLR_GREEN, 0);
+    lv_obj_set_style_text_font(lbl_on, &lv_font_montserrat_14, 0);
+    lv_obj_center(lbl_on);
+    lv_obj_add_event_cb(btn_on, led_toggle_cb, LV_EVENT_CLICKED, (void *)1);
+
+    /* OFF button */
+    lv_obj_t *btn_off = lv_button_create(btn_row);
+    lv_obj_set_flex_grow(btn_off, 1);
+    lv_obj_set_height(btn_off, 44);
+    lv_obj_set_style_bg_color(btn_off, lv_color_hex(0x7f1d1d), 0);
+    lv_obj_set_style_radius(btn_off, 8, 0);
+    lv_obj_t *lbl_off = lv_label_create(btn_off);
+    lv_label_set_text(lbl_off, LV_SYMBOL_STOP "  Spegni");
+    lv_obj_set_style_text_color(lbl_off, CLR_RED, 0);
+    lv_obj_set_style_text_font(lbl_off, &lv_font_montserrat_14, 0);
+    lv_obj_center(lbl_off);
+    lv_obj_add_event_cb(btn_off, led_toggle_cb, LV_EVENT_CLICKED, (void *)0);
 
     /* Schedule info card */
     lv_obj_t *card2 = make_card(parent);
@@ -364,6 +420,39 @@ static void build_tab_manutenzione(lv_obj_t *parent)
         s_lbl_ddns = make_label(card, "-- ",
                                 &lv_font_montserrat_14, CLR_TEXT_DIM);
     }
+}
+
+/* ===================================================================
+ *  Touch callbacks
+ * =================================================================*/
+
+/**
+ * @brief Toggle a relay when its row is tapped on the display.
+ * @param e  LVGL event; user_data holds the relay index as (intptr_t).
+ */
+static void relay_toggle_cb(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (idx < 0 || idx >= RELAY_COUNT) return;
+
+    bool current = relay_controller_get(idx);
+    relay_controller_set(idx, !current);
+    ESP_LOGI(TAG, "Touch: Relay %d toggled → %s", idx, !current ? "ON" : "OFF");
+}
+
+/**
+ * @brief Turn LED strip on or off when a button is tapped.
+ * @param e  LVGL event; user_data == (void*)1 → ON, (void*)0 → OFF.
+ */
+static void led_toggle_cb(lv_event_t *e)
+{
+    bool on = ((intptr_t)lv_event_get_user_data(e) != 0);
+    if (on) {
+        led_controller_fade_on(CONFIG_LED_RAMP_DURATION_SEC * 1000);
+    } else {
+        led_controller_fade_off(CONFIG_LED_RAMP_DURATION_SEC * 1000);
+    }
+    ESP_LOGI(TAG, "Touch: LED strip %s", on ? "ON" : "OFF");
 }
 
 /* ===================================================================

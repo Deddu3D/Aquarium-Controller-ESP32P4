@@ -15,6 +15,7 @@
 #include <time.h>
 
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -34,6 +35,8 @@
 #include "duckdns.h"
 #include "ota_update.h"
 #include "auto_heater.h"
+#include "co2_controller.h"
+#include "timezone_manager.h"
 #include "esp_ota_ops.h"
 
 static const char *TAG = "web_srv";
@@ -121,20 +124,24 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_GEO_BUF_SIZE      384
 #define JSON_TG_BUF_SIZE       768
 #define JSON_DDNS_BUF_SIZE     384
-#define JSON_RELAY_CHUNK_SIZE  256
+#define JSON_RELAY_CHUNK_SIZE  512   /* larger to accommodate multi-slot schedules */
 #define JSON_TEMP_CHUNK_SIZE   64
+#define JSON_CO2_BUF_SIZE      256
+#define JSON_TZ_BUF_SIZE       128
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE     256
 #define POST_BODY_SCHED_SIZE   256
 #define POST_BODY_SCENES_SIZE  256
 #define POST_BODY_TG_SIZE      512
-#define POST_BODY_RELAY_SIZE   256
+#define POST_BODY_RELAY_SIZE   512
 #define POST_BODY_DDNS_SIZE    256
+#define POST_BODY_CO2_SIZE     256
+#define POST_BODY_TZ_SIZE      128
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  34
+#define HTTP_MAX_URI_HANDLERS  42
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -517,6 +524,9 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Ora invio</span>"
     "<input type=\"number\" class=\"fin\" id=\"tg-sumhr\""
     " min=\"0\" max=\"23\" style=\"max-width:90px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Notifiche Rel&#xE8;</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"tg-rel\">"
+    "<span class=\"slider\"></span></label></div>"
     "<button class=\"btn\" onclick=\"saveTg()\">Salva Impostazioni</button>"
     "</div></div></div>"
     "</div>"
@@ -611,6 +621,52 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
     "<div id=\"relay-rows\"></div>"
     "</div></div></div>"
+    "<!-- CO2 Controller -->"
+    "<div class=\"ccard\" id=\"co2-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F4A8; CO&#x2082; Controller</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Abilitato</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"co2-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Canale Rel&#xE8;</span>"
+    "<input type=\"number\" class=\"fin\" id=\"co2-relay\""
+    " min=\"0\" max=\"3\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Apertura anticipo (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"co2-pre\""
+    " min=\"0\" max=\"60\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Chiusura posticipo (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"co2-post\""
+    " min=\"0\" max=\"60\" style=\"max-width:80px\"></div>"
+    "<button class=\"btn\" onclick=\"saveCo2()\">Salva CO&#x2082;</button>"
+    "</div></div></div>"
+    "<!-- Timezone -->"
+    "<div class=\"ccard\" id=\"tz-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F30D; Fuso Orario</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">POSIX TZ</span></div>"
+    "<div class=\"row\" style=\"border-bottom:none;padding-top:0\">"
+    "<input type=\"text\" class=\"fin fin-wide\" id=\"tz-str\""
+    " placeholder=\"CET-1CEST,M3.5.0/2,M10.5.0/3\"></div>"
+    "<div class=\"row\"><span class=\"label\">Preset</span>"
+    "<select class=\"fin\" id=\"tz-preset\" onchange=\"tzPreset()\" style=\"max-width:180px\">"
+    "<option value=\"\">-- Scegli --</option>"
+    "<option value=\"CET-1CEST,M3.5.0/2,M10.5.0/3\">Italia (CET)</option>"
+    "<option value=\"GMT0BST,M3.5.0/1,M10.5.0\">UK (GMT/BST)</option>"
+    "<option value=\"EET-2EEST,M3.5.0/3,M10.5.0/4\">Grecia/Romania (EET)</option>"
+    "<option value=\"WET0WEST,M3.5.0/1,M10.5.0\">Portogallo (WET)</option>"
+    "<option value=\"EST5EDT,M3.2.0,M11.1.0\">Est USA (EST)</option>"
+    "<option value=\"CST6CDT,M3.2.0,M11.1.0\">Centro USA (CST)</option>"
+    "<option value=\"MST7MDT,M3.2.0,M11.1.0\">Montagna USA (MST)</option>"
+    "<option value=\"PST8PDT,M3.2.0,M11.1.0\">Ovest USA (PST)</option>"
+    "<option value=\"JST-9\">Giappone (JST)</option>"
+    "<option value=\"AEST-10AEDT,M10.1.0,M4.1.0/3\">Sydney (AEST)</option>"
+    "</select></div>"
+    "<button class=\"btn\" onclick=\"saveTz()\">Salva Fuso Orario</button>"
+    "</div></div></div>"
     "</div>"
     "<!-- end panels -->"
     "</div>"
@@ -642,7 +698,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  if(n===0){loadDash()}"
     "  if(n===1){loadLeds();loadSched();loadScenes()}"
     "  if(n===2){loadTg()}"
-    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays()}}"
+    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone()}}"
     "/* ── Color helpers ── */"
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
@@ -1001,6 +1057,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    $('tg-fertdays').value=d.fertilizer_days;"
     "    $('tg-sum').checked=d.daily_summary_enabled;"
     "    $('tg-sumhr').value=d.daily_summary_hour;"
+    "    if($('tg-rel'))$('tg-rel').checked=d.relay_notify_enabled||false;"
     "    tgTs('tg-wclast',d.last_water_change);"
     "    tgTs('tg-fertlast',d.last_fertilizer)})}"
     "function saveTg(){"
@@ -1015,7 +1072,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    fertilizer_enabled:$('tg-fert').checked,"
     "    fertilizer_days:parseInt($('tg-fertdays').value),"
     "    daily_summary_enabled:$('tg-sum').checked,"
-    "    daily_summary_hour:parseInt($('tg-sumhr').value)};"
+    "    daily_summary_hour:parseInt($('tg-sumhr').value),"
+    "    relay_notify_enabled:$('tg-rel')?$('tg-rel').checked:false};"
     "  var tk=$('tg-token').value;"
     "  if(tk.length>0){data.bot_token=tk}"
     "  fetch('/api/telegram',{method:'POST',"
@@ -1047,8 +1105,11 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  .then(function(d){"
     "    var c=$('relay-rows');c.innerHTML='';"
     "    d.relays.forEach(function(rl,i){"
-    "      var row=document.createElement('div');"
-    "      row.className='row';"
+    "      var blk=document.createElement('div');"
+    "      blk.style.cssText='border-bottom:1px solid #1a2540;padding:.6rem 0';"
+    "      /* Name row */"
+    "      var nm=document.createElement('div');"
+    "      nm.className='row';"
     "      var lbl=document.createElement('span');"
     "      lbl.className='label';lbl.textContent=rl.name;"
     "      lbl.style.cursor='pointer';lbl.title='Clicca per rinominare';"
@@ -1071,11 +1132,66 @@ static const char STATUS_HTML_TEMPLATE[] =
     "        }).then(function(r){return r.json()}).then(function(){"
     "          toast(rl.name+(inp.checked?' ON':' OFF'),1)})"
     "        .catch(function(){toast('Errore rel\\u00e8',0)})};"
-    "      var sl=document.createElement('span');"
-    "      sl.className='slider';"
+    "      var sl=document.createElement('span');sl.className='slider';"
     "      tg.appendChild(inp);tg.appendChild(sl);"
-    "      row.appendChild(lbl);row.appendChild(tg);"
-    "      c.appendChild(row)})})}"
+    "      nm.appendChild(lbl);nm.appendChild(tg);"
+    "      blk.appendChild(nm);"
+    "      /* Schedule slots */"
+    "      var schHdr=document.createElement('div');"
+    "      schHdr.style.cssText='font-size:.75rem;color:#64748b;margin:.3rem 0 .2rem';"
+    "      schHdr.textContent='Programmazione (fino a 4 slot):';"
+    "      blk.appendChild(schHdr);"
+    "      var slots=rl.schedules||[];"
+    "      for(var s=0;s<4;s++){"
+    "        var slot=slots[s]||{enabled:false,on_min:480,off_min:1200};"
+    "        (function(si,sl_data){"
+    "          var srow=document.createElement('div');"
+    "          srow.style.cssText='display:flex;align-items:center;gap:.4rem;"
+    "margin:.2rem 0;flex-wrap:wrap';"
+    "          var sEn=document.createElement('input');"
+    "          sEn.type='checkbox';sEn.checked=sl_data.enabled||false;"
+    "          var sOnH=document.createElement('input');"
+    "          sOnH.type='time';sOnH.className='fin';"
+    "          sOnH.style.cssText='max-width:90px;font-size:.8rem;padding:.3rem';"
+    "          var onM=sl_data.on_min||0;"
+    "          sOnH.value=('0'+Math.floor(onM/60)).slice(-2)+':'+"
+    "            ('0'+(onM%%60)).slice(-2);"
+    "          var sOffH=document.createElement('input');"
+    "          sOffH.type='time';sOffH.className='fin';"
+    "          sOffH.style.cssText='max-width:90px;font-size:.8rem;padding:.3rem';"
+    "          var offM=sl_data.off_min||0;"
+    "          sOffH.value=('0'+Math.floor(offM/60)).slice(-2)+':'+"
+    "            ('0'+(offM%%60)).slice(-2);"
+    "          var sSave=document.createElement('button');"
+    "          sSave.className='btn-sm btn';"
+    "          sSave.style.cssText='width:auto;padding:.3rem .5rem;margin-top:0;"
+    "font-size:.75rem';"
+    "          sSave.textContent='\\u2713';"
+    "          sSave.onclick=function(){"
+    "            var onT=sOnH.value.split(':');"
+    "            var offT=sOffH.value.split(':');"
+    "            var payload={index:i,schedule_slot:si,"
+    "              schedule_enabled:sEn.checked,"
+    "              schedule_on_min:parseInt(onT[0])*60+parseInt(onT[1]),"
+    "              schedule_off_min:parseInt(offT[0])*60+parseInt(offT[1])};"
+    "            fetch('/api/relays',{method:'POST',"
+    "              headers:{'Content-Type':'application/json'},"
+    "              body:JSON.stringify(payload)"
+    "            }).then(function(){toast('Slot '+si+' salvato',1)})"
+    "            .catch(function(){toast('Errore slot',0)})};"
+    "          var span=document.createElement('span');"
+    "          span.style.cssText='font-size:.75rem;color:#64748b;min-width:30px';"
+    "          span.textContent='S'+(si+1)+':';"
+    "          srow.appendChild(span);srow.appendChild(sEn);"
+    "          srow.appendChild(sOnH);"
+    "          var arr=document.createElement('span');"
+    "          arr.textContent='\\u2192';"
+    "          arr.style.cssText='color:#64748b;font-size:.8rem';"
+    "          srow.appendChild(arr);"
+    "          srow.appendChild(sOffH);srow.appendChild(sSave);"
+    "          blk.appendChild(srow)"
+    "        })(s,slot)}"
+    "      c.appendChild(blk)})})}"
     "/* ── System status (Manutenzione) ── */"
     "function loadSys(){"
     "  fetch('/api/status').then(function(r){return r.json()})"
@@ -1171,6 +1287,39 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).then(function(r){return r.json()}).then(function(){"
     "    toast('Riscaldatore salvato',1)"
     "  }).catch(function(){toast('Errore salvataggio',0)})}"
+    "/* ── CO2 Controller ── */"
+    "function loadCo2(){"
+    "  fetch('/api/co2').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('co2-en').checked=d.enabled||false;"
+    "    $('co2-relay').value=d.relay_index||0;"
+    "    $('co2-pre').value=d.pre_on_min||0;"
+    "    $('co2-post').value=d.post_off_min||0})}"
+    "function saveCo2(){"
+    "  var data={enabled:$('co2-en').checked,"
+    "    relay_index:parseInt($('co2-relay').value),"
+    "    pre_on_min:parseInt($('co2-pre').value),"
+    "    post_off_min:parseInt($('co2-post').value)};"
+    "  fetch('/api/co2',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('CO\\u2082 salvato',1)}).catch(function(){toast('Errore CO\\u2082',0)})}"
+    "/* ── Timezone ── */"
+    "function loadTimezone(){"
+    "  fetch('/api/timezone').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('tz-str').value=d.tz||''})}"
+    "function saveTz(){"
+    "  var tz=$('tz-str').value.trim();"
+    "  if(!tz){toast('Inserisci stringa TZ',0);return}"
+    "  fetch('/api/timezone',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({tz:tz})"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Fuso orario salvato',1)}).catch(function(){toast('Errore TZ',0)})}"
+    "function tzPreset(){"
+    "  var v=$('tz-preset').value;if(v)$('tz-str').value=v}"
     "/* ── Init ── */"
     "loadDash();"
     "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
@@ -1799,6 +1948,7 @@ static esp_err_t api_telegram_get_handler(httpd_req_t *req)
         "\"fertilizer_days\":%d,"
         "\"daily_summary_enabled\":%s,"
         "\"daily_summary_hour\":%d,"
+        "\"relay_notify_enabled\":%s,"
         "\"last_water_change\":%" PRId64 ","
         "\"last_fertilizer\":%" PRId64 "}",
         cfg.bot_token[0] != '\0' ? "true" : "false",
@@ -1813,6 +1963,7 @@ static esp_err_t api_telegram_get_handler(httpd_req_t *req)
         cfg.fertilizer_days,
         cfg.daily_summary_enabled ? "true" : "false",
         cfg.daily_summary_hour,
+        cfg.relay_notify_enabled ? "true" : "false",
         telegram_notify_get_last_water_change(),
         telegram_notify_get_last_fertilizer());
 
@@ -1866,6 +2017,8 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
     if (bval >= 0) cfg.fertilizer_enabled = bval;
     bval = json_get_bool(buf, "\"daily_summary_enabled\"");
     if (bval >= 0) cfg.daily_summary_enabled = bval;
+    bval = json_get_bool(buf, "\"relay_notify_enabled\"");
+    if (bval >= 0) cfg.relay_notify_enabled = bval;
 
     double dval;
     if (json_get_double(buf, "\"temp_high_c\"", &dval) == 0)
@@ -1973,17 +2126,28 @@ static esp_err_t api_relays_get_handler(httpd_req_t *req)
 
     for (int i = 0; i < RELAY_COUNT; i++) {
         json_escape(relays[i].name, escaped_name, sizeof(escaped_name));
+
+        /* Header part of each relay JSON object */
         n = snprintf(chunk, sizeof(chunk),
-            "%s{\"index\":%d,\"on\":%s,\"name\":\"%s\","
-            "\"schedule\":{\"enabled\":%s,\"on_min\":%d,\"off_min\":%d}}",
+            "%s{\"index\":%d,\"on\":%s,\"name\":\"%s\",\"schedules\":[",
             i > 0 ? "," : "",
             i,
             relays[i].on ? "true" : "false",
-            escaped_name,
-            relays[i].schedule.enabled ? "true" : "false",
-            relays[i].schedule.on_min,
-            relays[i].schedule.off_min);
+            escaped_name);
         httpd_resp_send_chunk(req, chunk, n);
+
+        /* Emit each schedule slot */
+        for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
+            n = snprintf(chunk, sizeof(chunk),
+                "%s{\"enabled\":%s,\"on_min\":%d,\"off_min\":%d}",
+                s > 0 ? "," : "",
+                relays[i].schedules[s].enabled ? "true" : "false",
+                relays[i].schedules[s].on_min,
+                relays[i].schedules[s].off_min);
+            httpd_resp_send_chunk(req, chunk, n);
+        }
+
+        httpd_resp_send_chunk(req, "]}", 2);
     }
 
     httpd_resp_send_chunk(req, "]}", 2);
@@ -2029,10 +2193,14 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     /* Apply schedule if provided */
     int sched_en = json_get_bool(buf, "\"schedule_enabled\"");
     if (sched_en >= 0) {
-        /* Read current schedule, then update provided fields */
+        /* Which slot to update (default 0 for backwards compat) */
+        int slot = json_get_int(buf, "\"schedule_slot\"");
+        if (slot < 0) slot = 0;
+        if (slot >= RELAY_SCHEDULE_SLOTS) slot = RELAY_SCHEDULE_SLOTS - 1;
+
         relay_state_t all[RELAY_COUNT];
         relay_controller_get_all(all);
-        relay_schedule_t sched = all[idx].schedule;
+        relay_schedule_t sched = all[idx].schedules[slot];
 
         sched.enabled = (sched_en == 1);
 
@@ -2046,7 +2214,7 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
             if (v >= 0 && v <= 1439) sched.off_min = (uint16_t)v;
         }
 
-        relay_controller_set_schedule(idx, &sched);
+        relay_controller_set_schedule(idx, slot, &sched);
     }
 
     /* Respond with full relay state */
@@ -2258,6 +2426,102 @@ static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+/* ── CO2 controller GET endpoint (/api/co2  GET) ─────────────────── */
+
+static esp_err_t api_co2_get_handler(httpd_req_t *req)
+{
+    co2_config_t cfg = co2_controller_get_config();
+
+    char buf[JSON_CO2_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"enabled\":%s,"
+        "\"relay_index\":%d,"
+        "\"pre_on_min\":%d,"
+        "\"post_off_min\":%d}",
+        cfg.enabled ? "true" : "false",
+        cfg.relay_index,
+        cfg.pre_on_min,
+        cfg.post_off_min);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── CO2 controller POST endpoint (/api/co2  POST) ───────────────── */
+
+static esp_err_t api_co2_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_CO2_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    co2_config_t cfg = co2_controller_get_config();
+
+    int bval = json_get_bool(buf, "\"enabled\"");
+    if (bval >= 0) cfg.enabled = (bval == 1);
+
+    double dval;
+    if (json_get_double(buf, "\"relay_index\"", &dval) == 0)
+        cfg.relay_index = (int)dval;
+    if (json_get_double(buf, "\"pre_on_min\"", &dval) == 0)
+        cfg.pre_on_min = (int)dval;
+    if (json_get_double(buf, "\"post_off_min\"", &dval) == 0)
+        cfg.post_off_min = (int)dval;
+
+    co2_controller_set_config(&cfg);
+
+    return api_co2_get_handler(req);
+}
+
+/* ── Timezone GET endpoint (/api/timezone  GET) ──────────────────── */
+
+static esp_err_t api_timezone_get_handler(httpd_req_t *req)
+{
+    char tz[TZ_STRING_MAX];
+    timezone_manager_get(tz, sizeof(tz));
+
+    char escaped[TZ_STRING_MAX * 2];
+    json_escape(tz, escaped, sizeof(escaped));
+
+    char buf[JSON_TZ_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf), "{\"tz\":\"%s\"}", escaped);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Timezone POST endpoint (/api/timezone  POST) ────────────────── */
+
+static esp_err_t api_timezone_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_TZ_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    char tz_str[TZ_STRING_MAX];
+    if (json_get_str(buf, "\"tz\"", tz_str, sizeof(tz_str)) != 0 ||
+        tz_str[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'tz' field");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = timezone_manager_set(tz_str);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid TZ string");
+        return ESP_FAIL;
+    }
+
+    return api_timezone_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -2449,7 +2713,43 @@ static const httpd_uri_t uri_api_led_scenes_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_co2_get = {
+    .uri      = "/api/co2",
+    .method   = HTTP_GET,
+    .handler  = api_co2_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_co2_post = {
+    .uri      = "/api/co2",
+    .method   = HTTP_POST,
+    .handler  = api_co2_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tz_get = {
+    .uri      = "/api/timezone",
+    .method   = HTTP_GET,
+    .handler  = api_timezone_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_tz_post = {
+    .uri      = "/api/timezone",
+    .method   = HTTP_POST,
+    .handler  = api_timezone_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
+
+/* Embedded TLS certificate and key (built from server.crt / server.key) */
+#ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
+extern const uint8_t server_cert_pem_start[] asm("_binary_server_crt_start");
+extern const uint8_t server_cert_pem_end[]   asm("_binary_server_crt_end");
+extern const uint8_t server_key_pem_start[]  asm("_binary_server_key_start");
+extern const uint8_t server_key_pem_end[]    asm("_binary_server_key_end");
+#endif
 
 esp_err_t web_server_start(void)
 {
@@ -2458,6 +2758,26 @@ esp_err_t web_server_start(void)
         return ESP_OK;
     }
 
+#ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
+    /* ── HTTPS mode ─────────────────────────────────────────────── */
+    httpd_ssl_config_t ssl_config = HTTPD_SSL_CONFIG_DEFAULT();
+    ssl_config.httpd.stack_size       = HTTP_STACK_SIZE;
+    ssl_config.httpd.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
+    ssl_config.httpd.lru_purge_enable = true;
+
+    ssl_config.servercert     = server_cert_pem_start;
+    ssl_config.servercert_len = (size_t)(server_cert_pem_end - server_cert_pem_start);
+    ssl_config.prvtkey_pem    = server_key_pem_start;
+    ssl_config.prvtkey_len    = (size_t)(server_key_pem_end - server_key_pem_start);
+
+    ESP_LOGI(TAG, "Starting HTTPS server on port 443");
+    esp_err_t ret = httpd_ssl_start(&s_server, &ssl_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTPS server: %s", esp_err_to_name(ret));
+        return ret;
+    }
+#else
+    /* ── HTTP mode ──────────────────────────────────────────────── */
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size       = HTTP_STACK_SIZE;
     config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
@@ -2469,6 +2789,7 @@ esp_err_t web_server_start(void)
         ESP_LOGE(TAG, "Failed to start HTTP server: %s", esp_err_to_name(ret));
         return ret;
     }
+#endif
 
     httpd_register_uri_handler(s_server, &uri_root);
     httpd_register_uri_handler(s_server, &uri_api_status);
@@ -2497,16 +2818,29 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_heater_post);
     httpd_register_uri_handler(s_server, &uri_api_led_scenes_get);
     httpd_register_uri_handler(s_server, &uri_api_led_scenes_post);
+    httpd_register_uri_handler(s_server, &uri_api_co2_get);
+    httpd_register_uri_handler(s_server, &uri_api_co2_post);
+    httpd_register_uri_handler(s_server, &uri_api_tz_get);
+    httpd_register_uri_handler(s_server, &uri_api_tz_post);
 
+#ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
+    ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");
+    ESP_LOGI(TAG, "Note: self-signed cert will trigger a browser security warning");
+#else
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
+#endif
     return ESP_OK;
 }
 
 void web_server_stop(void)
 {
     if (s_server) {
+#ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
+        httpd_ssl_stop(s_server);
+#else
         httpd_stop(s_server);
+#endif
         s_server = NULL;
-        ESP_LOGI(TAG, "HTTP server stopped");
+        ESP_LOGI(TAG, "HTTP(S) server stopped");
     }
 }
