@@ -7,10 +7,11 @@
  * shown on the 5″ MIPI DSI touch display (800×480).
  *
  * Layout mirrors the Web UI with four swipe-able tabs:
- *   Tab 0 – Riepilogo   : Temperature, LED status, WiFi, Relay overview
- *   Tab 1 – LED Strip    : Schedule, brightness, colour, on/off
- *   Tab 2 – Telegram     : Enabled, alarms, reminders status
- *   Tab 3 – Manutenzione : WiFi/IP, heap, uptime, heater, DuckDNS
+ *   Tab 0 - Riepilogo   : Temperature, LED status, WiFi (SSID/RSSI), Relay overview
+ *   Tab 1 - LED Strip   : Schedule (+pause), brightness%, colour, on/off, presets
+ *   Tab 2 - Telegram    : Enabled, alarms, WC/fert reminders+dates, summary, relay notify
+ *   Tab 3 - Manutenzione: WiFi/IP/SSID/RSSI, heap, uptime, heater, DuckDNS,
+ *                          OTA status, CO2 controller, timezone, relay schedules
  */
 
 #include <stdio.h>
@@ -23,6 +24,8 @@
 #include "esp_system.h"
 #include "lvgl.h"
 
+#include "esp_wifi.h"
+
 #include "display_driver.h"
 #include "display_ui.h"
 #include "temperature_sensor.h"
@@ -33,6 +36,9 @@
 #include "auto_heater.h"
 #include "telegram_notify.h"
 #include "duckdns.h"
+#include "co2_controller.h"
+#include "ota_update.h"
+#include "timezone_manager.h"
 
 #ifndef CONFIG_LED_RAMP_DURATION_SEC
 #define CONFIG_LED_RAMP_DURATION_SEC 30
@@ -63,6 +69,8 @@ static lv_obj_t *s_lbl_scene_sum   = NULL;  /* LED status summary */
 static lv_obj_t *s_lbl_led_bright  = NULL;
 static lv_obj_t *s_obj_led_swatch  = NULL;
 static lv_obj_t *s_lbl_wifi_sum    = NULL;
+static lv_obj_t *s_lbl_wifi_ssid   = NULL;
+static lv_obj_t *s_lbl_wifi_rssi   = NULL;
 static lv_obj_t *s_lbl_relay[RELAY_COUNT] = {NULL};
 static lv_obj_t *s_obj_relay_badge[RELAY_COUNT] = {NULL};
 
@@ -73,21 +81,35 @@ static lv_obj_t *s_lbl_led_bri2    = NULL;
 static lv_obj_t *s_lbl_led_rgb     = NULL;
 static lv_obj_t *s_obj_led_preview = NULL;
 static lv_obj_t *s_lbl_led_config  = NULL;
+static lv_obj_t *s_lbl_led_pause   = NULL;
+static lv_obj_t *s_lbl_presets     = NULL;
 
 /* Tab 2 – Telegram */
 static lv_obj_t *s_lbl_tg_enabled  = NULL;
 static lv_obj_t *s_lbl_tg_alarms   = NULL;
 static lv_obj_t *s_lbl_tg_wc       = NULL;
+static lv_obj_t *s_lbl_tg_wcdays   = NULL;
+static lv_obj_t *s_lbl_tg_wclast   = NULL;
 static lv_obj_t *s_lbl_tg_fert     = NULL;
+static lv_obj_t *s_lbl_tg_fertdays = NULL;
+static lv_obj_t *s_lbl_tg_fertlast = NULL;
 static lv_obj_t *s_lbl_tg_summary  = NULL;
+static lv_obj_t *s_lbl_tg_sumhr    = NULL;
+static lv_obj_t *s_lbl_tg_relnot   = NULL;
 
 /* Tab 3 – Manutenzione */
 static lv_obj_t *s_lbl_sys_wifi    = NULL;
 static lv_obj_t *s_lbl_sys_ip      = NULL;
+static lv_obj_t *s_lbl_sys_ssid    = NULL;
+static lv_obj_t *s_lbl_sys_rssi    = NULL;
 static lv_obj_t *s_lbl_sys_heap    = NULL;
 static lv_obj_t *s_lbl_sys_uptime  = NULL;
 static lv_obj_t *s_lbl_heater      = NULL;
 static lv_obj_t *s_lbl_ddns        = NULL;
+static lv_obj_t *s_lbl_ota         = NULL;
+static lv_obj_t *s_lbl_co2         = NULL;
+static lv_obj_t *s_lbl_tz          = NULL;
+static lv_obj_t *s_lbl_relay_sched = NULL;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -218,6 +240,10 @@ static void build_tab_riepilogo(lv_obj_t *parent)
         make_card_header(card, LV_SYMBOL_WIFI "  WIFI");
         s_lbl_wifi_sum = make_label(card, "Disconnected",
                                     &lv_font_montserrat_16, CLR_RED);
+        s_lbl_wifi_ssid = make_row(card, "SSID",
+                                   &lv_font_montserrat_14, CLR_TEXT, "--");
+        s_lbl_wifi_rssi = make_row(card, "RSSI",
+                                   &lv_font_montserrat_14, CLR_TEXT, "--");
     }
 
     /* ── Right column ────────────────────────────────────────── */
@@ -364,10 +390,23 @@ static void build_tab_led(lv_obj_t *parent)
     /* Schedule info card */
     lv_obj_t *card2 = make_card(parent);
     make_card_header(card2, LV_SYMBOL_SETTINGS "  Programmazione LED");
-    s_lbl_led_config = make_label(card2, "Orario: --:-- – --:--\n"
-                                         "Luminosità: --\n"
+    s_lbl_led_config = make_label(card2, "Orario: --:-- - --:--\n"
+                                         "Luminosita: --%\n"
                                          "Colore: --, --, --",
                                   &lv_font_montserrat_14, CLR_TEXT_DIM);
+
+    /* Midday-pause sub-section */
+    make_label(card2, LV_SYMBOL_REFRESH "  Pausa:",
+               &lv_font_montserrat_14, CLR_ACCENT);
+    s_lbl_led_pause = make_label(card2, "Disabilitata",
+                                 &lv_font_montserrat_14, CLR_TEXT_DIM);
+
+    /* Preset list card */
+    lv_obj_t *card3 = make_card(parent);
+    make_card_header(card3, LV_SYMBOL_SAVE "  Preset Salvati");
+    s_lbl_presets = make_label(card3,
+                               "1: --\n2: --\n3: --\n4: --\n5: --",
+                               &lv_font_montserrat_14, CLR_TEXT_DIM);
 }
 
 /** Tab 2 – Telegram. */
@@ -380,12 +419,30 @@ static void build_tab_telegram(lv_obj_t *parent)
                                 &lv_font_montserrat_16, CLR_TEXT, "--");
     s_lbl_tg_alarms  = make_row(card, "Allarmi Temp.",
                                 &lv_font_montserrat_14, CLR_TEXT, "--");
+
+    /* Water-change section */
     s_lbl_tg_wc      = make_row(card, "Cambio Acqua",
                                 &lv_font_montserrat_14, CLR_TEXT, "--");
-    s_lbl_tg_fert    = make_row(card, "Fertilizzante",
-                                &lv_font_montserrat_14, CLR_TEXT, "--");
-    s_lbl_tg_summary = make_row(card, "Riepilogo Giorn.",
-                                &lv_font_montserrat_14, CLR_TEXT, "--");
+    s_lbl_tg_wcdays  = make_row(card, "  Intervallo (gg)",
+                                &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
+    s_lbl_tg_wclast  = make_row(card, "  Ultimo cambio",
+                                &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
+
+    /* Fertiliser section */
+    s_lbl_tg_fert     = make_row(card, "Fertilizzante",
+                                 &lv_font_montserrat_14, CLR_TEXT, "--");
+    s_lbl_tg_fertdays = make_row(card, "  Intervallo (gg)",
+                                 &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
+    s_lbl_tg_fertlast = make_row(card, "  Ultima dose",
+                                 &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
+
+    /* Daily summary section */
+    s_lbl_tg_summary  = make_row(card, "Riepilogo Giorn.",
+                                 &lv_font_montserrat_14, CLR_TEXT, "--");
+    s_lbl_tg_sumhr    = make_row(card, "  Ora invio",
+                                 &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
+    s_lbl_tg_relnot   = make_row(card, "Notifiche Rel\xc3\xa8",
+                                 &lv_font_montserrat_14, CLR_TEXT, "--");
 }
 
 /** Tab 3 – Manutenzione. */
@@ -398,6 +455,10 @@ static void build_tab_manutenzione(lv_obj_t *parent)
         s_lbl_sys_wifi   = make_row(card, "Connessione",
                                     &lv_font_montserrat_14, CLR_TEXT, "--");
         s_lbl_sys_ip     = make_row(card, "IP",
+                                    &lv_font_montserrat_14, CLR_TEXT, "--");
+        s_lbl_sys_ssid   = make_row(card, "SSID",
+                                    &lv_font_montserrat_14, CLR_TEXT, "--");
+        s_lbl_sys_rssi   = make_row(card, "RSSI",
                                     &lv_font_montserrat_14, CLR_TEXT, "--");
         s_lbl_sys_heap   = make_row(card, "Heap Libero",
                                     &lv_font_montserrat_14, CLR_TEXT, "--");
@@ -419,6 +480,40 @@ static void build_tab_manutenzione(lv_obj_t *parent)
         make_card_header(card, LV_SYMBOL_LOOP "  DuckDNS");
         s_lbl_ddns = make_label(card, "-- ",
                                 &lv_font_montserrat_14, CLR_TEXT_DIM);
+    }
+
+    /* OTA status card (read-only) */
+    {
+        lv_obj_t *card = make_card(parent);
+        make_card_header(card, LV_SYMBOL_REFRESH "  Aggiornamento OTA");
+        s_lbl_ota = make_label(card, "idle",
+                               &lv_font_montserrat_14, CLR_TEXT_DIM);
+    }
+
+    /* CO2 controller card */
+    {
+        lv_obj_t *card = make_card(parent);
+        make_card_header(card, LV_SYMBOL_PLAY "  CO2 Controller");
+        s_lbl_co2 = make_label(card, "--",
+                               &lv_font_montserrat_14, CLR_TEXT_DIM);
+    }
+
+    /* Timezone card */
+    {
+        lv_obj_t *card = make_card(parent);
+        make_card_header(card, LV_SYMBOL_GPS "  Fuso Orario");
+        s_lbl_tz = make_label(card, "--",
+                              &lv_font_montserrat_14, CLR_TEXT_DIM);
+    }
+
+    /* Relay schedule summary card */
+    {
+        lv_obj_t *card = make_card(parent);
+        make_card_header(card, LV_SYMBOL_POWER "  Programmazione Rel\xc3\xa8");
+        s_lbl_relay_sched = make_label(card,
+                                       "Rel\xc3\xa8 1: --\nRel\xc3\xa8 2: --\n"
+                                       "Rel\xc3\xa8 3: --\nRel\xc3\xa8 4: --",
+                                       &lv_font_montserrat_14, CLR_TEXT_DIM);
     }
 }
 
@@ -635,7 +730,8 @@ void display_ui_refresh(void)
 
     /* WiFi summary */
     {
-        if (wifi_manager_is_connected()) {
+        bool connected = wifi_manager_is_connected();
+        if (connected) {
             char ip[16];
             wifi_manager_get_ip_str(ip, sizeof(ip));
             char buf[40];
@@ -646,6 +742,22 @@ void display_ui_refresh(void)
             lv_label_set_text(s_lbl_wifi_sum, LV_SYMBOL_CLOSE " Disconnesso");
             lv_obj_set_style_text_color(s_lbl_wifi_sum, CLR_RED, 0);
         }
+
+        /* SSID and RSSI via ESP-IDF WiFi API */
+        wifi_ap_record_t ap_info = {0};
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            lv_label_set_text(s_lbl_wifi_ssid, (const char *)ap_info.ssid);
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d dBm", ap_info.rssi);
+            lv_label_set_text(s_lbl_wifi_rssi, buf);
+            lv_obj_set_style_text_color(s_lbl_wifi_rssi,
+                ap_info.rssi > -60 ? CLR_GREEN :
+                ap_info.rssi > -75 ? CLR_YELLOW : CLR_RED, 0);
+        } else {
+            lv_label_set_text(s_lbl_wifi_ssid, "--");
+            lv_label_set_text(s_lbl_wifi_rssi, "--");
+            lv_obj_set_style_text_color(s_lbl_wifi_rssi, CLR_TEXT_DIM, 0);
+        }
     }
 
     /* Relays */
@@ -653,9 +765,12 @@ void display_ui_refresh(void)
         relay_state_t rels[RELAY_COUNT];
         relay_controller_get_all(rels);
         for (int i = 0; i < RELAY_COUNT; i++) {
-            const char *name = rels[i].name[0] ? rels[i].name : "Relay";
             char buf[48];
-            snprintf(buf, sizeof(buf), "%s %d", name, i + 1);
+            if (rels[i].name[0]) {
+                snprintf(buf, sizeof(buf), "%s", rels[i].name);
+            } else {
+                snprintf(buf, sizeof(buf), "Relay %d", i + 1);
+            }
             lv_label_set_text(s_lbl_relay[i], buf);
 
             lv_label_set_text(s_obj_relay_badge[i],
@@ -675,7 +790,7 @@ void display_ui_refresh(void)
         led_schedule_config_t sched = led_schedule_get_config();
         if (sched.enabled) {
             char sbuf[32];
-            snprintf(sbuf, sizeof(sbuf), "%02d:%02d – %02d:%02d",
+            snprintf(sbuf, sizeof(sbuf), "%02d:%02d - %02d:%02d",
                      sched.on_hour, sched.on_minute,
                      sched.off_hour, sched.off_minute);
             lv_label_set_text(s_lbl_led_sched, sbuf);
@@ -685,7 +800,7 @@ void display_ui_refresh(void)
 
         uint8_t br = led_controller_get_brightness();
         char buf[16];
-        snprintf(buf, sizeof(buf), "%d", br);
+        snprintf(buf, sizeof(buf), "%d%%", brightness_pct(br));
         lv_label_set_text(s_lbl_led_bri2, buf);
 
         uint8_t r, g, b;
@@ -702,18 +817,54 @@ void display_ui_refresh(void)
         }
 
         /* Schedule config info */
-        char cfg_buf[128];
+        char cfg_buf[160];
         snprintf(cfg_buf, sizeof(cfg_buf),
                  "Programmazione: %s\n"
-                 "Orario: %02d:%02d – %02d:%02d\n"
-                 "Luminosità: %d\n"
-                 "Colore: %d, %d, %d",
+                 "Accensione: %02d:%02d - Spegnimento: %02d:%02d\n"
+                 "Luminosita: %d%% Colore: %d,%d,%d\n"
+                 "Rampa: %d min",
                  sched.enabled ? "Attiva" : "Disattivata",
                  sched.on_hour, sched.on_minute,
                  sched.off_hour, sched.off_minute,
-                 sched.brightness,
-                 sched.red, sched.green, sched.blue);
+                 brightness_pct(sched.brightness),
+                 sched.red, sched.green, sched.blue,
+                 sched.ramp_duration_min);
         lv_label_set_text(s_lbl_led_config, cfg_buf);
+
+        /* Pause info */
+        if (sched.pause_enabled) {
+            char pbuf[96];
+            snprintf(pbuf, sizeof(pbuf),
+                     "%02d:%02d - %02d:%02d, bri %d%%\n"
+                     "Col: %d,%d,%d",
+                     sched.pause_start_hour, sched.pause_start_minute,
+                     sched.pause_end_hour, sched.pause_end_minute,
+                     brightness_pct(sched.pause_brightness),
+                     sched.pause_red, sched.pause_green, sched.pause_blue);
+            lv_label_set_text(s_lbl_led_pause, pbuf);
+            lv_obj_set_style_text_color(s_lbl_led_pause, CLR_TEXT, 0);
+        } else {
+            lv_label_set_text(s_lbl_led_pause, "Disabilitata");
+            lv_obj_set_style_text_color(s_lbl_led_pause, CLR_TEXT_DIM, 0);
+        }
+
+        /* Preset list (read-only) */
+        {
+            char pbuf[128];
+            int pos = 0;
+            for (int pi = 0; pi < LED_PRESET_COUNT && pos < (int)sizeof(pbuf) - 1; pi++) {
+                led_preset_t pr;
+                if (led_preset_get(pi, &pr) && pr.name[0]) {
+                    pos += snprintf(pbuf + pos, sizeof(pbuf) - pos,
+                                   "%d: %s\n", pi + 1, pr.name);
+                } else {
+                    pos += snprintf(pbuf + pos, sizeof(pbuf) - pos,
+                                   "%d: --\n", pi + 1);
+                }
+            }
+            if (pos > 0) pbuf[pos - 1] = '\0'; /* trim trailing newline */
+            lv_label_set_text(s_lbl_presets, pbuf);
+        }
     }
 
     /* ── Tab 2 – Telegram ─────────────────────────────────────────── */
@@ -736,20 +887,66 @@ void display_ui_refresh(void)
             lv_obj_set_style_text_color(s_lbl_tg_alarms, CLR_TEXT_DIM, 0);
         }
 
+        /* Water-change */
         lv_label_set_text(s_lbl_tg_wc,
             tg.water_change_enabled ? "Attivo" : "Disabilitato");
         lv_obj_set_style_text_color(s_lbl_tg_wc,
             tg.water_change_enabled ? CLR_GREEN : CLR_TEXT_DIM, 0);
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d gg", tg.water_change_days);
+            lv_label_set_text(s_lbl_tg_wcdays, buf);
+            int64_t ts = telegram_notify_get_last_water_change();
+            if (ts > 0) {
+                time_t t = (time_t)ts;
+                struct tm ti; localtime_r(&t, &ti);
+                char dbuf[16];
+                snprintf(dbuf, sizeof(dbuf), "%02d/%02d/%04d",
+                         ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900);
+                lv_label_set_text(s_lbl_tg_wclast, dbuf);
+            } else {
+                lv_label_set_text(s_lbl_tg_wclast, "mai");
+            }
+        }
 
+        /* Fertilizer */
         lv_label_set_text(s_lbl_tg_fert,
             tg.fertilizer_enabled ? "Attivo" : "Disabilitato");
         lv_obj_set_style_text_color(s_lbl_tg_fert,
             tg.fertilizer_enabled ? CLR_GREEN : CLR_TEXT_DIM, 0);
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d gg", tg.fertilizer_days);
+            lv_label_set_text(s_lbl_tg_fertdays, buf);
+            int64_t ts = telegram_notify_get_last_fertilizer();
+            if (ts > 0) {
+                time_t t = (time_t)ts;
+                struct tm ti; localtime_r(&t, &ti);
+                char dbuf[16];
+                snprintf(dbuf, sizeof(dbuf), "%02d/%02d/%04d",
+                         ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900);
+                lv_label_set_text(s_lbl_tg_fertlast, dbuf);
+            } else {
+                lv_label_set_text(s_lbl_tg_fertlast, "mai");
+            }
+        }
 
+        /* Daily summary */
         lv_label_set_text(s_lbl_tg_summary,
             tg.daily_summary_enabled ? "Attivo" : "Disabilitato");
         lv_obj_set_style_text_color(s_lbl_tg_summary,
             tg.daily_summary_enabled ? CLR_GREEN : CLR_TEXT_DIM, 0);
+        {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%02d:00", tg.daily_summary_hour);
+            lv_label_set_text(s_lbl_tg_sumhr, buf);
+        }
+
+        /* Relay notifications */
+        lv_label_set_text(s_lbl_tg_relnot,
+            tg.relay_notify_enabled ? "Attive" : "Disabilitate");
+        lv_obj_set_style_text_color(s_lbl_tg_relnot,
+            tg.relay_notify_enabled ? CLR_GREEN : CLR_TEXT_DIM, 0);
     }
 
     /* ── Tab 3 – Manutenzione ─────────────────────────────────────── */
@@ -815,6 +1012,96 @@ void display_ui_refresh(void)
                 lv_obj_set_style_text_color(s_lbl_ddns, CLR_TEXT_DIM, 0);
             }
             lv_label_set_text(s_lbl_ddns, buf);
+        }
+
+        /* SSID + RSSI */
+        {
+            wifi_ap_record_t ap_info = {0};
+            if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                lv_label_set_text(s_lbl_sys_ssid, (const char *)ap_info.ssid);
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%d dBm", ap_info.rssi);
+                lv_label_set_text(s_lbl_sys_rssi, buf);
+                lv_obj_set_style_text_color(s_lbl_sys_rssi,
+                    ap_info.rssi > -60 ? CLR_GREEN :
+                    ap_info.rssi > -75 ? CLR_YELLOW : CLR_RED, 0);
+            } else {
+                lv_label_set_text(s_lbl_sys_ssid, "--");
+                lv_label_set_text(s_lbl_sys_rssi, "--");
+            }
+        }
+
+        /* OTA status */
+        {
+            ota_progress_t ota = ota_update_get_progress();
+            static const char * const ota_names[] = {
+                "idle", "download", "flash", "done", "errore"
+            };
+            char buf[48];
+            int si = (int)ota.status;
+            if (si < 0 || si >= (int)(sizeof(ota_names) / sizeof(ota_names[0]))) si = 0;
+            if (ota.status == OTA_STATUS_IDLE) {
+                snprintf(buf, sizeof(buf), "idle");
+            } else if (ota.status == OTA_STATUS_DONE) {
+                snprintf(buf, sizeof(buf), "completato - riavvio...");
+            } else if (ota.status == OTA_STATUS_ERROR) {
+                snprintf(buf, sizeof(buf), "errore: %.40s", ota.error_msg);
+            } else {
+                snprintf(buf, sizeof(buf), "%s %d%%",
+                         ota_names[si], ota.progress_pct);
+            }
+            lv_label_set_text(s_lbl_ota, buf);
+            lv_obj_set_style_text_color(s_lbl_ota,
+                ota.status == OTA_STATUS_ERROR ? CLR_RED :
+                ota.status == OTA_STATUS_DONE  ? CLR_GREEN : CLR_TEXT_DIM, 0);
+        }
+
+        /* CO2 controller */
+        {
+            co2_config_t co2 = co2_controller_get_config();
+            char buf[80];
+            if (co2.enabled) {
+                snprintf(buf, sizeof(buf),
+                         "Attivo - Rele %d, pre %d min, post %d min",
+                         co2.relay_index + 1,
+                         co2.pre_on_min, co2.post_off_min);
+                lv_obj_set_style_text_color(s_lbl_co2, CLR_GREEN, 0);
+            } else {
+                snprintf(buf, sizeof(buf), "Disabilitato");
+                lv_obj_set_style_text_color(s_lbl_co2, CLR_TEXT_DIM, 0);
+            }
+            lv_label_set_text(s_lbl_co2, buf);
+        }
+
+        /* Timezone */
+        {
+            char tz[TZ_STRING_MAX];
+            timezone_manager_get(tz, sizeof(tz));
+            lv_label_set_text(s_lbl_tz, tz[0] ? tz : "--");
+        }
+
+        /* Relay schedule summary */
+        {
+            relay_state_t rels[RELAY_COUNT];
+            relay_controller_get_all(rels);
+            char sbuf[160];
+            int pos = 0;
+            for (int i = 0; i < RELAY_COUNT && pos < (int)sizeof(sbuf) - 1; i++) {
+                const char *rname = rels[i].name[0] ? rels[i].name : "Rel\xc3\xa8";
+                int active = 0;
+                for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
+                    if (rels[i].schedules[s].enabled) active++;
+                }
+                if (active > 0) {
+                    pos += snprintf(sbuf + pos, sizeof(sbuf) - pos,
+                                   "%s: %d slot\n", rname, active);
+                } else {
+                    pos += snprintf(sbuf + pos, sizeof(sbuf) - pos,
+                                   "%s: nessuno\n", rname);
+                }
+            }
+            if (pos > 0) sbuf[pos - 1] = '\0';
+            lv_label_set_text(s_lbl_relay_sched, sbuf);
         }
     }
 
