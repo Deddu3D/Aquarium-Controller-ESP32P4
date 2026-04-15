@@ -441,7 +441,7 @@ static void build_tab_telegram(lv_obj_t *parent)
                                  &lv_font_montserrat_14, CLR_TEXT, "--");
     s_lbl_tg_sumhr    = make_row(card, "  Ora invio",
                                  &lv_font_montserrat_14, CLR_TEXT_DIM, "--");
-    s_lbl_tg_relnot   = make_row(card, "Notifiche Rele",
+    s_lbl_tg_relnot   = make_row(card, "Notifiche Rel\xc3\xa8",
                                  &lv_font_montserrat_14, CLR_TEXT, "--");
 }
 
@@ -493,7 +493,7 @@ static void build_tab_manutenzione(lv_obj_t *parent)
     /* CO2 controller card */
     {
         lv_obj_t *card = make_card(parent);
-        make_card_header(card, LV_SYMBOL_PLAY "  CO" LV_SYMBOL_MINUS "2 Controller");
+        make_card_header(card, LV_SYMBOL_PLAY "  CO2 Controller");
         s_lbl_co2 = make_label(card, "--",
                                &lv_font_montserrat_14, CLR_TEXT_DIM);
     }
@@ -509,10 +509,10 @@ static void build_tab_manutenzione(lv_obj_t *parent)
     /* Relay schedule summary card */
     {
         lv_obj_t *card = make_card(parent);
-        make_card_header(card, LV_SYMBOL_POWER "  Programmazione Rele");
+        make_card_header(card, LV_SYMBOL_POWER "  Programmazione Rel\xc3\xa8");
         s_lbl_relay_sched = make_label(card,
-                                       "Rele 1: --\nRele 2: --\n"
-                                       "Rele 3: --\nRele 4: --",
+                                       "Rel\xc3\xa8 1: --\nRel\xc3\xa8 2: --\n"
+                                       "Rel\xc3\xa8 3: --\nRel\xc3\xa8 4: --",
                                        &lv_font_montserrat_14, CLR_TEXT_DIM);
     }
 }
@@ -1039,7 +1039,7 @@ void display_ui_refresh(void)
             };
             char buf[48];
             int si = (int)ota.status;
-            if (si < 0 || si > 4) si = 0;
+            if (si < 0 || si >= (int)(sizeof(ota_names) / sizeof(ota_names[0]))) si = 0;
             if (ota.status == OTA_STATUS_IDLE) {
                 snprintf(buf, sizeof(buf), "idle");
             } else if (ota.status == OTA_STATUS_DONE) {
@@ -1087,7 +1087,7 @@ void display_ui_refresh(void)
             char sbuf[160];
             int pos = 0;
             for (int i = 0; i < RELAY_COUNT && pos < (int)sizeof(sbuf) - 1; i++) {
-                const char *rname = rels[i].name[0] ? rels[i].name : "Rele";
+                const char *rname = rels[i].name[0] ? rels[i].name : "Rel\xc3\xa8";
                 int active = 0;
                 for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
                     if (rels[i].schedules[s].enabled) active++;
