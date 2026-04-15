@@ -26,8 +26,6 @@
 #include "web_server.h"
 #include "led_controller.h"
 #include "led_schedule.h"
-#include "led_scenes.h"
-#include "sun_position.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -118,10 +116,8 @@ static void get_wifi_status(wifi_status_t *out)
 /* JSON response buffer sizes */
 #define JSON_STATUS_BUF_SIZE   384
 #define JSON_LEDS_BUF_SIZE     256
-#define JSON_SCHED_BUF_SIZE    384
-#define JSON_SCENES_BUF_SIZE   512
+#define JSON_SCHED_BUF_SIZE    768
 #define JSON_TEMP_BUF_SIZE     128
-#define JSON_GEO_BUF_SIZE      384
 #define JSON_TG_BUF_SIZE       768
 #define JSON_DDNS_BUF_SIZE     384
 #define JSON_RELAY_CHUNK_SIZE  512   /* larger to accommodate multi-slot schedules */
@@ -130,14 +126,14 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_TZ_BUF_SIZE       128
 
 /* HTTP request body receive sizes */
-#define POST_BODY_LED_SIZE     256
-#define POST_BODY_SCHED_SIZE   256
-#define POST_BODY_SCENES_SIZE  256
-#define POST_BODY_TG_SIZE      512
-#define POST_BODY_RELAY_SIZE   512
-#define POST_BODY_DDNS_SIZE    256
-#define POST_BODY_CO2_SIZE     256
-#define POST_BODY_TZ_SIZE      128
+#define POST_BODY_LED_SIZE      256
+#define POST_BODY_SCHED_SIZE    768
+#define POST_BODY_PRESETS_SIZE  768
+#define POST_BODY_TG_SIZE       512
+#define POST_BODY_RELAY_SIZE    512
+#define POST_BODY_DDNS_SIZE     256
+#define POST_BODY_CO2_SIZE      256
+#define POST_BODY_TZ_SIZE       128
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
@@ -330,10 +326,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"sect-title\">Storico 24 h</div>"
     "<canvas id=\"temp-chart\" width=\"440\" height=\"180\""
     " style=\"height:180px\"></canvas>"
-    "<div class=\"sun-bar-wrap\" id=\"sun-section\" style=\"display:none\">"
-    "<div class=\"sun-label\" id=\"sun-label\">SUNLIGHT: --</div>"
-    "<div class=\"sun-bar\"><div class=\"sun-dot\" id=\"sun-dot\" style=\"left:0%%\"></div></div>"
-    "</div>"
     "<div class=\"rule-box inactive\" id=\"heater-rule\">"
     "&#x2699; Nessuna regola attiva</div>"
     "<a class=\"csv-link\" href=\"/api/temperature/export.csv\">"
@@ -361,12 +353,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"card\">"
     "<div class=\"card-hdr\"><span class=\"icon\">&#x26A1;</span> REL&#xC8;</div>"
     "<div class=\"relay-grid\" id=\"relay-dash\"></div>"
-    "</div>"
-    "<div class=\"card\">"
-    "<div class=\"card-hdr\"><span class=\"icon\">&#x2733;</span> FASE SOLARE</div>"
-    "<canvas id=\"solar-chart\" width=\"440\" height=\"140\""
-    " style=\"height:140px\"></canvas>"
-    "</div>"
     "</div>"
     "</div>"
     "</div>"
@@ -399,70 +385,48 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">Abilitata</span>"
     "<label class=\"toggle\"><input type=\"checkbox\" id=\"sched-en\">"
     "<span class=\"slider\"></span></label></div>"
-    "<div class=\"row\"><span class=\"label\">Accensione</span>"
+    "<div class=\"sect\">&#x2600;&#xFE0F; Accensione</div>"
+    "<div class=\"row\"><span class=\"label\">Orario accensione</span>"
     "<input type=\"time\" class=\"fin\" id=\"sched-on\""
-    " style=\"max-width:120px\" value=\"08:00\"></div>"
-    "<div class=\"row\"><span class=\"label\">Spegnimento</span>"
-    "<input type=\"time\" class=\"fin\" id=\"sched-off\""
-    " style=\"max-width:120px\" value=\"22:00\"></div>"
-    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0;</span>"
-    "<span class=\"value\" id=\"sched-br-val\">128</span></div>"
+    " style=\"max-width:130px\" value=\"08:00\"></div>"
+    "<div class=\"row\"><span class=\"label\">Rampa colore (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sched-ramp\" min=\"0\" max=\"120\""
+    " value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; giorno</span>"
+    "<span class=\"value\" id=\"sched-br-val\">255</span></div>"
     "<div class=\"row\"><input type=\"range\" id=\"sched-br\" min=\"0\""
-    " max=\"255\" value=\"128\" oninput=\"document.getElementById("
-    "'sched-br-val').textContent=this.value\"></div>"
-    "<div class=\"row\"><span class=\"label\">Colore</span>"
-    "<input type=\"color\" id=\"sched-color\" value=\"#ffffff\"></div>"
+    " max=\"255\" value=\"255\" oninput=\"$('sched-br-val').textContent=this.value\"></div>"
+    "<div class=\"row\"><span class=\"label\">Colore giorno</span>"
+    "<input type=\"color\" id=\"sched-color\" value=\"#c8dcff\"></div>"
+    "<div class=\"sect\">&#x1F31D; Pausa</div>"
+    "<div class=\"row\"><span class=\"label\">Pausa attiva</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sched-pause-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Inizio pausa</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sched-pause-start\""
+    " style=\"max-width:130px\" value=\"12:00\"></div>"
+    "<div class=\"row\"><span class=\"label\">Fine pausa</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sched-pause-end\""
+    " style=\"max-width:130px\" value=\"14:00\"></div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; pausa</span>"
+    "<span class=\"value\" id=\"sched-pbr-val\">80</span></div>"
+    "<div class=\"row\"><input type=\"range\" id=\"sched-pbr\" min=\"0\""
+    " max=\"255\" value=\"80\" oninput=\"$('sched-pbr-val').textContent=this.value\"></div>"
+    "<div class=\"row\"><span class=\"label\">Colore pausa</span>"
+    "<input type=\"color\" id=\"sched-pcolor\" value=\"#c8dcff\"></div>"
+    "<div class=\"sect\">&#x1F317; Spegnimento</div>"
+    "<div class=\"row\"><span class=\"label\">Orario spegnimento</span>"
+    "<input type=\"time\" class=\"fin\" id=\"sched-off\""
+    " style=\"max-width:130px\" value=\"22:00\"></div>"
     "<button class=\"btn\" onclick=\"saveSched()\">Salva Programmazione</button>"
     "</div></div></div>"
-    "<!-- LED Scenes -->"
-    "<div class=\"ccard\" id=\"scenes-card\">"
+    "<!-- Preset -->"
+    "<div class=\"ccard\" id=\"preset-card\">"
     "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
-    "<h2>&#x1F305; Scene LED</h2>"
+    "<h2>&#x1F4BE; Preset</h2>"
     "<span class=\"arr\">&#x25BC;</span></div>"
     "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
-    "<div class=\"row\"><span class=\"label\">Scena attiva</span>"
-    "<select class=\"fin\" id=\"scene-sel\" style=\"max-width:200px\">"
-    "<option value=\"off\">Nessuna (manuale)</option>"
-    "<option value=\"daylight\">Luce del giorno</option>"
-    "<option value=\"sunrise\">Alba</option>"
-    "<option value=\"sunset\">Tramonto</option>"
-    "<option value=\"moonlight\">Chiaro di luna</option>"
-    "<option value=\"cloudy\">Nuvoloso</option>"
-    "<option value=\"storm\">Tempesta</option>"
-    "<option value=\"full_day_cycle\">Ciclo giorno completo</option>"
-    "</select></div>"
-    "<div class=\"sect-title\">Configurazione scene</div>"
-    "<div class=\"row\"><span class=\"label\">Durata alba (min)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-sr\" min=\"1\" max=\"120\""
-    " value=\"30\" style=\"max-width:80px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Durata tramonto (min)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-ss\" min=\"1\" max=\"120\""
-    " value=\"30\" style=\"max-width:80px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Transizione ciclo (min)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-tr\" min=\"1\" max=\"120\""
-    " value=\"30\" style=\"max-width:80px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; max ciclo (%%)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-mb\" min=\"1\" max=\"100\""
-    " value=\"100\" style=\"max-width:80px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Temperatura colore (K)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-ct\" min=\"6500\" max=\"20000\""
-    " value=\"10000\" style=\"max-width:100px\"></div>"
-    "<div class=\"row\"><span class=\"label\">Luna reale</span>"
-    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-lm\">"
-    "<span class=\"slider\"></span></label></div>"
-    "<div class=\"row\"><span class=\"label\">Siesta anti-alghe</span>"
-    "<label class=\"toggle\"><input type=\"checkbox\" id=\"sc-sie\">"
-    "<span class=\"slider\"></span></label></div>"
-    "<div class=\"row\"><span class=\"label\">Inizio siesta (HH:MM)</span>"
-    "<input type=\"time\" class=\"fin\" id=\"sc-sist\""
-    " style=\"max-width:120px\" value=\"12:00\"></div>"
-    "<div class=\"row\"><span class=\"label\">Fine siesta (HH:MM)</span>"
-    "<input type=\"time\" class=\"fin\" id=\"sc-sien\""
-    " style=\"max-width:120px\" value=\"14:00\"></div>"
-    "<div class=\"row\"><span class=\"label\">Intensit&#xE0; siesta (%%)</span>"
-    "<input type=\"number\" class=\"fin\" id=\"sc-sip\" min=\"0\" max=\"100\""
-    " value=\"20\" style=\"max-width:80px\"></div>"
-    "<button class=\"btn\" onclick=\"saveScenes()\">Salva Scene</button>"
+    "<div id=\"preset-rows\"></div>"
     "</div></div></div>"
     "</div>"
     ""
@@ -696,7 +660,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  tabs[n].classList.add('active');"
     "  _tab=n;"
     "  if(n===0){loadDash()}"
-    "  if(n===1){loadLeds();loadSched();loadScenes()}"
+    "  if(n===1){loadLeds();loadSched();loadPresets()}"
     "  if(n===2){loadTg()}"
     "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone()}}"
     "/* ── Color helpers ── */"
@@ -737,29 +701,40 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    $('led-color').value=rgbToHex(d.r,d.g,d.b);"
     "    updatePreview()})}"
     "/* ── LED Schedule ── */"
+    "function pad(v){return v<10?'0'+v:''+v}"
     "function loadSched(){"
     "  fetch('/api/led_schedule').then(function(r){return r.json()})"
     "  .then(function(d){"
     "    $('sched-en').checked=d.enabled;"
-    "    var oh=d.on_hour<10?'0'+d.on_hour:''+d.on_hour;"
-    "    var om=d.on_minute<10?'0'+d.on_minute:''+d.on_minute;"
-    "    $('sched-on').value=oh+':'+om;"
-    "    var fh=d.off_hour<10?'0'+d.off_hour:''+d.off_hour;"
-    "    var fm=d.off_minute<10?'0'+d.off_minute:''+d.off_minute;"
-    "    $('sched-off').value=fh+':'+fm;"
+    "    $('sched-on').value=pad(d.on_hour)+':'+pad(d.on_minute);"
+    "    $('sched-ramp').value=d.ramp_duration_min;"
     "    $('sched-br').value=d.brightness;"
     "    $('sched-br-val').textContent=d.brightness;"
-    "    $('sched-color').value=rgbToHex(d.red,d.green,d.blue)})}"
+    "    $('sched-color').value=rgbToHex(d.red,d.green,d.blue);"
+    "    $('sched-pause-en').checked=d.pause_enabled;"
+    "    $('sched-pause-start').value=pad(d.pause_start_hour)+':'+pad(d.pause_start_minute);"
+    "    $('sched-pause-end').value=pad(d.pause_end_hour)+':'+pad(d.pause_end_minute);"
+    "    $('sched-pbr').value=d.pause_brightness;"
+    "    $('sched-pbr-val').textContent=d.pause_brightness;"
+    "    $('sched-pcolor').value=rgbToHex(d.pause_red,d.pause_green,d.pause_blue);"
+    "    $('sched-off').value=pad(d.off_hour)+':'+pad(d.off_minute)})}"
     "function saveSched(){"
     "  var onT=$('sched-on').value.split(':');"
     "  var offT=$('sched-off').value.split(':');"
+    "  var psT=$('sched-pause-start').value.split(':');"
+    "  var peT=$('sched-pause-end').value.split(':');"
     "  var c=hexToRgb($('sched-color').value);"
+    "  var pc=hexToRgb($('sched-pcolor').value);"
     "  var data={"
     "    enabled:$('sched-en').checked,"
-    "    on_hour:parseInt(onT[0]),"
-    "    on_minute:parseInt(onT[1]),"
-    "    off_hour:parseInt(offT[0]),"
-    "    off_minute:parseInt(offT[1]),"
+    "    on_hour:parseInt(onT[0]),on_minute:parseInt(onT[1]),"
+    "    ramp_duration_min:parseInt($('sched-ramp').value),"
+    "    pause_enabled:$('sched-pause-en').checked,"
+    "    pause_start_hour:parseInt(psT[0]),pause_start_minute:parseInt(psT[1]),"
+    "    pause_end_hour:parseInt(peT[0]),pause_end_minute:parseInt(peT[1]),"
+    "    pause_brightness:parseInt($('sched-pbr').value),"
+    "    pause_red:pc.r,pause_green:pc.g,pause_blue:pc.b,"
+    "    off_hour:parseInt(offT[0]),off_minute:parseInt(offT[1]),"
     "    brightness:parseInt($('sched-br').value),"
     "    red:c.r,green:c.g,blue:c.b};"
     "  fetch('/api/led_schedule',{method:'POST',"
@@ -768,46 +743,65 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).then(function(r){return r.json()}).then(function(){"
     "    toast('Programmazione salvata',1)}).catch(function(){"
     "    toast('Errore salvataggio',0)})}"
-    "/* ── LED Scenes ── */"
-    "function loadScenes(){"
-    "  fetch('/api/led_scenes').then(function(r){return r.json()})"
+    "/* ── LED Presets ── */"
+    "function loadPresets(){"
+    "  fetch('/api/led_presets').then(function(r){return r.json()})"
     "  .then(function(d){"
-    "    $('scene-sel').value=d.scene;"
-    "    $('sc-sr').value=d.sunrise_duration_min;"
-    "    $('sc-ss').value=d.sunset_duration_min;"
-    "    $('sc-tr').value=d.transition_duration_min;"
-    "    $('sc-mb').value=d.fullday_max_brightness_pct;"
-    "    $('sc-ct').value=d.color_temp_kelvin;"
-    "    $('sc-lm').checked=d.lunar_moonlight;"
-    "    $('sc-sie').checked=d.siesta_enabled;"
-    "    var sst=d.siesta_start_min;"
-    "    $('sc-sist').value=(sst/60<10?'0':'')+Math.floor(sst/60)+':'+"
-    "      (sst%%60<10?'0':'')+(sst%%60);"
-    "    var sen=d.siesta_end_min;"
-    "    $('sc-sien').value=(sen/60<10?'0':'')+Math.floor(sen/60)+':'+"
-    "      (sen%%60<10?'0':'')+(sen%%60);"
-    "    $('sc-sip').value=d.siesta_intensity_pct})}"
-    "function saveScenes(){"
-    "  var st=$('sc-sist').value.split(':');"
-    "  var en=$('sc-sien').value.split(':');"
+    "    var c=$('preset-rows');c.innerHTML='';"
+    "    d.presets.forEach(function(p){"
+    "      var row=document.createElement('div');"
+    "      row.style.cssText='display:flex;align-items:center;gap:.5rem;"
+    "padding:.5rem 0;border-bottom:1px solid #1a2540';"
+    "      var nm=document.createElement('input');"
+    "      nm.type='text';nm.className='fin fin-wide';"
+    "      nm.style.cssText='flex:1;max-width:none;text-align:left;font-size:.83rem';"
+    "      nm.value=p.name;nm.dataset.slot=p.slot;"
+    "      var loadBtn=document.createElement('button');"
+    "      loadBtn.className='btn btn-sm';"
+    "      loadBtn.style.cssText='width:auto;padding:.35rem .6rem;margin-top:0;font-size:.8rem';"
+    "      loadBtn.textContent='\\uD83D\\uDCC2 Carica';"
+    "      loadBtn.onclick=(function(sl){return function(){loadPreset(sl)}})(p.slot);"
+    "      var saveBtn=document.createElement('button');"
+    "      saveBtn.className='btn btn-sm';"
+    "      saveBtn.style.cssText='width:auto;padding:.35rem .6rem;margin-top:0;font-size:.8rem';"
+    "      saveBtn.textContent='\\uD83D\\uDCBE Salva';"
+    "      saveBtn.onclick=(function(sl,nmEl){return function(){savePreset(sl,nmEl.value)}})(p.slot,nm);"
+    "      row.appendChild(nm);row.appendChild(loadBtn);row.appendChild(saveBtn);"
+    "      c.appendChild(row)})})"
+    "  .catch(function(){})}"
+    "function loadPreset(slot){"
+    "  fetch('/api/led_presets',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({action:'load',slot:slot})"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    loadSched();toast('Preset caricato',1)"
+    "  }).catch(function(){toast('Errore caricamento preset',0)})}"
+    "function savePreset(slot,name){"
+    "  var onT=$('sched-on').value.split(':');"
+    "  var offT=$('sched-off').value.split(':');"
+    "  var psT=$('sched-pause-start').value.split(':');"
+    "  var peT=$('sched-pause-end').value.split(':');"
+    "  var c=hexToRgb($('sched-color').value);"
+    "  var pc=hexToRgb($('sched-pcolor').value);"
     "  var data={"
-    "    scene:$('scene-sel').value,"
-    "    sunrise_duration_min:parseInt($('sc-sr').value),"
-    "    sunset_duration_min:parseInt($('sc-ss').value),"
-    "    transition_duration_min:parseInt($('sc-tr').value),"
-    "    fullday_max_brightness_pct:parseInt($('sc-mb').value),"
-    "    color_temp_kelvin:parseInt($('sc-ct').value),"
-    "    lunar_moonlight:$('sc-lm').checked,"
-    "    siesta_enabled:$('sc-sie').checked,"
-    "    siesta_start_min:parseInt(st[0])*60+parseInt(st[1]),"
-    "    siesta_end_min:parseInt(en[0])*60+parseInt(en[1]),"
-    "    siesta_intensity_pct:parseInt($('sc-sip').value)};"
-    "  fetch('/api/led_scenes',{method:'POST',"
+    "    action:'save',slot:slot,name:name||('Preset '+(slot+1)),"
+    "    enabled:$('sched-en').checked,"
+    "    on_hour:parseInt(onT[0]),on_minute:parseInt(onT[1]),"
+    "    ramp_duration_min:parseInt($('sched-ramp').value),"
+    "    pause_enabled:$('sched-pause-en').checked,"
+    "    pause_start_hour:parseInt(psT[0]),pause_start_minute:parseInt(psT[1]),"
+    "    pause_end_hour:parseInt(peT[0]),pause_end_minute:parseInt(peT[1]),"
+    "    pause_brightness:parseInt($('sched-pbr').value),"
+    "    pause_red:pc.r,pause_green:pc.g,pause_blue:pc.b,"
+    "    off_hour:parseInt(offT[0]),off_minute:parseInt(offT[1]),"
+    "    brightness:parseInt($('sched-br').value),"
+    "    red:c.r,green:c.g,blue:c.b};"
+    "  fetch('/api/led_presets',{method:'POST',"
     "    headers:{'Content-Type':'application/json'},"
     "    body:JSON.stringify(data)"
     "  }).then(function(r){return r.json()}).then(function(){"
-    "    toast('Scene salvate',1)}).catch(function(){"
-    "    toast('Errore scene',0)})}"
+    "    loadPresets();toast('Preset salvato',1)"
+    "  }).catch(function(){toast('Errore salvataggio preset',0)})}"
     "/* ── Quick LED on/off (Dashboard) ── */"
     "function ledQuickOn(){"
     "  fetch('/api/leds',{method:'POST',"
@@ -825,7 +819,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    toast('Errore LED',0)})}"
     "/* ── Dashboard data loading ── */"
     "function loadDash(){loadTemp();loadHistory();loadDashLeds();loadDashRelays();"
-    "  loadDashGeo();loadDashHeater()}"
+    "  loadDashHeater()}"
     "function loadDashLeds(){"
     "  fetch('/api/leds').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -889,75 +883,6 @@ static const char STATUS_HTML_TEMPLATE[] =
     "      $('wifi-rssi').textContent='\\uD83D\\uDCF6 WiFi: disconnesso';"
     "      $('wifi-rssi').className='err'}})"
     "  .catch(function(){})}"
-    "/* ── Sunlight / Geo for dashboard ── */"
-    "var _geo=null;"
-    "function loadDashGeo(){"
-    "  fetch('/api/geolocation').then(function(r){return r.json()})"
-    "  .then(function(d){"
-    "    _geo=d;"
-    "    if(!d.sunrise||!d.sunset){$('sun-section').style.display='none';return}"
-    "    $('sun-section').style.display='';"
-    "    var srp=d.sunrise.split(':'),ssp=d.sunset.split(':');"
-    "    var srm=parseInt(srp[0])*60+parseInt(srp[1]);"
-    "    var ssm=parseInt(ssp[0])*60+parseInt(ssp[1]);"
-    "    var now=new Date();"
-    "    var nowm=now.getHours()*60+now.getMinutes();"
-    "    var phase='Notte';"
-    "    if(nowm>=srm&&nowm<srm+30)phase='Alba';"
-    "    else if(nowm>=srm+30&&nowm<ssm-30)phase='Giorno';"
-    "    else if(nowm>=ssm-30&&nowm<ssm)phase='Tramonto';"
-    "    $('sun-label').textContent='SUNLIGHT: '+phase+"
-    "      ' ('+d.sunrise+' - '+d.sunset+')';"
-    "    var pct=Math.max(0,Math.min(100,((nowm-srm+60)/(ssm-srm+120))*100));"
-    "    $('sun-dot').style.left=pct+'%%';"
-    "    drawSolar(srm,ssm,nowm)})}"
-    "/* ── Solar phase chart ── */"
-    "function drawSolar(srm,ssm,nowm){"
-    "  var cv=$('solar-chart');if(!cv)return;"
-    "  var dpr=window.devicePixelRatio||1;"
-    "  cv.width=cv.clientWidth*dpr;cv.height=cv.clientHeight*dpr;"
-    "  var ctx=cv.getContext('2d');ctx.scale(dpr,dpr);"
-    "  var W=cv.clientWidth,H=cv.clientHeight;"
-    "  var pad={t:12,r:10,b:22,l:10};"
-    "  var cw=W-pad.l-pad.r,ch=H-pad.t-pad.b;"
-    "  ctx.clearRect(0,0,W,H);"
-    "  /* Draw curve */"
-    "  ctx.beginPath();ctx.strokeStyle='#d97706';ctx.lineWidth=2.5;"
-    "  ctx.lineJoin='round';"
-    "  for(var m=0;m<=1440;m+=5){"
-    "    var x=pad.l+cw*(m/1440);"
-    "    var y;"
-    "    if(m<srm||m>ssm){y=pad.t+ch}"
-    "    else{"
-    "      var t=(m-srm)/(ssm-srm);"
-    "      y=pad.t+ch-ch*Math.sin(t*Math.PI)*0.85}"
-    "    if(m===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}"
-    "  ctx.stroke();"
-    "  /* Fill under curve */"
-    "  ctx.lineTo(pad.l+cw,pad.t+ch);"
-    "  ctx.lineTo(pad.l,pad.t+ch);ctx.closePath();"
-    "  var grd=ctx.createLinearGradient(0,pad.t,0,pad.t+ch);"
-    "  grd.addColorStop(0,'rgba(217,119,6,0.3)');"
-    "  grd.addColorStop(1,'rgba(217,119,6,0.02)');"
-    "  ctx.fillStyle=grd;ctx.fill();"
-    "  /* Current time marker */"
-    "  if(nowm>=0&&nowm<=1440){"
-    "    var nx=pad.l+cw*(nowm/1440);"
-    "    var ny;"
-    "    if(nowm<srm||nowm>ssm){ny=pad.t+ch}"
-    "    else{"
-    "      var nt=(nowm-srm)/(ssm-srm);"
-    "      ny=pad.t+ch-ch*Math.sin(nt*Math.PI)*0.85}"
-    "    ctx.beginPath();ctx.arc(nx,ny,5,0,Math.PI*2);"
-    "    ctx.fillStyle='#fbbf24';ctx.fill();"
-    "    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke()}"
-    "  /* X labels */"
-    "  ctx.fillStyle='#64748b';ctx.font='11px sans-serif';"
-    "  ctx.textAlign='center';ctx.textBaseline='top';"
-    "  var labels=['00:00','06:00','12:00','18:00','24:00'];"
-    "  for(var i=0;i<labels.length;i++){"
-    "    var lx=pad.l+cw*(i/4);"
-    "    ctx.fillText(labels[i],lx,pad.t+ch+4)}}"
     "/* ── Temperature chart ── */"
     "function drawChart(samples){"
     "  var cv=$('temp-chart');if(!cv)return;"
@@ -1324,7 +1249,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "loadDash();"
     "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
     "  loadDashHeater()},2000);"
-    "setInterval(function(){loadHistory();loadDashGeo()},60000);"
+    "setInterval(function(){loadHistory()},60000);"
     "</script>"
     "</body></html>";
 
@@ -1596,23 +1521,27 @@ static esp_err_t api_led_schedule_get_handler(httpd_req_t *req)
     char buf[JSON_SCHED_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"enabled\":%s,"
-        "\"on_hour\":%d,"
-        "\"on_minute\":%d,"
-        "\"off_hour\":%d,"
-        "\"off_minute\":%d,"
+        "\"on_hour\":%d,\"on_minute\":%d,"
+        "\"ramp_duration_min\":%d,"
+        "\"pause_enabled\":%s,"
+        "\"pause_start_hour\":%d,\"pause_start_minute\":%d,"
+        "\"pause_end_hour\":%d,\"pause_end_minute\":%d,"
+        "\"pause_brightness\":%d,"
+        "\"pause_red\":%d,\"pause_green\":%d,\"pause_blue\":%d,"
+        "\"off_hour\":%d,\"off_minute\":%d,"
         "\"brightness\":%d,"
-        "\"red\":%d,"
-        "\"green\":%d,"
-        "\"blue\":%d}",
-        cfg.enabled ? "true" : "false",
-        cfg.on_hour,
-        cfg.on_minute,
-        cfg.off_hour,
-        cfg.off_minute,
+        "\"red\":%d,\"green\":%d,\"blue\":%d}",
+        cfg.enabled       ? "true" : "false",
+        cfg.on_hour,   cfg.on_minute,
+        cfg.ramp_duration_min,
+        cfg.pause_enabled ? "true" : "false",
+        cfg.pause_start_hour, cfg.pause_start_minute,
+        cfg.pause_end_hour,   cfg.pause_end_minute,
+        cfg.pause_brightness,
+        cfg.pause_red, cfg.pause_green, cfg.pause_blue,
+        cfg.off_hour,  cfg.off_minute,
         cfg.brightness,
-        cfg.red,
-        cfg.green,
-        cfg.blue);
+        cfg.red, cfg.green, cfg.blue);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1634,31 +1563,51 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
 
     led_schedule_config_t cfg = led_schedule_get_config();
     int val;
+    double dval;
 
     val = json_get_bool(buf, "\"enabled\"");
     if (val >= 0) cfg.enabled = (val == 1);
 
     val = json_get_int(buf, "\"on_hour\"");
     if (val >= 0) cfg.on_hour = (uint8_t)val;
-
     val = json_get_int(buf, "\"on_minute\"");
     if (val >= 0) cfg.on_minute = (uint8_t)val;
 
+    if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
+        cfg.ramp_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 0 ? 0 : (int)dval));
+
+    val = json_get_bool(buf, "\"pause_enabled\"");
+    if (val >= 0) cfg.pause_enabled = (val == 1);
+
+    val = json_get_int(buf, "\"pause_start_hour\"");
+    if (val >= 0) cfg.pause_start_hour = (uint8_t)val;
+    val = json_get_int(buf, "\"pause_start_minute\"");
+    if (val >= 0) cfg.pause_start_minute = (uint8_t)val;
+    val = json_get_int(buf, "\"pause_end_hour\"");
+    if (val >= 0) cfg.pause_end_hour = (uint8_t)val;
+    val = json_get_int(buf, "\"pause_end_minute\"");
+    if (val >= 0) cfg.pause_end_minute = (uint8_t)val;
+
+    val = json_get_int(buf, "\"pause_brightness\"");
+    if (val >= 0) cfg.pause_brightness = (uint8_t)(val > 255 ? 255 : val);
+    val = json_get_int(buf, "\"pause_red\"");
+    if (val >= 0) cfg.pause_red = (uint8_t)(val > 255 ? 255 : val);
+    val = json_get_int(buf, "\"pause_green\"");
+    if (val >= 0) cfg.pause_green = (uint8_t)(val > 255 ? 255 : val);
+    val = json_get_int(buf, "\"pause_blue\"");
+    if (val >= 0) cfg.pause_blue = (uint8_t)(val > 255 ? 255 : val);
+
     val = json_get_int(buf, "\"off_hour\"");
     if (val >= 0) cfg.off_hour = (uint8_t)val;
-
     val = json_get_int(buf, "\"off_minute\"");
     if (val >= 0) cfg.off_minute = (uint8_t)val;
 
     val = json_get_int(buf, "\"brightness\"");
     if (val >= 0) cfg.brightness = (uint8_t)(val > 255 ? 255 : val);
-
     val = json_get_int(buf, "\"red\"");
     if (val >= 0) cfg.red = (uint8_t)(val > 255 ? 255 : val);
-
     val = json_get_int(buf, "\"green\"");
     if (val >= 0) cfg.green = (uint8_t)(val > 255 ? 255 : val);
-
     val = json_get_int(buf, "\"blue\"");
     if (val >= 0) cfg.blue = (uint8_t)(val > 255 ? 255 : val);
 
@@ -1667,47 +1616,76 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
     return api_led_schedule_get_handler(req);
 }
 
-/* ── LED Scenes status endpoint (/api/led_scenes  GET) ─────────────── */
+/* ── LED Presets GET endpoint (/api/led_presets  GET) ────────────── */
 
-static esp_err_t api_led_scenes_get_handler(httpd_req_t *req)
+static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
 {
-    led_scene_config_t cfg = led_scenes_get_config();
-    led_scene_t scene = led_scenes_get();
+    /* Heap-allocate: 5 presets × ~420 bytes each + wrapper ≈ 2500 bytes */
+    const size_t buf_size = 4096;
+    char *buf = malloc(buf_size);
+    if (buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
 
-    char buf[JSON_SCENES_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"scene\":\"%s\","
-        "\"sunrise_duration_min\":%d,"
-        "\"sunset_duration_min\":%d,"
-        "\"transition_duration_min\":%d,"
-        "\"fullday_max_brightness_pct\":%d,"
-        "\"color_temp_kelvin\":%d,"
-        "\"lunar_moonlight\":%s,"
-        "\"siesta_enabled\":%s,"
-        "\"siesta_start_min\":%d,"
-        "\"siesta_end_min\":%d,"
-        "\"siesta_intensity_pct\":%d}",
-        led_scenes_get_name(scene),
-        cfg.sunrise_duration_min,
-        cfg.sunset_duration_min,
-        cfg.transition_duration_min,
-        cfg.fullday_max_brightness_pct,
-        cfg.color_temp_kelvin,
-        cfg.lunar_moonlight  ? "true" : "false",
-        cfg.siesta_enabled   ? "true" : "false",
-        cfg.siesta_start_min,
-        cfg.siesta_end_min,
-        cfg.siesta_intensity_pct);
+    int pos = snprintf(buf, buf_size, "{\"presets\":[");
+
+    for (int i = 0; i < LED_PRESET_COUNT; i++) {
+        led_preset_t p;
+        led_preset_get(i, &p);
+
+        /* Escape name */
+        char ename[LED_PRESET_NAME_LEN * 2 + 4];
+        json_escape(p.name, ename, sizeof(ename));
+
+        pos += snprintf(buf + pos, buf_size - (size_t)pos,
+            "%s{\"slot\":%d,\"name\":\"%s\","
+            "\"config\":{"
+            "\"enabled\":%s,"
+            "\"on_hour\":%d,\"on_minute\":%d,"
+            "\"ramp_duration_min\":%d,"
+            "\"pause_enabled\":%s,"
+            "\"pause_start_hour\":%d,\"pause_start_minute\":%d,"
+            "\"pause_end_hour\":%d,\"pause_end_minute\":%d,"
+            "\"pause_brightness\":%d,"
+            "\"pause_red\":%d,\"pause_green\":%d,\"pause_blue\":%d,"
+            "\"off_hour\":%d,\"off_minute\":%d,"
+            "\"brightness\":%d,"
+            "\"red\":%d,\"green\":%d,\"blue\":%d}}",
+            i > 0 ? "," : "",
+            i, ename,
+            p.config.enabled       ? "true" : "false",
+            p.config.on_hour,   p.config.on_minute,
+            p.config.ramp_duration_min,
+            p.config.pause_enabled ? "true" : "false",
+            p.config.pause_start_hour, p.config.pause_start_minute,
+            p.config.pause_end_hour,   p.config.pause_end_minute,
+            p.config.pause_brightness,
+            p.config.pause_red, p.config.pause_green, p.config.pause_blue,
+            p.config.off_hour,  p.config.off_minute,
+            p.config.brightness,
+            p.config.red, p.config.green, p.config.blue);
+    }
+
+    if (pos + 3 < (int)buf_size) {
+        buf[pos++] = ']';
+        buf[pos++] = '}';
+        buf[pos]   = '\0';
+    }
 
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
+    esp_err_t err = httpd_resp_send(req, buf, pos);
+    free(buf);
+    return err;
 }
 
-/* ── LED Scenes control endpoint (/api/led_scenes  POST) ──────────── */
+/* ── LED Presets control endpoint (/api/led_presets  POST) ──────── */
+/* Body: {"action":"save","slot":N,"name":"...",&lt;all schedule fields&gt;}  */
+/* Body: {"action":"load","slot":N}                                          */
 
-static esp_err_t api_led_scenes_post_handler(httpd_req_t *req)
+static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
 {
-    char buf[POST_BODY_SCENES_SIZE];
+    char buf[POST_BODY_PRESETS_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
@@ -1715,52 +1693,89 @@ static esp_err_t api_led_scenes_post_handler(httpd_req_t *req)
     }
     buf[received] = '\0';
 
-    ESP_LOGI(TAG, "LED Scenes POST body: %s", buf);
+    ESP_LOGI(TAG, "LED Presets POST body: %s", buf);
 
-    /* Update active scene if provided */
-    char scene_name[32] = {0};
-    if (json_get_str(buf, "\"scene\"", scene_name, sizeof(scene_name)) == 0) {
-        led_scenes_set(led_scenes_from_name(scene_name));
+    char action[16] = {0};
+    json_get_str(buf, "\"action\"", action, sizeof(action));
+
+    int slot = json_get_int(buf, "\"slot\"");
+    if (slot < 0 || slot >= LED_PRESET_COUNT) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
+        return ESP_FAIL;
     }
 
-    /* Update scene configuration */
-    led_scene_config_t cfg = led_scenes_get_config();
-    int val;
+    if (strcmp(action, "load") == 0) {
+        esp_err_t err = led_preset_load(slot);
+        if (err != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Load failed");
+            return ESP_FAIL;
+        }
+    } else if (strcmp(action, "save") == 0) {
+        char name[LED_PRESET_NAME_LEN] = {0};
+        json_get_str(buf, "\"name\"", name, sizeof(name));
+        if (name[0] == '\0') {
+            snprintf(name, sizeof(name), "Preset %d", slot + 1);
+        }
 
-    val = json_get_int(buf, "\"sunrise_duration_min\"");
-    if (val >= 1) cfg.sunrise_duration_min = (uint16_t)(val > 120 ? 120 : val);
+        /* Build config from POST fields, starting from current preset config */
+        led_preset_t current;
+        led_preset_get(slot, &current);
+        led_schedule_config_t cfg = current.config;
+        int val;
+        double dval;
 
-    val = json_get_int(buf, "\"sunset_duration_min\"");
-    if (val >= 1) cfg.sunset_duration_min = (uint16_t)(val > 120 ? 120 : val);
+        val = json_get_bool(buf, "\"enabled\"");
+        if (val >= 0) cfg.enabled = (val == 1);
+        val = json_get_int(buf, "\"on_hour\"");
+        if (val >= 0) cfg.on_hour = (uint8_t)val;
+        val = json_get_int(buf, "\"on_minute\"");
+        if (val >= 0) cfg.on_minute = (uint8_t)val;
+        if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
+            cfg.ramp_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 0 ? 0 : (int)dval));
+        val = json_get_bool(buf, "\"pause_enabled\"");
+        if (val >= 0) cfg.pause_enabled = (val == 1);
+        val = json_get_int(buf, "\"pause_start_hour\"");
+        if (val >= 0) cfg.pause_start_hour = (uint8_t)val;
+        val = json_get_int(buf, "\"pause_start_minute\"");
+        if (val >= 0) cfg.pause_start_minute = (uint8_t)val;
+        val = json_get_int(buf, "\"pause_end_hour\"");
+        if (val >= 0) cfg.pause_end_hour = (uint8_t)val;
+        val = json_get_int(buf, "\"pause_end_minute\"");
+        if (val >= 0) cfg.pause_end_minute = (uint8_t)val;
+        val = json_get_int(buf, "\"pause_brightness\"");
+        if (val >= 0) cfg.pause_brightness = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"pause_red\"");
+        if (val >= 0) cfg.pause_red = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"pause_green\"");
+        if (val >= 0) cfg.pause_green = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"pause_blue\"");
+        if (val >= 0) cfg.pause_blue = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"off_hour\"");
+        if (val >= 0) cfg.off_hour = (uint8_t)val;
+        val = json_get_int(buf, "\"off_minute\"");
+        if (val >= 0) cfg.off_minute = (uint8_t)val;
+        val = json_get_int(buf, "\"brightness\"");
+        if (val >= 0) cfg.brightness = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"red\"");
+        if (val >= 0) cfg.red = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"green\"");
+        if (val >= 0) cfg.green = (uint8_t)(val > 255 ? 255 : val);
+        val = json_get_int(buf, "\"blue\"");
+        if (val >= 0) cfg.blue = (uint8_t)(val > 255 ? 255 : val);
 
-    val = json_get_int(buf, "\"transition_duration_min\"");
-    if (val >= 1) cfg.transition_duration_min = (uint16_t)(val > 120 ? 120 : val);
+        esp_err_t err = led_preset_save(slot, name, &cfg);
+        if (err != ESP_OK) {
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
+            return ESP_FAIL;
+        }
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown action");
+        return ESP_FAIL;
+    }
 
-    val = json_get_int(buf, "\"fullday_max_brightness_pct\"");
-    if (val >= 1) cfg.fullday_max_brightness_pct = (uint8_t)(val > 100 ? 100 : val);
-
-    val = json_get_int(buf, "\"color_temp_kelvin\"");
-    if (val >= 1) cfg.color_temp_kelvin = (uint16_t)(val > 20000 ? 20000 : (val < 6500 ? 6500 : val));
-
-    val = json_get_bool(buf, "\"lunar_moonlight\"");
-    if (val >= 0) cfg.lunar_moonlight = (val == 1);
-
-    val = json_get_bool(buf, "\"siesta_enabled\"");
-    if (val >= 0) cfg.siesta_enabled = (val == 1);
-
-    val = json_get_int(buf, "\"siesta_start_min\"");
-    if (val >= 0) cfg.siesta_start_min = (uint16_t)(val > 1439 ? 1439 : val);
-
-    val = json_get_int(buf, "\"siesta_end_min\"");
-    if (val >= 0) cfg.siesta_end_min = (uint16_t)(val > 1439 ? 1439 : val);
-
-    val = json_get_int(buf, "\"siesta_intensity_pct\"");
-    if (val >= 0) cfg.siesta_intensity_pct = (uint8_t)(val > 100 ? 100 : val);
-
-    led_scenes_set_config(&cfg);
-
-    return api_led_scenes_get_handler(req);
+    return api_led_presets_get_handler(req);
 }
+
 
 static esp_err_t api_temperature_get_handler(httpd_req_t *req)
 {
@@ -1853,70 +1868,6 @@ static esp_err_t api_temp_csv_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, NULL, 0);   /* finalise chunked response */
     free(samples);
     return ESP_OK;
-}
-
-/* ── Sunlight GET endpoint (/api/geolocation  GET) ───────────────── */
-/* Returns sunrise/sunset for Cagliari (hardcoded). Kept at the same
- * URL so the dashboard JavaScript works without changes.             */
-
-/* Cagliari, Sardinia – fixed location */
-#define WEB_CAGLIARI_LAT    39.2238
-#define WEB_CAGLIARI_LON     9.1217
-
-static esp_err_t api_geolocation_get_handler(httpd_req_t *req)
-{
-    /* Compute today's sunrise/sunset for Cagliari */
-    time_t now;
-    time(&now);
-    struct tm ti;
-    localtime_r(&now, &ti);
-
-    int year  = ti.tm_year + 1900;
-    int month = ti.tm_mon + 1;
-    int day   = ti.tm_mday;
-    /* Compute UTC offset portably (tm_gmtoff is non-standard) */
-    struct tm utc_tm;
-    gmtime_r(&now, &utc_tm);
-    /* Day-of-year difference; clamp ±1 to handle Dec 31→Jan 1 year wrap */
-    int dd = ti.tm_yday - utc_tm.tm_yday;
-    if (dd > 1) dd = -1; else if (dd < -1) dd = 1;
-    int utc_off_min = (ti.tm_hour - utc_tm.tm_hour) * 60
-                    + (ti.tm_min  - utc_tm.tm_min)
-                    + dd * 1440;
-
-    /* If time not set, use a default date */
-    if (ti.tm_year < (2024 - 1900)) {
-        year = 2026; month = 6; day = 21;
-        utc_off_min = 60;   /* CET fallback */
-    }
-
-    sun_times_t st = sun_position_calc(WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON,
-                                       utc_off_min, year, month, day);
-
-    char buf[JSON_GEO_BUF_SIZE];
-    int len;
-    if (st.valid) {
-        len = snprintf(buf, sizeof(buf),
-            "{\"latitude\":%.4f,"
-            "\"longitude\":%.4f,"
-            "\"utc_offset_min\":%d,"
-            "\"sunrise\":\"%02d:%02d\","
-            "\"sunset\":\"%02d:%02d\"}",
-            WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON, utc_off_min,
-            st.sunrise_min / 60, st.sunrise_min % 60,
-            st.sunset_min / 60, st.sunset_min % 60);
-    } else {
-        len = snprintf(buf, sizeof(buf),
-            "{\"latitude\":%.4f,"
-            "\"longitude\":%.4f,"
-            "\"utc_offset_min\":%d,"
-            "\"sunrise\":null,"
-            "\"sunset\":null}",
-            WEB_CAGLIARI_LAT, WEB_CAGLIARI_LON, utc_off_min);
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
 }
 
 /* ── Telegram GET endpoint (/api/telegram  GET) ──────────────────── */
@@ -2573,10 +2524,17 @@ static const httpd_uri_t uri_api_led_sched_post = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_geo_get = {
-    .uri      = "/api/geolocation",
+static const httpd_uri_t uri_api_led_presets_get = {
+    .uri      = "/api/led_presets",
     .method   = HTTP_GET,
-    .handler  = api_geolocation_get_handler,
+    .handler  = api_led_presets_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_led_presets_post = {
+    .uri      = "/api/led_presets",
+    .method   = HTTP_POST,
+    .handler  = api_led_presets_post_handler,
     .user_ctx = NULL,
 };
 
@@ -2699,20 +2657,6 @@ static const httpd_uri_t uri_api_heater_post = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_led_scenes_get = {
-    .uri      = "/api/led_scenes",
-    .method   = HTTP_GET,
-    .handler  = api_led_scenes_get_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_led_scenes_post = {
-    .uri      = "/api/led_scenes",
-    .method   = HTTP_POST,
-    .handler  = api_led_scenes_post_handler,
-    .user_ctx = NULL,
-};
-
 static const httpd_uri_t uri_api_co2_get = {
     .uri      = "/api/co2",
     .method   = HTTP_GET,
@@ -2798,7 +2742,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_leds_post);
     httpd_register_uri_handler(s_server, &uri_api_led_sched_get);
     httpd_register_uri_handler(s_server, &uri_api_led_sched_post);
-    httpd_register_uri_handler(s_server, &uri_api_geo_get);
+    httpd_register_uri_handler(s_server, &uri_api_led_presets_get);
+    httpd_register_uri_handler(s_server, &uri_api_led_presets_post);
     httpd_register_uri_handler(s_server, &uri_api_temp_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_hist_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_csv_get);
@@ -2816,8 +2761,6 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_ota_status);
     httpd_register_uri_handler(s_server, &uri_api_heater_get);
     httpd_register_uri_handler(s_server, &uri_api_heater_post);
-    httpd_register_uri_handler(s_server, &uri_api_led_scenes_get);
-    httpd_register_uri_handler(s_server, &uri_api_led_scenes_post);
     httpd_register_uri_handler(s_server, &uri_api_co2_get);
     httpd_register_uri_handler(s_server, &uri_api_co2_post);
     httpd_register_uri_handler(s_server, &uri_api_tz_get);
