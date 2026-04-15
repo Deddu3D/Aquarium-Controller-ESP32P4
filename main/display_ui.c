@@ -901,8 +901,7 @@ void display_ui_refresh(void)
                 time_t t = (time_t)ts;
                 struct tm ti; localtime_r(&t, &ti);
                 char dbuf[16];
-                snprintf(dbuf, sizeof(dbuf), "%02d/%02d/%04d",
-                         ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900);
+                strftime(dbuf, sizeof(dbuf), "%d/%m/%Y", &ti);
                 lv_label_set_text(s_lbl_tg_wclast, dbuf);
             } else {
                 lv_label_set_text(s_lbl_tg_wclast, "mai");
@@ -923,8 +922,7 @@ void display_ui_refresh(void)
                 time_t t = (time_t)ts;
                 struct tm ti; localtime_r(&t, &ti);
                 char dbuf[16];
-                snprintf(dbuf, sizeof(dbuf), "%02d/%02d/%04d",
-                         ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900);
+                strftime(dbuf, sizeof(dbuf), "%d/%m/%Y", &ti);
                 lv_label_set_text(s_lbl_tg_fertlast, dbuf);
             } else {
                 lv_label_set_text(s_lbl_tg_fertlast, "mai");
@@ -1045,7 +1043,7 @@ void display_ui_refresh(void)
             } else if (ota.status == OTA_STATUS_DONE) {
                 snprintf(buf, sizeof(buf), "completato - riavvio...");
             } else if (ota.status == OTA_STATUS_ERROR) {
-                snprintf(buf, sizeof(buf), "errore: %.40s", ota.error_msg);
+                snprintf(buf, sizeof(buf), "errore: %.39s", ota.error_msg);
             } else {
                 snprintf(buf, sizeof(buf), "%s %d%%",
                          ota_names[si], ota.progress_pct);
