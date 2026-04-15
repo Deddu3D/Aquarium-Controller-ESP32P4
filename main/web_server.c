@@ -356,7 +356,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</div>"
     "</div>"
     "</div>"
-    ""
+    "</div>"
     "<!-- ═══ Panel 1: LED Strip ═══ -->"
     "<div class=\"panel\" id=\"p1\">"
     "<div class=\"ccard open\" id=\"led-card\">"
