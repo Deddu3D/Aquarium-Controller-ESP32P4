@@ -41,6 +41,9 @@ typedef struct {
     /* Daily summary */
     bool  daily_summary_enabled; /**< Enable daily summary notification        */
     int   daily_summary_hour;    /**< Hour (0-23) to send the daily summary    */
+
+    /* Relay state-change notifications */
+    bool  relay_notify_enabled;  /**< Send Telegram message on relay toggle    */
 } telegram_config_t;
 
 /**
@@ -76,6 +79,21 @@ esp_err_t telegram_notify_set_config(const telegram_config_t *cfg);
  * @return ESP_OK on success, or an error if sending failed.
  */
 esp_err_t telegram_notify_send(const char *message);
+
+/**
+ * @brief Notify Telegram that a relay changed state.
+ *
+ * Called by the relay controller change callback.  No-op if
+ * relay notifications are disabled or the module is not configured.
+ *
+ * @param relay_index  Relay index (0–3).
+ * @param new_state    true = relay turned ON, false = OFF.
+ * @param relay_name   Human-readable relay name.
+ * @param source       "manual" or "schedule".
+ */
+void telegram_notify_relay_change(int relay_index, bool new_state,
+                                  const char *relay_name,
+                                  const char *source);
 
 /**
  * @brief Record that a water change was performed (resets the timer).

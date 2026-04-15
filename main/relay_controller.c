@@ -4,6 +4,7 @@
  * Aquarium Controller - 4-Channel Relay Controller implementation
  * Drives four GPIOs (active-high by default) for 3 V relay modules
  * and persists state + custom names in NVS.
+ * Each relay now supports RELAY_SCHEDULE_SLOTS independent time slots.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -48,6 +49,7 @@ static const char *s_default_names[RELAY_COUNT] = {
 /* Runtime state – protected by s_mutex for thread safety */
 static relay_state_t     s_relay[RELAY_COUNT];
 static SemaphoreHandle_t s_mutex = NULL;
+static relay_change_cb_t s_change_cb = NULL;
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -61,14 +63,16 @@ static void nvs_load(void)
             strncpy(s_relay[i].name, s_default_names[i],
                     RELAY_NAME_MAX - 1);
             s_relay[i].name[RELAY_NAME_MAX - 1] = '\0';
-            memset(&s_relay[i].schedule, 0, sizeof(relay_schedule_t));
+            memset(s_relay[i].schedules, 0,
+                   sizeof(s_relay[i].schedules));
         }
         return;
     }
 
     for (int i = 0; i < RELAY_COUNT; i++) {
+        char key[16];
+
         /* Load on/off state */
-        char key[12];
         snprintf(key, sizeof(key), "on%d", i);
         uint8_t val = 0;
         if (nvs_get_u8(h, key, &val) == ESP_OK) {
@@ -86,11 +90,11 @@ static void nvs_load(void)
             s_relay[i].name[RELAY_NAME_MAX - 1] = '\0';
         }
 
-        /* Load schedule */
-        memset(&s_relay[i].schedule, 0, sizeof(relay_schedule_t));
+        /* Load schedule slots (stored as a blob array) */
+        memset(s_relay[i].schedules, 0, sizeof(s_relay[i].schedules));
         snprintf(key, sizeof(key), "sched%d", i);
-        size_t sched_len = sizeof(relay_schedule_t);
-        nvs_get_blob(h, key, &s_relay[i].schedule, &sched_len);
+        size_t sched_len = sizeof(s_relay[i].schedules);
+        nvs_get_blob(h, key, &s_relay[i].schedules, &sched_len);
     }
 
     nvs_close(h);
@@ -103,7 +107,7 @@ static void nvs_save_state(int index)
         ESP_LOGE(TAG, "nvs_open failed for relay state save");
         return;
     }
-    char key[12];
+    char key[16];
     snprintf(key, sizeof(key), "on%d", index);
     esp_err_t err = nvs_set_u8(h, key, s_relay[index].on ? 1 : 0);
     if (err != ESP_OK) {
@@ -123,7 +127,7 @@ static void nvs_save_name(int index)
         ESP_LOGE(TAG, "nvs_open failed for relay name save");
         return;
     }
-    char key[12];
+    char key[16];
     snprintf(key, sizeof(key), "name%d", index);
     esp_err_t err = nvs_set_str(h, key, s_relay[index].name);
     if (err != ESP_OK) {
@@ -133,6 +137,21 @@ static void nvs_save_name(int index)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
     }
+    nvs_close(h);
+}
+
+static void nvs_save_schedules(int index)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed for schedule save");
+        return;
+    }
+    char key[16];
+    snprintf(key, sizeof(key), "sched%d", index);
+    nvs_set_blob(h, key, s_relay[index].schedules,
+                 sizeof(s_relay[index].schedules));
+    nvs_commit(h);
     nvs_close(h);
 }
 
@@ -192,13 +211,23 @@ esp_err_t relay_controller_set(int index, bool on)
     if (index < 0 || index >= RELAY_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool prev = s_relay[index].on;
     s_relay[index].on = on;
     gpio_apply(index);
+    relay_change_cb_t cb = s_change_cb;
     xSemaphoreGive(s_mutex);
+
     nvs_save_state(index);
     ESP_LOGI(TAG, "Relay %d (%s) → %s",
              index, s_relay[index].name, on ? "ON" : "OFF");
+
+    /* Fire change callback only when state actually changes */
+    if (cb && prev != on) {
+        cb(index, on, "manual");
+    }
+
     return ESP_OK;
 }
 
@@ -248,40 +277,47 @@ void relay_controller_get_all(relay_state_t out[RELAY_COUNT])
     xSemaphoreGive(s_mutex);
 }
 
-static void nvs_save_schedule(int index)
-{
-    nvs_handle_t h;
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_open failed for schedule save");
-        return;
-    }
-    char key[12];
-    snprintf(key, sizeof(key), "sched%d", index);
-    nvs_set_blob(h, key, &s_relay[index].schedule, sizeof(relay_schedule_t));
-    nvs_commit(h);
-    nvs_close(h);
-}
-
-esp_err_t relay_controller_set_schedule(int index,
+esp_err_t relay_controller_set_schedule(int index, int slot,
                                         const relay_schedule_t *schedule)
 {
-    if (index < 0 || index >= RELAY_COUNT || schedule == NULL) {
+    if (index < 0 || index >= RELAY_COUNT ||
+        slot  < 0 || slot  >= RELAY_SCHEDULE_SLOTS ||
+        schedule == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
     relay_schedule_t safe = *schedule;
-    if (safe.on_min > 1439)  safe.on_min = 1439;
+    if (safe.on_min  > 1439) safe.on_min  = 1439;
     if (safe.off_min > 1439) safe.off_min = 1439;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_relay[index].schedule = safe;
+    s_relay[index].schedules[slot] = safe;
     xSemaphoreGive(s_mutex);
 
-    nvs_save_schedule(index);
-    ESP_LOGI(TAG, "Relay %d schedule: enabled=%d on=%02d:%02d off=%02d:%02d",
-             index, safe.enabled,
+    nvs_save_schedules(index);
+    ESP_LOGI(TAG, "Relay %d slot %d: enabled=%d on=%02d:%02d off=%02d:%02d",
+             index, slot, safe.enabled,
              safe.on_min / 60, safe.on_min % 60,
              safe.off_min / 60, safe.off_min % 60);
+    return ESP_OK;
+}
+
+esp_err_t relay_controller_set_all_schedules(int index,
+                                             const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS])
+{
+    if (index < 0 || index >= RELAY_COUNT || schedules == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
+        s_relay[index].schedules[s] = schedules[s];
+        if (s_relay[index].schedules[s].on_min  > 1439)
+            s_relay[index].schedules[s].on_min  = 1439;
+        if (s_relay[index].schedules[s].off_min > 1439)
+            s_relay[index].schedules[s].off_min = 1439;
+    }
+    xSemaphoreGive(s_mutex);
+    nvs_save_schedules(index);
     return ESP_OK;
 }
 
@@ -299,29 +335,50 @@ void relay_controller_tick_schedules(void)
     int now_min = ti.tm_hour * 60 + ti.tm_min;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+
     for (int i = 0; i < RELAY_COUNT; i++) {
-        if (!s_relay[i].schedule.enabled) {
-            continue;
-        }
+        /* Compute logical OR of all active slots */
+        bool should_be_on = false;
+        for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
+            if (!s_relay[i].schedules[s].enabled) continue;
 
-        uint16_t on_m  = s_relay[i].schedule.on_min;
-        uint16_t off_m = s_relay[i].schedule.off_min;
-        bool should_be_on;
+            uint16_t on_m  = s_relay[i].schedules[s].on_min;
+            uint16_t off_m = s_relay[i].schedules[s].off_min;
 
-        if (on_m <= off_m) {
-            /* Normal: on_min < off_min (e.g. 08:00–18:00) */
-            should_be_on = (now_min >= (int)on_m && now_min < (int)off_m);
-        } else {
-            /* Overnight: on_min > off_min (e.g. 22:00–06:00) */
-            should_be_on = (now_min >= (int)on_m || now_min < (int)off_m);
+            bool in_window;
+            if (on_m <= off_m) {
+                in_window = (now_min >= (int)on_m && now_min < (int)off_m);
+            } else {
+                in_window = (now_min >= (int)on_m || now_min < (int)off_m);
+            }
+            if (in_window) {
+                should_be_on = true;
+                break;
+            }
         }
 
         if (should_be_on != s_relay[i].on) {
             s_relay[i].on = should_be_on;
             gpio_apply(i);
+            relay_change_cb_t cb = s_change_cb;
+            xSemaphoreGive(s_mutex);
+
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
                      i, s_relay[i].name, should_be_on ? "ON" : "OFF");
+
+            if (cb) {
+                cb(i, should_be_on, "schedule");
+            }
+
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
         }
     }
+    xSemaphoreGive(s_mutex);
+}
+
+void relay_controller_set_change_cb(relay_change_cb_t cb)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_change_cb = cb;
     xSemaphoreGive(s_mutex);
 }

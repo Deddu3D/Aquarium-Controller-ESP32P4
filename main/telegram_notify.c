@@ -50,6 +50,7 @@ static const char *TAG = "telegram";
 #define NVS_KEY_SUM_HOUR   "sum_hour"
 #define NVS_KEY_LAST_WC    "last_wc"
 #define NVS_KEY_LAST_FERT  "last_fert"
+#define NVS_KEY_RELAY_NOT  "relay_not"
 
 #define TASK_STACK_SIZE    12288   /* TLS handshake needs generous stack */
 #define TASK_PERIOD_MS     60000   /* Check every 60 seconds */
@@ -121,6 +122,9 @@ static void nvs_load_config(void)
     if (nvs_get_u8(h, NVS_KEY_SUM_EN, &u8val) == ESP_OK)
         s_config.daily_summary_enabled = u8val;
 
+    if (nvs_get_u8(h, NVS_KEY_RELAY_NOT, &u8val) == ESP_OK)
+        s_config.relay_notify_enabled = u8val;
+
     int32_t i32val;
     if (nvs_get_i32(h, NVS_KEY_T_HIGH, &i32val) == ESP_OK)
         s_config.temp_high_c = (float)i32val / 100.0f;
@@ -162,6 +166,7 @@ static esp_err_t nvs_save_config(void)
     nvs_set_u8(h, NVS_KEY_WC_EN, (uint8_t)s_config.water_change_enabled);
     nvs_set_u8(h, NVS_KEY_FERT_EN, (uint8_t)s_config.fertilizer_enabled);
     nvs_set_u8(h, NVS_KEY_SUM_EN, (uint8_t)s_config.daily_summary_enabled);
+    nvs_set_u8(h, NVS_KEY_RELAY_NOT, (uint8_t)s_config.relay_notify_enabled);
     nvs_set_i32(h, NVS_KEY_T_HIGH, (int32_t)(s_config.temp_high_c * 100.0f));
     nvs_set_i32(h, NVS_KEY_T_LOW, (int32_t)(s_config.temp_low_c * 100.0f));
     nvs_set_i32(h, NVS_KEY_WC_DAYS, (int32_t)s_config.water_change_days);
@@ -704,4 +709,31 @@ int64_t telegram_notify_get_last_fertilizer(void)
     val = s_last_fertilizer;
     xSemaphoreGive(s_mutex);
     return val;
+}
+
+void telegram_notify_relay_change(int relay_index, bool new_state,
+                                  const char *relay_name,
+                                  const char *source)
+{
+    if (s_mutex == NULL) return;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    telegram_config_t cfg = s_config;
+    xSemaphoreGive(s_mutex);
+
+    if (!cfg.enabled || !cfg.relay_notify_enabled) return;
+    if (cfg.bot_token[0] == '\0' || cfg.chat_id[0] == '\0') return;
+
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+        "%s <b>Rel\xc3\xa8 %d – %s</b>\n\n"
+        "Stato: <b>%s</b>\n"
+        "Sorgente: %s",
+        new_state ? "\xe2\x9c\x85" : "\xe2\x9d\x8c",
+        relay_index + 1,
+        relay_name ? relay_name : "?",
+        new_state ? "ON" : "OFF",
+        source ? source : "?");
+
+    send_telegram_message(cfg.bot_token, cfg.chat_id, msg);
 }
