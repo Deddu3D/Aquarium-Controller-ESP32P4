@@ -204,9 +204,9 @@ void co2_controller_tick(void)
     int valve_open_min  = led_on_min  - cfg.pre_on_min;
     int valve_close_min = led_off_min + cfg.post_off_min;
 
-    /* Keep in 0–1439 range */
-    valve_open_min  = (valve_open_min  + 1440) % 1440;
-    valve_close_min =  valve_close_min % 1440;
+    /* Normalise both to the 0–1439 range */
+    valve_open_min  = ((valve_open_min  % 1440) + 1440) % 1440;
+    valve_close_min = ((valve_close_min % 1440) + 1440) % 1440;
 
     /* Determine if valve should be open */
     bool should_be_on;

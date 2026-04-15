@@ -361,6 +361,11 @@ void relay_controller_tick_schedules(void)
             s_relay[i].on = should_be_on;
             gpio_apply(i);
             relay_change_cb_t cb = s_change_cb;
+            /* Release the lock before invoking the callback to prevent
+             * deadlocks if the callback calls back into this module.
+             * There is a brief window where relay state is modified but
+             * the callback has not yet fired; this is intentional and
+             * acceptable for a single-threaded main-loop design. */
             xSemaphoreGive(s_mutex);
 
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
