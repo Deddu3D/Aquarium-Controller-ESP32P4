@@ -127,7 +127,7 @@ static void nvs_load_config(void)
     if (nvs_get_u8(h,  NVS_KEY_BLUE,     &v8)  == ESP_OK) s_config.blue              = v8;
 
     nvs_close(h);
-    ESP_LOGI(TAG, "Loaded: en=%d on=%02d:%02d ramp=%dmin pause=%d off=%02d:%02d "
+    ESP_LOGI(TAG, "Loaded: en=%d on=%02d:%02d ramp=%dmin pause=%d | off=%02d:%02d "
              "br=%d RGB=(%d,%d,%d)",
              s_config.enabled, s_config.on_hour, s_config.on_minute,
              s_config.ramp_duration_min, s_config.pause_enabled,
@@ -262,7 +262,10 @@ static sched_phase_t compute_phase(int now_min,
         return SCHED_PHASE_OFF;
     }
 
-    /* Check pause sub-window (assumed within the same day, no crossing) */
+    /* Check pause sub-window.
+     * A pause is valid only when pause_start < pause_end (same-day window).
+     * If the user configures an inverted or equal range, the pause is ignored
+     * silently, which is safer than trying to guess intent.             */
     if (cfg->pause_enabled) {
         int ps = (int)cfg->pause_start_hour * 60 + (int)cfg->pause_start_minute;
         int pe = (int)cfg->pause_end_hour   * 60 + (int)cfg->pause_end_minute;

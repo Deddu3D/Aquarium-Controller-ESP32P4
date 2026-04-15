@@ -1695,8 +1695,8 @@ static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
 }
 
 /* ── LED Presets control endpoint (/api/led_presets  POST) ──────── */
-/* Body: {"action":"save","slot":N,"name":"...",&lt;all schedule fields&gt;}  */
-/* Body: {"action":"load","slot":N}                                          */
+/* Body: {"action":"save","slot":N,"name":"...",<all schedule fields>}  */
+/* Body: {"action":"load","slot":N}                                      */
 
 static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
 {
