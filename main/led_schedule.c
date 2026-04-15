@@ -284,12 +284,14 @@ static void enter_phase_on(sched_phase_t prev,
     led_controller_set_brightness(cfg->brightness);
 
     if (prev == SCHED_PHASE_OFF) {
-        /* Morning ramp from darkness to full brightness */
-        uint32_t ramp_ms = (uint32_t)cfg->ramp_duration_min * 60u * 1000u;
-        if (ramp_ms == 0u) {
-            ramp_ms = 1000u;  /* at least 1 s for smoothness */
+        if (cfg->ramp_duration_min == 0) {
+            /* Instant-on: no fade ramp */
+            led_controller_on();
+        } else {
+            /* Morning ramp from darkness to full brightness */
+            uint32_t ramp_ms = (uint32_t)cfg->ramp_duration_min * 60u * 1000u;
+            led_controller_fade_on(ramp_ms);
         }
-        led_controller_fade_on(ramp_ms);
         ESP_LOGI(TAG, "Phase ON (dawn ramp %u min)", cfg->ramp_duration_min);
     } else {
         /* Returning from pause: strip already on, color+brightness updated */
@@ -365,12 +367,12 @@ esp_err_t led_schedule_set_config(const led_schedule_config_t *cfg)
     if (s_config.on_hour           > 23)  s_config.on_hour           = 23;
     if (s_config.on_minute         > 59)  s_config.on_minute         = 59;
     if (s_config.ramp_duration_min > 120) s_config.ramp_duration_min = 120;
-    if (s_config.pause_start_hour  > 23)  s_config.pause_start_hour  = 23;
-    if (s_config.pause_start_minute> 59)  s_config.pause_start_minute= 59;
-    if (s_config.pause_end_hour    > 23)  s_config.pause_end_hour    = 23;
-    if (s_config.pause_end_minute  > 59)  s_config.pause_end_minute  = 59;
-    if (s_config.off_hour          > 23)  s_config.off_hour          = 23;
-    if (s_config.off_minute        > 59)  s_config.off_minute        = 59;
+    if (s_config.pause_start_hour  > 23)  s_config.pause_start_hour   = 23;
+    if (s_config.pause_start_minute > 59) s_config.pause_start_minute = 59;
+    if (s_config.pause_end_hour    > 23)  s_config.pause_end_hour     = 23;
+    if (s_config.pause_end_minute  > 59)  s_config.pause_end_minute   = 59;
+    if (s_config.off_hour          > 23)  s_config.off_hour           = 23;
+    if (s_config.off_minute        > 59)  s_config.off_minute         = 59;
 
     /* Force re-evaluation on next tick so new settings take effect promptly */
     s_last_phase = SCHED_PHASE_OFF;

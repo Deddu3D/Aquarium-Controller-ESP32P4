@@ -22,7 +22,8 @@ extern "C" {
 
 /** Maximum number of named presets that can be stored in NVS. */
 #define LED_PRESET_COUNT      5
-/** Maximum length of a preset name (including NUL terminator). */
+/** 16 usable characters + NUL terminator.  NVS string keys are max 15 chars,
+ *  so preset names are stored under separate "p<N>_n" keys. */
 #define LED_PRESET_NAME_LEN   17
 
 /**

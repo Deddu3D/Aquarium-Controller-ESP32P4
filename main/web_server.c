@@ -1466,6 +1466,14 @@ static int json_get_double(const char *json, const char *key, double *out)
     return 0;
 }
 
+/** @brief Clamp a double to [0, max] and return as uint16_t. */
+static uint16_t clamp_u16(double v, double max)
+{
+    if (v < 0.0) return 0;
+    if (v > max) return (uint16_t)max;
+    return (uint16_t)v;
+}
+
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
 {
     char buf[POST_BODY_LED_SIZE];
@@ -1574,7 +1582,7 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
     if (val >= 0) cfg.on_minute = (uint8_t)val;
 
     if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
-        cfg.ramp_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 0 ? 0 : (int)dval));
+        cfg.ramp_duration_min = clamp_u16(dval, 120.0);
 
     val = json_get_bool(buf, "\"pause_enabled\"");
     if (val >= 0) cfg.pause_enabled = (val == 1);
@@ -1634,11 +1642,15 @@ static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
         led_preset_t p;
         led_preset_get(i, &p);
 
+        if (pos >= (int)buf_size - 2) {
+            break;  /* buffer full */
+        }
+
         /* Escape name */
         char ename[LED_PRESET_NAME_LEN * 2 + 4];
         json_escape(p.name, ename, sizeof(ename));
 
-        pos += snprintf(buf + pos, buf_size - (size_t)pos,
+        int written = snprintf(buf + pos, buf_size - (size_t)pos,
             "%s{\"slot\":%d,\"name\":\"%s\","
             "\"config\":{"
             "\"enabled\":%s,"
@@ -1665,6 +1677,9 @@ static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
             p.config.off_hour,  p.config.off_minute,
             p.config.brightness,
             p.config.red, p.config.green, p.config.blue);
+        if (written > 0 && pos + written < (int)buf_size) {
+            pos += written;
+        }
     }
 
     if (pos + 3 < (int)buf_size) {
@@ -1731,7 +1746,7 @@ static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
         val = json_get_int(buf, "\"on_minute\"");
         if (val >= 0) cfg.on_minute = (uint8_t)val;
         if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
-            cfg.ramp_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 0 ? 0 : (int)dval));
+            cfg.ramp_duration_min = clamp_u16(dval, 120.0);
         val = json_get_bool(buf, "\"pause_enabled\"");
         if (val >= 0) cfg.pause_enabled = (val == 1);
         val = json_get_int(buf, "\"pause_start_hour\"");
