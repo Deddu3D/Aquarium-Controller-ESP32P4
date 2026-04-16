@@ -3,7 +3,7 @@
 Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - gestione **LED WS2812B** (scene, preset, schedule)
 - monitoraggio **temperatura DS18B20** con storico e CSV
-- controllo **4 relè** con programmazione oraria
+- controllo **4 relè** manuale (programmazione oraria riservata alla **CO₂**)
 - notifiche **Telegram** (allarmi, promemoria, test, report)
 - modulo **Auto-Heater** e gestione **CO₂**
 - dashboard locale su **Display LVGL touch** e **Web UI REST**
@@ -59,7 +59,8 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - **Relè**
   - comando manuale
   - nomi personalizzati
-  - schedule per canale
+- **CO₂**
+  - programmazione oraria dedicata (via schedule luci + pre/post ritardi)
 - **Telegram bot**
   - eventi relè
   - allarmi temperatura
