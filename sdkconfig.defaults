@@ -66,6 +66,9 @@ CONFIG_DS18B20_READ_INTERVAL_MS=5000
 CONFIG_TEMP_HISTORY_INTERVAL_SEC=300
 CONFIG_DS18B20_CALIBRATION_OFFSET_CENTI=0
 
+# ── Relay defaults ────────────────────────────────────────────────
+CONFIG_RELAY_ACTIVE_LOW=y
+
 # ── FreeRTOS hardening ────────────────────────────────────────────
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
 

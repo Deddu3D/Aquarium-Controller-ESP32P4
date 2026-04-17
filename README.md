@@ -112,6 +112,7 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - LED strip data: **GPIO 8**
 - DS18B20 data: **GPIO 21**
 - Relay 1..4: **GPIO 22 / 23 / 24 / 25**
+- Polarità relè: **active-low** (default, tipico moduli optoisolati)
 
 ### Display / touch
 - Backlight: **GPIO 26**

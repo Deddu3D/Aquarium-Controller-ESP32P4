@@ -132,11 +132,11 @@ menu "Aquarium Relay Settings"
 
     config RELAY_ACTIVE_LOW
         bool "Relays are active-low"
-        default n
+        default y
         help
             Enable if your relay modules activate when the input is
             driven LOW (common for opto-isolated relay boards).
-            When disabled (default), GPIO HIGH = relay ON.
+            When disabled, GPIO HIGH = relay ON.
 
 endmenu
 
