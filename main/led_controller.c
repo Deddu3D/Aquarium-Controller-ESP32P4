@@ -21,7 +21,7 @@
 /* ── Configuration from Kconfig ──────────────────────────────────── */
 
 #ifndef CONFIG_LED_STRIP_GPIO
-#define CONFIG_LED_STRIP_GPIO 8
+#define CONFIG_LED_STRIP_GPIO 20
 #endif
 
 #ifndef CONFIG_LED_STRIP_NUM_LEDS
