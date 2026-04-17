@@ -125,6 +125,9 @@ esp_err_t display_driver_init(void)
         ESP_LOGE(TAG, "LDO acquire failed: 0x%x", ret);
         return ret;
     }
+    /* Allow the MIPI DSI PHY power rail to stabilise before driving
+     * the DSI bus or toggling the panel reset line.                  */
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     /* ── 2. Configure backlight GPIO ──────────────────────────────── */
 #if CONFIG_DISPLAY_BK_LIGHT_GPIO >= 0
@@ -199,6 +202,27 @@ esp_err_t display_driver_init(void)
         .bits_per_pixel = 24,
         .vendor_config  = &vendor_cfg,
     };
+    /* ── Pre-reset the ILI9881C via its RST GPIO ─────────────────────
+     * esp_lcd_new_panel_ili9881c() calls esp_lcd_new_panel_dpi()
+     * internally, which configures the DSI PHY clock.  If the panel
+     * is in an unknown power-on state the PHY PLL cannot lock and the
+     * call hangs indefinitely.  Toggling RST here puts the ILI9881C
+     * into a known state before any DSI traffic is attempted.        */
+#if CONFIG_DISPLAY_RST_GPIO >= 0
+    {
+        gpio_config_t rst_cfg = {
+            .mode         = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << CONFIG_DISPLAY_RST_GPIO,
+        };
+        gpio_config(&rst_cfg);
+        gpio_set_level(CONFIG_DISPLAY_RST_GPIO, 0);     /* assert reset  */
+        vTaskDelay(pdMS_TO_TICKS(10));
+        gpio_set_level(CONFIG_DISPLAY_RST_GPIO, 1);     /* deassert      */
+        vTaskDelay(pdMS_TO_TICKS(120));                 /* ILI9881C ≥120 ms */
+    }
+#endif
+
+    ESP_LOGI(TAG, "Create ILI9881C panel driver");
     ret = esp_lcd_new_panel_ili9881c(dbi_io, &panel_cfg, &dpi_panel);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ILI9881C panel create failed: 0x%x", ret);
