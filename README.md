@@ -6,23 +6,13 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - controllo **4 relè** manuale (programmazione oraria riservata alla **CO₂**)
 - notifiche **Telegram** (allarmi, promemoria, test, report)
 - modulo **Auto-Heater** e gestione **CO₂**
-- dashboard locale su **Display LVGL touch** e **Web UI REST**
+- **Web UI REST** locale
 
-> Stack: ESP-IDF + ESP Hosted (P4 + C6) + LVGL + HTTP server embedded.
+> Stack: ESP-IDF + ESP Hosted (P4 + C6) + HTTP server embedded.
 
 ---
 
 ## 📸 Screenshot aggiornati
-
-### Display UI (LVGL, 4 tab)
-
-| Riepilogo | LED Strip |
-|---|---|
-| ![Display UI – Riepilogo](docs/screenshots/display_ui_riepilogo.png) | ![Display UI – LED Strip](docs/screenshots/display_ui_led_strip.png) |
-
-| Telegram | Manutenzione |
-|---|---|
-| ![Display UI – Telegram](docs/screenshots/display_ui_telegram.png) | ![Display UI – Manutenzione](docs/screenshots/display_ui_manutenzione.png) |
 
 ### Web UI (desktop + mobile)
 
@@ -43,7 +33,6 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 ## ✨ Funzionalità principali
 
 - **WiFi STA + AP fallback** (captive portal di configurazione)
-- **Display touch 800x480** con tab sincronizzati con la Web UI
 - **Web dashboard** con controlli in tempo reale
 - **REST API JSON** per integrazione esterna
 - **LED control avanzato**
@@ -87,16 +76,13 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 2. WiFi manager init
 3. timezone + SNTP
 4. init moduli (LED, sensore, Telegram, relè, heater, CO₂, DuckDNS)
-5. init display in task dedicato su **CPU1**
-6. avvio Web server
-7. loop applicativo (tick moduli + refresh UI)
+5. avvio Web server
+6. loop applicativo (tick moduli)
 
 ### Moduli principali (`main/`)
 - `main.c` – orchestrazione bootstrap e loop
 - `wifi_manager.*` – STA/AP e provisioning
 - `web_server.*` – dashboard + endpoint REST
-- `display_driver.*` – MIPI DSI + touch GT911 + LVGL (driver LCD selezionabile da menuconfig)
-- `display_ui.*` – UI a 4 tab
 - `led_controller.*`, `led_schedule.*`, `led_scenes.*`
 - `temperature_sensor.*`, `temperature_history.*`
 - `relay_controller.*`
@@ -113,12 +99,6 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - DS18B20 data: **GPIO 21**
 - Relay 1..4: **GPIO 22 / 23 / 24 / 25**
 - Polarità relè: **active-low** (default, tipico moduli optoisolati)
-
-### Display / touch
-- Backlight: **GPIO 26**
-- LCD reset: **GPIO 27**
-- Touch SDA/SCL: **GPIO 7 / 9**
-- Touch INT/RST: **-1 / -1** (opzionali)
 
 > Tutti i valori sono modificabili da `idf.py menuconfig`.
 
@@ -144,7 +124,6 @@ idf.py -p /dev/ttyACM0 flash monitor
 - **Aquarium LED Strip Settings**
 - **Aquarium Temperature Sensor Settings**
 - **Aquarium Relay Settings**
-- **Aquarium Display Settings** (driver LCD: ILI9881C / ST7701 / JD9365)
 - **Aquarium HTTPS Settings**
 
 ---
@@ -202,7 +181,6 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 ## 🛠️ Troubleshooting rapido
 
-- **Display nero** → controllare cablaggio MIPI/backlight/reset.
 - **WiFi non connesso** → verificare SSID/password o usare AP setup.
 - **Telegram non invia** → controllare token/chat ID e ora SNTP sincronizzata.
 - **Temperatura nulla** → verificare DS18B20 e pull-up 4.7k.
@@ -225,8 +203,6 @@ idf.py -p /dev/ttyACM0 flash monitor
     ├── idf_component.yml
     ├── main.c
     ├── web_server.c
-    ├── display_driver.c
-    ├── display_ui.c
     └── ...
 ```
 

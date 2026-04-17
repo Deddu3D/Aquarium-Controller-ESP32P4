@@ -39,8 +39,6 @@
 #include "auto_heater.h"
 #include "co2_controller.h"
 #include "timezone_manager.h"
-#include "display_driver.h"
-#include "display_ui.h"
 
 static const char *TAG = "aquarium";
 
@@ -50,24 +48,6 @@ static void on_relay_change(int index, bool on, const char *source)
     char name[RELAY_NAME_MAX];
     relay_controller_get_name(index, name, sizeof(name));
     telegram_notify_relay_change(index, on, name, source);
-}
-
-/* ── Background task: initialise MIPI DSI display + LVGL + touch ── */
-/* Runs outside app_main so that a disconnected panel cannot block
- * WiFi, web server, or any other service from starting.             */
-static void display_init_task(void *arg)
-{
-    esp_err_t ret = display_driver_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Display init failed (0x%x) – continuing without display", ret);
-    } else {
-        ESP_LOGI(TAG, "MIPI DSI display ready (800x480)");
-        ret = display_ui_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Display UI init failed (0x%x)", ret);
-        }
-    }
-    vTaskDelete(NULL);   /* one-shot task */
 }
 
 void app_main(void)
@@ -224,23 +204,6 @@ void app_main(void)
         ESP_LOGI(TAG, "DuckDNS client ready");
     }
 
-    /* ── 9b. Initialise MIPI DSI display + LVGL + touch ───────────── */
-    /* Run display init in a background task **pinned to CPU 1** so
-     * that the ILI9881C busy-wait DSI read-backs cannot starve the
-     * main task on CPU 0 (which feeds the task watchdog).
-     * If no display is connected these polls may spin indefinitely –
-     * isolating them on the second core keeps every other service
-     * (WiFi, web server, sensors, relays) fully responsive.          */
-    esp_task_wdt_reset();
-    {
-        BaseType_t xr = xTaskCreatePinnedToCore(
-                            display_init_task, "disp_init",
-                            8192, NULL, 5, NULL, 1);  /* pin to CPU 1 */
-        if (xr != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create display init task");
-        }
-    }
-
     /* ── 10. Start HTTP status server ─────────────────────────────── */
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
@@ -275,9 +238,6 @@ void app_main(void)
 
         /* Evaluate CO2 solenoid valve logic */
         co2_controller_tick();
-
-        /* Refresh on-screen LVGL dashboard */
-        display_ui_refresh();
 
         esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
