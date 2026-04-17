@@ -133,51 +133,30 @@ static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
                                               esp_lcd_dpi_panel_config_t *dpi_cfg,
                                               esp_lcd_panel_handle_t *out_panel)
 {
+#define CREATE_DSI_PANEL(VENDOR_TYPE, CREATE_FN)                              \
+    do {                                                                       \
+        VENDOR_TYPE vendor_cfg = {                                             \
+            .mipi_config = {                                                   \
+                .dsi_bus    = dsi_bus,                                         \
+                .dpi_config = dpi_cfg,                                         \
+                .lane_num   = DSI_LANE_NUM,                                    \
+            },                                                                 \
+        };                                                                     \
+        esp_lcd_panel_dev_config_t panel_cfg = {                               \
+            .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,                         \
+            .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,                       \
+            .bits_per_pixel = 24,                                              \
+            .vendor_config  = &vendor_cfg,                                     \
+        };                                                                     \
+        return CREATE_FN(dbi_io, &panel_cfg, out_panel);                       \
+    } while (0)
+
 #if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
-    ili9881c_vendor_config_t vendor_cfg = {
-        .mipi_config = {
-            .dsi_bus    = dsi_bus,
-            .dpi_config = dpi_cfg,
-            .lane_num   = DSI_LANE_NUM,
-        },
-    };
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 24,
-        .vendor_config  = &vendor_cfg,
-    };
-    return esp_lcd_new_panel_ili9881c(dbi_io, &panel_cfg, out_panel);
+    CREATE_DSI_PANEL(ili9881c_vendor_config_t, esp_lcd_new_panel_ili9881c);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
-    st7701_vendor_config_t vendor_cfg = {
-        .mipi_config = {
-            .dsi_bus    = dsi_bus,
-            .dpi_config = dpi_cfg,
-            .lane_num   = DSI_LANE_NUM,
-        },
-    };
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 24,
-        .vendor_config  = &vendor_cfg,
-    };
-    return esp_lcd_new_panel_st7701(dbi_io, &panel_cfg, out_panel);
+    CREATE_DSI_PANEL(st7701_vendor_config_t, esp_lcd_new_panel_st7701);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
-    jd9365_vendor_config_t vendor_cfg = {
-        .mipi_config = {
-            .dsi_bus    = dsi_bus,
-            .dpi_config = dpi_cfg,
-            .lane_num   = DSI_LANE_NUM,
-        },
-    };
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 24,
-        .vendor_config  = &vendor_cfg,
-    };
-    return esp_lcd_new_panel_jd9365(dbi_io, &panel_cfg, out_panel);
+    CREATE_DSI_PANEL(jd9365_vendor_config_t, esp_lcd_new_panel_jd9365);
 #else
     (void)dbi_io;
     (void)dsi_bus;
@@ -185,6 +164,8 @@ static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
     (void)out_panel;
     return ESP_ERR_NOT_SUPPORTED;
 #endif
+
+#undef CREATE_DSI_PANEL
 }
 
 /* ===================================================================
