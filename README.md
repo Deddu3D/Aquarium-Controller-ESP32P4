@@ -95,7 +95,7 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - `main.c` – orchestrazione bootstrap e loop
 - `wifi_manager.*` – STA/AP e provisioning
 - `web_server.*` – dashboard + endpoint REST
-- `display_driver.*` – MIPI DSI + touch GT911 + LVGL
+- `display_driver.*` – MIPI DSI + touch GT911 + LVGL (driver LCD selezionabile da menuconfig)
 - `display_ui.*` – UI a 4 tab
 - `led_controller.*`, `led_schedule.*`, `led_scenes.*`
 - `temperature_sensor.*`, `temperature_history.*`
@@ -143,7 +143,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 - **Aquarium LED Strip Settings**
 - **Aquarium Temperature Sensor Settings**
 - **Aquarium Relay Settings**
-- **Aquarium MIPI DSI Display Settings**
+- **Aquarium Display Settings** (driver LCD: ILI9881C / ST7701 / JD9365)
 - **Aquarium HTTPS Settings**
 
 ---
