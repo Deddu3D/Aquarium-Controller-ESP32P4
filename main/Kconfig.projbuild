@@ -140,7 +140,30 @@ menu "Aquarium Relay Settings"
 
 endmenu
 
-menu "Aquarium MIPI DSI Display Settings"
+menu "Aquarium Display Settings"
+
+    choice DISPLAY_PANEL_DRIVER
+        prompt "LCD panel driver"
+        default DISPLAY_PANEL_DRIVER_ILI9881C
+        help
+            Select the LCD controller driver used by the connected panel.
+
+    config DISPLAY_PANEL_DRIVER_ILI9881C
+        bool "ILI9881C (MIPI DSI)"
+        help
+            Driver for 5″ MIPI DSI 800×480 panels based on ILI9881C.
+
+    config DISPLAY_PANEL_DRIVER_ST7701
+        bool "ST7701 (MIPI DSI)"
+        help
+            Driver for MIPI DSI panels based on ST7701.
+
+    config DISPLAY_PANEL_DRIVER_JD9365
+        bool "JD9365 (MIPI DSI)"
+        help
+            Driver for MIPI DSI panels based on JD9365.
+
+    endchoice
 
     config DISPLAY_BK_LIGHT_GPIO
         int "LCD backlight GPIO"

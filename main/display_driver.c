@@ -3,10 +3,10 @@
  *
  * Aquarium Controller – MIPI DSI Display Driver implementation
  *
- * Initialises MIPI DSI bus → ILI9881C panel → GT911 touch → LVGL.
+ * Initialises MIPI DSI bus → selected panel driver → GT911 touch → LVGL.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
- * Display      : 5″ MIPI DSI, 800×480, ILI9881C controller
+ * Display      : 5″ MIPI DSI, 800×480 (driver selected via menuconfig)
  * Touch        : Goodix GT911 via I2C
  */
 
@@ -28,7 +28,13 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 
+#if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
 #include "esp_lcd_ili9881c.h"
+#elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
+#include "esp_lcd_st7701.h"
+#elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
+#include "esp_lcd_jd9365.h"
+#endif
 #include "esp_lcd_touch_gt911.h"
 #include "lvgl.h"
 
@@ -103,6 +109,77 @@ static bool dpi_flush_ready_cb(esp_lcd_panel_handle_t panel,
                                esp_lcd_dpi_panel_event_data_t *edata,
                                void *user_ctx);
 static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data);
+static const char *display_panel_driver_name(void);
+static esp_lcd_panel_dev_config_t make_panel_dev_config(void *vendor_cfg);
+static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
+                                              esp_lcd_dsi_bus_handle_t dsi_bus,
+                                              esp_lcd_dpi_panel_config_t *dpi_cfg,
+                                              esp_lcd_panel_handle_t *out_panel);
+
+static const char *display_panel_driver_name(void)
+{
+#if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
+    return "ILI9881C";
+#elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
+    return "ST7701";
+#elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
+    return "JD9365";
+#else
+    return "UNKNOWN";
+#endif
+}
+
+static esp_lcd_panel_dev_config_t make_panel_dev_config(void *vendor_cfg)
+{
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
+        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 24,
+        .vendor_config  = vendor_cfg,
+    };
+    return panel_cfg;
+}
+
+static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
+                                              esp_lcd_dsi_bus_handle_t dsi_bus,
+                                              esp_lcd_dpi_panel_config_t *dpi_cfg,
+                                              esp_lcd_panel_handle_t *out_panel)
+{
+#if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
+    ili9881c_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_ili9881c(dbi_io, &panel_cfg, out_panel);
+#elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
+    st7701_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_st7701(dbi_io, &panel_cfg, out_panel);
+#elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
+    jd9365_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_jd9365(dbi_io, &panel_cfg, out_panel);
+#else
+    ESP_LOGE(TAG, "No LCD panel driver selected in menuconfig");
+    return ESP_ERR_INVALID_STATE;
+#endif
+}
 
 /* ===================================================================
  *  Public API
@@ -189,25 +266,10 @@ esp_err_t display_driver_init(void)
         },
     };
 
-    ili9881c_vendor_config_t vendor_cfg = {
-        .mipi_config = {
-            .dsi_bus    = dsi_bus,
-            .dpi_config = &dpi_cfg,
-            .lane_num   = DSI_LANE_NUM,
-        },
-    };
-    esp_lcd_panel_dev_config_t panel_cfg = {
-        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
-        .bits_per_pixel = 24,
-        .vendor_config  = &vendor_cfg,
-    };
-    /* ── Pre-reset the ILI9881C via its RST GPIO ─────────────────────
-     * esp_lcd_new_panel_ili9881c() calls esp_lcd_new_panel_dpi()
-     * internally, which configures the DSI PHY clock.  If the panel
-     * is in an unknown power-on state the PHY PLL cannot lock and the
-     * call hangs indefinitely.  Toggling RST here puts the ILI9881C
-     * into a known state before any DSI traffic is attempted.        */
+    /* ── Pre-reset panel via RST GPIO ─────────────────────────────────
+     * The panel constructor configures the DSI PHY clock; if the panel
+     * is in an unknown power-on state the PHY PLL can fail to lock.
+     * Toggling RST here puts the panel in a known state before DSI I/O. */
 #if CONFIG_DISPLAY_RST_GPIO >= 0
     {
         gpio_config_t rst_cfg = {
@@ -222,10 +284,10 @@ esp_err_t display_driver_init(void)
     }
 #endif
 
-    ESP_LOGI(TAG, "Create ILI9881C panel driver");
-    ret = esp_lcd_new_panel_ili9881c(dbi_io, &panel_cfg, &dpi_panel);
+    ESP_LOGI(TAG, "Create panel driver: %s", display_panel_driver_name());
+    ret = create_selected_panel_driver(dbi_io, dsi_bus, &dpi_cfg, &dpi_panel);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "ILI9881C panel create failed: 0x%x", ret);
+        ESP_LOGE(TAG, "%s panel create failed: 0x%x", display_panel_driver_name(), ret);
         return ret;
     }
 
