@@ -160,7 +160,9 @@ static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
         .mipi_config = {
             .dsi_bus    = dsi_bus,
             .dpi_config = dpi_cfg,
-            .lane_num   = DSI_LANE_NUM,
+        },
+        .flags = {
+            .use_mipi_interface = 1,
         },
     };
     esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
