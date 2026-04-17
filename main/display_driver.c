@@ -133,12 +133,12 @@ static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
                                               esp_lcd_dpi_panel_config_t *dpi_cfg,
                                               esp_lcd_panel_handle_t *out_panel)
 {
-#define CREATE_DSI_PANEL(VENDOR_TYPE, CREATE_FN)                              \
+#define CREATE_DSI_PANEL(VENDOR_TYPE, CREATE_FN, DBI_IO, DSI_BUS, DPI_CFG, OUT_PANEL) \
     do {                                                                       \
         VENDOR_TYPE vendor_cfg = {                                             \
             .mipi_config = {                                                   \
-                .dsi_bus    = dsi_bus,                                         \
-                .dpi_config = dpi_cfg,                                         \
+                .dsi_bus    = (DSI_BUS),                                       \
+                .dpi_config = (DPI_CFG),                                       \
                 .lane_num   = DSI_LANE_NUM,                                    \
             },                                                                 \
         };                                                                     \
@@ -148,21 +148,25 @@ static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
             .bits_per_pixel = 24,                                              \
             .vendor_config  = &vendor_cfg,                                     \
         };                                                                     \
-        return CREATE_FN(dbi_io, &panel_cfg, out_panel);                       \
+        return CREATE_FN((DBI_IO), &panel_cfg, (OUT_PANEL));                   \
     } while (0)
 
 #if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
-    CREATE_DSI_PANEL(ili9881c_vendor_config_t, esp_lcd_new_panel_ili9881c);
+    CREATE_DSI_PANEL(ili9881c_vendor_config_t, esp_lcd_new_panel_ili9881c,
+                     dbi_io, dsi_bus, dpi_cfg, out_panel);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
-    CREATE_DSI_PANEL(st7701_vendor_config_t, esp_lcd_new_panel_st7701);
+    CREATE_DSI_PANEL(st7701_vendor_config_t, esp_lcd_new_panel_st7701,
+                     dbi_io, dsi_bus, dpi_cfg, out_panel);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
-    CREATE_DSI_PANEL(jd9365_vendor_config_t, esp_lcd_new_panel_jd9365);
+    CREATE_DSI_PANEL(jd9365_vendor_config_t, esp_lcd_new_panel_jd9365,
+                     dbi_io, dsi_bus, dpi_cfg, out_panel);
 #else
+    ESP_LOGE(TAG, "No LCD panel driver selected in menuconfig");
     (void)dbi_io;
     (void)dsi_bus;
     (void)dpi_cfg;
     (void)out_panel;
-    return ESP_ERR_NOT_SUPPORTED;
+    return ESP_ERR_INVALID_STATE;
 #endif
 
 #undef CREATE_DSI_PANEL
