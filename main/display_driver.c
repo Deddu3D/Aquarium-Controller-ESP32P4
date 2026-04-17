@@ -110,6 +110,7 @@ static bool dpi_flush_ready_cb(esp_lcd_panel_handle_t panel,
                                void *user_ctx);
 static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data);
 static const char *display_panel_driver_name(void);
+static esp_lcd_panel_dev_config_t make_panel_dev_config(void *vendor_cfg);
 static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
                                               esp_lcd_dsi_bus_handle_t dsi_bus,
                                               esp_lcd_dpi_panel_config_t *dpi_cfg,
@@ -128,48 +129,56 @@ static const char *display_panel_driver_name(void)
 #endif
 }
 
+static esp_lcd_panel_dev_config_t make_panel_dev_config(void *vendor_cfg)
+{
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,
+        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
+        .bits_per_pixel = 24,
+        .vendor_config  = vendor_cfg,
+    };
+    return panel_cfg;
+}
+
 static esp_err_t create_selected_panel_driver(esp_lcd_panel_io_handle_t dbi_io,
                                               esp_lcd_dsi_bus_handle_t dsi_bus,
                                               esp_lcd_dpi_panel_config_t *dpi_cfg,
                                               esp_lcd_panel_handle_t *out_panel)
 {
-#define CREATE_DSI_PANEL(VENDOR_TYPE, CREATE_FN, DBI_IO, DSI_BUS, DPI_CFG, OUT_PANEL) \
-    do {                                                                       \
-        VENDOR_TYPE vendor_cfg = {                                             \
-            .mipi_config = {                                                   \
-                .dsi_bus    = (DSI_BUS),                                       \
-                .dpi_config = (DPI_CFG),                                       \
-                .lane_num   = DSI_LANE_NUM,                                    \
-            },                                                                 \
-        };                                                                     \
-        esp_lcd_panel_dev_config_t panel_cfg = {                               \
-            .reset_gpio_num = CONFIG_DISPLAY_RST_GPIO,                         \
-            .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,                       \
-            .bits_per_pixel = 24,                                              \
-            .vendor_config  = &vendor_cfg,                                     \
-        };                                                                     \
-        return CREATE_FN((DBI_IO), &panel_cfg, (OUT_PANEL));                   \
-    } while (0)
-
 #if CONFIG_DISPLAY_PANEL_DRIVER_ILI9881C
-    CREATE_DSI_PANEL(ili9881c_vendor_config_t, esp_lcd_new_panel_ili9881c,
-                     dbi_io, dsi_bus, dpi_cfg, out_panel);
+    ili9881c_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_ili9881c(dbi_io, &panel_cfg, out_panel);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_ST7701
-    CREATE_DSI_PANEL(st7701_vendor_config_t, esp_lcd_new_panel_st7701,
-                     dbi_io, dsi_bus, dpi_cfg, out_panel);
+    st7701_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_st7701(dbi_io, &panel_cfg, out_panel);
 #elif CONFIG_DISPLAY_PANEL_DRIVER_JD9365
-    CREATE_DSI_PANEL(jd9365_vendor_config_t, esp_lcd_new_panel_jd9365,
-                     dbi_io, dsi_bus, dpi_cfg, out_panel);
+    jd9365_vendor_config_t vendor_cfg = {
+        .mipi_config = {
+            .dsi_bus    = dsi_bus,
+            .dpi_config = dpi_cfg,
+            .lane_num   = DSI_LANE_NUM,
+        },
+    };
+    esp_lcd_panel_dev_config_t panel_cfg = make_panel_dev_config(&vendor_cfg);
+    return esp_lcd_new_panel_jd9365(dbi_io, &panel_cfg, out_panel);
 #else
     ESP_LOGE(TAG, "No LCD panel driver selected in menuconfig");
-    (void)dbi_io;
-    (void)dsi_bus;
-    (void)dpi_cfg;
-    (void)out_panel;
     return ESP_ERR_INVALID_STATE;
 #endif
-
-#undef CREATE_DSI_PANEL
 }
 
 /* ===================================================================
