@@ -14,13 +14,13 @@ dependencies:
     version: "^0.3.0"
   ## ILI9881C: MIPI DSI LCD panel driver (800×480 / 800×1280)
   espressif/esp_lcd_ili9881c:
-    version: "^1.0.0"
+    version: "^2.0.2"
   ## ST7701: MIPI DSI LCD panel driver
   espressif/esp_lcd_st7701:
-    version: "^1.0.0"
+    version: "^2.0.2"
   ## JD9365: MIPI DSI LCD panel driver
   espressif/esp_lcd_jd9365:
-    version: "^1.0.0"
+    version: "^2.0.2"
   ## GT911: Capacitive touch controller (I2C)
   espressif/esp_lcd_touch_gt911:
     version: "^1.0.0"
