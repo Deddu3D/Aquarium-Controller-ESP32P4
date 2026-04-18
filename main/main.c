@@ -39,6 +39,7 @@
 #include "auto_heater.h"
 #include "co2_controller.h"
 #include "timezone_manager.h"
+#include "display_ui.h"
 
 static const char *TAG = "aquarium";
 
@@ -215,7 +216,16 @@ void app_main(void)
         ESP_LOGI(TAG, "Connect to '%s' WiFi to configure credentials", "AquariumSetup");
     }
 
-    /* ── 11. Main application loop ─────────────────────────────────── */
+    /* ── 11. Initialise touch display UI ──────────────────────────── */
+    esp_task_wdt_reset();
+    ret = display_ui_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Display UI init failed (0x%x) – continuing without display", ret);
+    } else {
+        ESP_LOGI(TAG, "Touch display UI ready");
+    }
+
+    /* ── 12. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         if (wifi_manager_is_connected()) {
