@@ -229,9 +229,8 @@ void app_main(void)
         /* Evaluate LED time-of-day schedule */
         led_schedule_tick();
 
-        /* Relay schedules intentionally disabled:
-         * relays must remain manually controllable without mandatory
-         * time programming; time-based automation is reserved to CO2. */
+        /* Evaluate relay time-of-day schedule slots */
+        relay_controller_tick_schedules();
 
         /* Evaluate auto-heater thermostat logic */
         auto_heater_tick();
