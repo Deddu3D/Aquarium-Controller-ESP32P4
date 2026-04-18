@@ -140,6 +140,43 @@ menu "Aquarium Relay Settings"
 
 endmenu
 
+menu "Aquarium Display Settings"
+
+    config DISPLAY_ENABLED
+        bool "Enable touch display UI (LVGL)"
+        default y
+        help
+            Enable the Waveshare 4-DSI-TOUCH-A 720×720 touch display with
+            the LVGL-based dashboard.  Disable if no display is attached.
+
+    config TOUCH_I2C_SCL
+        int "GT911 touch I2C SCL GPIO"
+        default 8
+        depends on DISPLAY_ENABLED
+        help
+            GPIO for the I2C SCL line connected to the GT911 touch controller.
+            On the Waveshare ESP32-P4-WiFi6 board this is GPIO 8.
+
+    config TOUCH_I2C_SDA
+        int "GT911 touch I2C SDA GPIO"
+        default 7
+        depends on DISPLAY_ENABLED
+        help
+            GPIO for the I2C SDA line connected to the GT911 touch controller.
+            On the Waveshare ESP32-P4-WiFi6 board this is GPIO 7.
+
+    config DISPLAY_BACKLIGHT_GPIO
+        int "Backlight control GPIO (-1 = always on via hardware)"
+        default -1
+        range -1 54
+        depends on DISPLAY_ENABLED
+        help
+            GPIO used to enable/disable the panel backlight.  Set to -1 if
+            the backlight is wired permanently on or controlled by the panel
+            itself (most Waveshare 4-DSI-TOUCH-A configurations).
+
+endmenu
+
 menu "Aquarium HTTPS Settings"
 
     config AQUARIUM_HTTPS_ENABLE
