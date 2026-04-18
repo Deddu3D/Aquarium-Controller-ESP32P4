@@ -183,7 +183,7 @@ static lv_obj_t *s_info_time   = NULL;
 static esp_lcd_dpi_panel_config_t s_dpi_cfg = {
     .virtual_channel    = 0,
     .dpi_clock_freq_mhz = DPI_CLK_MHZ,
-    .color_format       = LCD_COLOR_FORMAT_RGB565,
+    .in_color_format    = LCD_COLOR_FMT_RGB565,
     .num_fbs            = 1,
     .video_timing = {
         .h_size              = LCD_W,
@@ -276,7 +276,7 @@ static esp_err_t touch_hw_init(void)
     esp_lcd_panel_io_handle_t tp_io = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     ESP_RETURN_ON_ERROR(
-        esp_lcd_new_panel_io_i2c_v2(i2c_bus, &tp_io_cfg, &tp_io),
+        esp_lcd_new_panel_io_i2c(i2c_bus, &tp_io_cfg, &tp_io),
         TAG, "GT911 panel IO init failed");
 
     esp_lcd_touch_config_t tp_cfg = {
