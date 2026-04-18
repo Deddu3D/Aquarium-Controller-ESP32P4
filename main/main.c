@@ -219,7 +219,9 @@ void app_main(void)
     /* ── 11. Initialise touch display UI ──────────────────────────── */
     esp_task_wdt_reset();
     ret = display_ui_init();
-    if (ret != ESP_OK) {
+    if (ret == ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGI(TAG, "Touch display disabled in Kconfig – skipping");
+    } else if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Display UI init failed (0x%x) – continuing without display", ret);
     } else {
         ESP_LOGI(TAG, "Touch display UI ready");

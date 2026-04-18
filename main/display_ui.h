@@ -37,9 +37,10 @@ extern "C" {
  * that the UI can immediately display live values.
  *
  * @return
- *   - ESP_OK   on success.
- *   - ESP_FAIL if display or touch hardware initialisation fails; the firmware
- *              continues without display in that case.
+ *   - ESP_OK               on success.
+ *   - ESP_ERR_NOT_SUPPORTED if `CONFIG_DISPLAY_ENABLED` is disabled in Kconfig.
+ *   - ESP_FAIL             if display or touch hardware initialisation fails; the firmware
+ *                          continues without display in that case.
  */
 esp_err_t display_ui_init(void);
 

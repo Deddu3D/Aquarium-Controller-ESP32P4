@@ -15,7 +15,13 @@
 /* ── Skip everything when display is disabled in Kconfig ──────────────── */
 #if !CONFIG_DISPLAY_ENABLED
 
-esp_err_t display_ui_init(void) { return ESP_OK; }
+#include "esp_log.h"
+static const char *TAG_STUB = "display_ui";
+esp_err_t display_ui_init(void)
+{
+    ESP_LOGD(TAG_STUB, "Display disabled in Kconfig – skipping initialisation");
+    return ESP_ERR_NOT_SUPPORTED;
+}
 
 #else  /* CONFIG_DISPLAY_ENABLED */
 
