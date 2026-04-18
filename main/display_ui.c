@@ -92,20 +92,23 @@ static const char *TAG = "display_ui";
 #define LVGL_BUF_LINES      40            /* partial-render buffer height */
 #define UI_REFRESH_MS       2000          /* data polling interval        */
 
-/* ── Colour palette (matches web UI) ───────────────────────────────── */
-#define C_BG        0x0b1121
-#define C_CARD      0x131c31
-#define C_BORDER    0x1a2540
-#define C_INPUT     0x1e293b
-#define C_ACCENT    0x38bdf8
-#define C_TEXT      0xe2e8f0
-#define C_MUTED     0x94a3b8
-#define C_ON        0x4ade80
-#define C_ON_BG     0x166534
-#define C_OFF       0x475569
-#define C_ERR       0xf87171
-#define C_ERR_BG    0x7f1d1d
-#define C_WARN      0xfbbf24
+/* ── Colour palette – inspired by dark glassmorphism dashboard ──────── */
+#define C_BG        0x080d18   /* deep navy background                    */
+#define C_CARD      0x0f1729   /* card surface                            */
+#define C_BORDER    0x1e2d4a   /* very subtle divider (rarely used)       */
+#define C_INPUT     0x162040   /* input field / spinbox background        */
+#define C_ACCENT    0x06b6d4   /* teal – primary accent / tab highlight   */
+#define C_ORANGE    0xf97316   /* orange – temperature / heater           */
+#define C_AMBER     0xf59e0b   /* amber – LED / schedule                  */
+#define C_PINK      0xe879f9   /* magenta – CO2 / presets                 */
+#define C_TEXT      0xf1f5f9   /* near-white text                         */
+#define C_MUTED     0x64748b   /* slate-grey muted text                   */
+#define C_ON        0x22c55e   /* green – active / ON                     */
+#define C_ON_BG     0x14532d   /* dark green background                   */
+#define C_OFF       0x1e293b   /* off / disabled background               */
+#define C_ERR       0xf87171   /* red – error                             */
+#define C_ERR_BG    0x450a0a   /* very dark red background                */
+#define C_WARN      0xf59e0b   /* amber – warning (alias for C_AMBER)     */
 
 /* ╔══════════════════════════════════════════════════════════════════════
  * ║  2. Static state – hardware handles + widget references
@@ -117,8 +120,9 @@ static lv_display_t           *s_disp    = NULL;
 static SemaphoreHandle_t       s_mutex   = NULL;
 
 /* ─ Home tab ──────────────────────────────────────────────────────── */
-static lv_obj_t *s_temp_lbl       = NULL;   /* e.g. "24.5°C" */
-static lv_obj_t *s_temp_status    = NULL;   /* sensor OK / Errore */
+static lv_obj_t *s_temp_lbl       = NULL;   /* e.g. "24.5°C" centred in arc */
+static lv_obj_t *s_temp_arc       = NULL;   /* arc gauge on Home tab         */
+static lv_obj_t *s_temp_status    = NULL;   /* "Temperatura" label below arc */
 static lv_obj_t *s_led_swatch     = NULL;   /* colour preview square */
 static lv_obj_t *s_led_state_lbl  = NULL;   /* "Accese 75%" */
 static lv_obj_t *s_home_relay_sw[RELAY_COUNT]; /* quick relay toggles */
@@ -339,10 +343,9 @@ static void style_bg(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_CARD), 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(o, lv_color_hex(C_BORDER), 0);
-    lv_obj_set_style_border_width(o, 1, 0);
-    lv_obj_set_style_radius(o, 10, 0);
-    lv_obj_set_style_pad_all(o, 12, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, 14, 0);
+    lv_obj_set_style_pad_all(o, 14, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
 }
 
@@ -356,8 +359,8 @@ static void style_transp(lv_obj_t *o)
 
 static void style_section_lbl(lv_obj_t *o)
 {
-    lv_obj_set_style_text_color(o, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(o, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
 }
 
 static void style_muted_lbl(lv_obj_t *o)
@@ -366,38 +369,49 @@ static void style_muted_lbl(lv_obj_t *o)
     lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
 }
 
+static void __attribute__((unused)) style_accent_lbl(lv_obj_t *o, uint32_t colour)
+{
+    lv_obj_set_style_text_color(o, lv_color_hex(colour), 0);
+    lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
+}
+
 static void style_btn_accent(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_bg_color(o, lv_color_hex(0x0ea5e9), LV_STATE_PRESSED);
-    lv_obj_set_style_text_color(o, lv_color_hex(0x0f172a), 0);
-    lv_obj_set_style_radius(o, 8, 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x0891b2), LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(o, lv_color_hex(0x000e14), 0);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_shadow_color(o, lv_color_hex(C_ACCENT), 0);
+    lv_obj_set_style_shadow_width(o, 16, 0);
+    lv_obj_set_style_shadow_opa(o, LV_OPA_40, 0);
 }
 
 static void style_btn_green(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ON_BG), 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x0f3d20), LV_STATE_PRESSED);
     lv_obj_set_style_text_color(o, lv_color_hex(C_ON), 0);
-    lv_obj_set_style_radius(o, 8, 0);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(o, 0, 0);
 }
 
 static void style_btn_red(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ERR_BG), 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x2d0606), LV_STATE_PRESSED);
     lv_obj_set_style_text_color(o, lv_color_hex(C_ERR), 0);
-    lv_obj_set_style_radius(o, 8, 0);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(o, 0, 0);
 }
 
 static void style_btn_dark(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_INPUT), 0);
+    lv_obj_set_style_bg_color(o, lv_color_hex(0x0d1830), LV_STATE_PRESSED);
     lv_obj_set_style_text_color(o, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_radius(o, 8, 0);
-    lv_obj_set_style_border_width(o, 1, 0);
-    lv_obj_set_style_border_color(o, lv_color_hex(C_BORDER), 0);
+    lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
 }
 
 static void style_switch(lv_obj_t *o)
@@ -406,6 +420,12 @@ static void style_switch(lv_obj_t *o)
                                LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ON),
                                LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_color(o, lv_color_hex(C_ON),
+                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_width(o, 12,
+                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_shadow_opa(o, LV_OPA_50,
+                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(o, lv_color_hex(C_TEXT),
                                LV_PART_KNOB | LV_STATE_DEFAULT);
 }
@@ -416,20 +436,23 @@ static void style_slider(lv_obj_t *o)
                                LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ACCENT),
                                LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_color(o, lv_color_hex(C_ACCENT),
+                                   LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(o, 10, LV_PART_KNOB | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_opa(o, LV_OPA_40, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(o, lv_color_hex(C_INPUT),
                                LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_height(o, 8);
-    lv_obj_set_style_pad_ver(o, 12, LV_PART_MAIN); /* bigger tap area */
+    lv_obj_set_height(o, 6);
+    lv_obj_set_style_pad_ver(o, 14, LV_PART_MAIN); /* bigger tap area */
 }
 
 static void style_spinbox(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_INPUT), 0);
     lv_obj_set_style_text_color(o, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_border_color(o, lv_color_hex(C_BORDER), 0);
-    lv_obj_set_style_border_width(o, 1, 0);
-    lv_obj_set_style_radius(o, 6, 0);
-    lv_obj_set_style_pad_all(o, 4, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    lv_obj_set_style_radius(o, 8, 0);
+    lv_obj_set_style_pad_all(o, 6, 0);
     /* hide the built-in cursor */
     lv_obj_set_style_border_width(o, 0, LV_PART_CURSOR);
 }
@@ -438,8 +461,8 @@ static void style_tab_page(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(o, 12, 0);
-    lv_obj_set_style_pad_gap(o, 10, 0);
+    lv_obj_set_style_pad_all(o, 14, 0);
+    lv_obj_set_style_pad_gap(o, 12, 0);
 }
 
 /* ╔══════════════════════════════════════════════════════════════════════
@@ -600,7 +623,7 @@ static void build_home_tab(lv_obj_t *tab)
     style_tab_page(tab);
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
 
-    /* ── Temperature card ─────────────────────────────────────── */
+    /* ── Temperature arc-gauge card ──────────────────────────────── */
     lv_obj_t *tc = lv_obj_create(tab);
     style_bg(tc);
     lv_obj_set_width(tc, LV_PCT(100));
@@ -609,17 +632,50 @@ static void build_home_tab(lv_obj_t *tab)
     lv_obj_set_flex_align(tc, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_gap(tc, 6, 0);
+    lv_obj_set_style_pad_gap(tc, 8, 0);
 
-    s_temp_lbl = lv_label_create(tc);
-    lv_label_set_text(s_temp_lbl, "--.-°C");
-    lv_obj_set_style_text_font(s_temp_lbl, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(s_temp_lbl, lv_color_hex(C_MUTED), 0);
+    /* Arc container – fixed square so label can be centred inside */
+    lv_obj_t *arc_cont = lv_obj_create(tc);
+    lv_obj_set_style_bg_opa(arc_cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(arc_cont, 0, 0);
+    lv_obj_set_style_pad_all(arc_cont, 0, 0);
+    lv_obj_set_size(arc_cont, 160, 160);
+    lv_obj_remove_flag(arc_cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Arc gauge */
+    s_temp_arc = lv_arc_create(arc_cont);
+    lv_obj_set_size(s_temp_arc, 160, 160);
+    lv_arc_set_rotation(s_temp_arc, 135);       /* start at ~7 o'clock */
+    lv_arc_set_bg_angles(s_temp_arc, 0, 270);   /* 270° sweep          */
+    lv_arc_set_range(s_temp_arc, 150, 400);     /* 15.0 – 40.0 °C ×10  */
+    lv_arc_set_value(s_temp_arc, 250);          /* placeholder 25.0°C  */
+    lv_arc_set_mode(s_temp_arc, LV_ARC_MODE_NORMAL);
+    lv_obj_remove_flag(s_temp_arc, LV_OBJ_FLAG_CLICKABLE);
+    /* Background track */
+    lv_obj_set_style_arc_color(s_temp_arc, lv_color_hex(0x1a2d45), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_temp_arc, 10, LV_PART_MAIN);
+    /* Coloured indicator arc */
+    lv_obj_set_style_arc_color(s_temp_arc, lv_color_hex(C_ORANGE), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(s_temp_arc, 12, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(s_temp_arc, true, LV_PART_INDICATOR);
+    /* Hide the knob */
+    lv_obj_set_style_bg_opa(s_temp_arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s_temp_arc, 0, 0);
+    lv_obj_center(s_temp_arc);
+
+    /* Temperature label centred inside arc */
+    s_temp_lbl = lv_label_create(arc_cont);
+    lv_label_set_text(s_temp_lbl, "--.-\xc2\xb0""C");
+    lv_obj_set_style_text_font(s_temp_lbl, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(s_temp_lbl, lv_color_hex(C_ORANGE), 0);
     lv_obj_set_style_text_align(s_temp_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(s_temp_lbl);
 
+    /* Sub-label below arc */
     s_temp_status = lv_label_create(tc);
-    lv_label_set_text(s_temp_status, "Sensore: --");
+    lv_label_set_text(s_temp_status, "Temperatura");
     style_muted_lbl(s_temp_status);
+    lv_obj_set_style_text_align(s_temp_status, LV_TEXT_ALIGN_CENTER, 0);
 
     /* ── LED status card ──────────────────────────────────────── */
     lv_obj_t *lc = lv_obj_create(tab);
@@ -627,12 +683,12 @@ static void build_home_tab(lv_obj_t *tab)
     lv_obj_set_width(lc, LV_PCT(100));
     lv_obj_set_height(lc, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(lc, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(lc, 8, 0);
+    lv_obj_set_style_pad_gap(lc, 10, 0);
 
     lv_obj_t *lhdr = make_row(lc);
 
     lv_obj_t *ltitle = lv_label_create(lhdr);
-    lv_label_set_text(ltitle, "Illuminazione");
+    lv_label_set_text(ltitle, LV_SYMBOL_IMAGE "  Illuminazione");
     style_section_lbl(ltitle);
 
     s_led_state_lbl = lv_label_create(lhdr);
@@ -642,32 +698,32 @@ static void build_home_tab(lv_obj_t *tab)
 
     /* colour swatch */
     s_led_swatch = lv_obj_create(lc);
-    lv_obj_set_size(s_led_swatch, LV_PCT(100), 28);
+    lv_obj_set_size(s_led_swatch, LV_PCT(100), 40);
     lv_obj_set_style_bg_color(s_led_swatch, lv_color_hex(C_INPUT), 0);
     lv_obj_set_style_bg_opa(s_led_swatch, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_led_swatch, 0, 0);
-    lv_obj_set_style_radius(s_led_swatch, 6, 0);
+    lv_obj_set_style_radius(s_led_swatch, 10, 0);
     lv_obj_remove_flag(s_led_swatch, LV_OBJ_FLAG_SCROLLABLE);
 
     /* On / Off buttons */
     lv_obj_t *lbtns = make_row(lc);
-    lv_obj_set_style_pad_gap(lbtns, 10, 0);
+    lv_obj_set_style_pad_gap(lbtns, 12, 0);
 
     lv_obj_t *bon = lv_button_create(lbtns);
     lv_obj_set_flex_grow(bon, 1);
-    lv_obj_set_height(bon, 52);
+    lv_obj_set_height(bon, 56);
     style_btn_green(bon);
     lv_obj_t *lon = lv_label_create(bon);
-    lv_label_set_text(lon, "Accendi");
+    lv_label_set_text(lon, LV_SYMBOL_PLAY "  Accendi");
     lv_obj_center(lon);
     lv_obj_add_event_cb(bon, home_led_on_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *boff = lv_button_create(lbtns);
     lv_obj_set_flex_grow(boff, 1);
-    lv_obj_set_height(boff, 52);
+    lv_obj_set_height(boff, 56);
     style_btn_red(boff);
     lv_obj_t *loff = lv_label_create(boff);
-    lv_label_set_text(loff, "Spegni");
+    lv_label_set_text(loff, LV_SYMBOL_STOP "  Spegni");
     lv_obj_center(loff);
     lv_obj_add_event_cb(boff, home_led_off_cb, LV_EVENT_CLICKED, NULL);
 
@@ -677,11 +733,16 @@ static void build_home_tab(lv_obj_t *tab)
     lv_obj_set_width(rc, LV_PCT(100));
     lv_obj_set_height(rc, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(rc, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_gap(rc, 8, 0);
+    lv_obj_set_style_pad_gap(rc, 10, 0);
 
     lv_obj_t *rh = lv_label_create(rc);
-    lv_label_set_text(rh, "Relè");
+    lv_label_set_text(rh, LV_SYMBOL_SETTINGS "  Relè");
     style_section_lbl(rh);
+
+    /* Per-channel accent colours (teal, orange, green, pink) */
+    static const uint32_t relay_colours[RELAY_COUNT] = {
+        0x06b6d4, 0xf97316, 0x22c55e, 0xe879f9
+    };
 
     /* 2×2 grid */
     for (int row = 0; row < 2; row++) {
@@ -694,21 +755,47 @@ static void build_home_tab(lv_obj_t *tab)
 
             lv_obj_t *btn = lv_obj_create(grid_row);
             lv_obj_set_flex_grow(btn, 1);
-            lv_obj_set_height(btn, 64);
-            style_bg(btn);
-            lv_obj_set_style_pad_all(btn, 8, 0);
+            lv_obj_set_height(btn, 70);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(C_INPUT), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(btn, 0, 0);
+            lv_obj_set_style_radius(btn, 12, 0);
+            lv_obj_set_style_pad_all(btn, 10, 0);
             lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
             lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN,
                                        LV_FLEX_ALIGN_CENTER,
                                        LV_FLEX_ALIGN_CENTER);
             lv_obj_set_style_pad_gap(btn, 4, 0);
+            lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
-            lv_obj_t *nl = lv_label_create(btn);
+            /* Top row: coloured dot + relay name */
+            lv_obj_t *hrow = lv_obj_create(btn);
+            lv_obj_set_style_bg_opa(hrow, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(hrow, 0, 0);
+            lv_obj_set_style_pad_all(hrow, 0, 0);
+            lv_obj_set_size(hrow, LV_PCT(100), LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(hrow, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(hrow, LV_FLEX_ALIGN_START,
+                                        LV_FLEX_ALIGN_CENTER,
+                                        LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_gap(hrow, 6, 0);
+            lv_obj_remove_flag(hrow, LV_OBJ_FLAG_SCROLLABLE);
+
+            /* Coloured accent dot */
+            lv_obj_t *dot = lv_obj_create(hrow);
+            lv_obj_set_size(dot, 8, 8);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(relay_colours[idx]), 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(dot, 0, 0);
+            lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+            lv_obj_t *nl = lv_label_create(hrow);
             lv_label_set_text(nl, name);
             lv_obj_set_style_text_font(nl, &lv_font_montserrat_14, 0);
             lv_obj_set_style_text_color(nl, lv_color_hex(C_TEXT), 0);
             lv_label_set_long_mode(nl, LV_LABEL_LONG_DOT);
-            lv_obj_set_width(nl, LV_PCT(100));
+            lv_obj_set_flex_grow(nl, 1);
 
             lv_obj_t *sw = lv_switch_create(btn);
             style_switch(sw);
@@ -855,7 +942,7 @@ static void build_led_tab(lv_obj_t *tab)
     /* Power switch row */
     lv_obj_t *pr = make_row(mc);
     lv_obj_t *ptitle = lv_label_create(pr);
-    lv_label_set_text(ptitle, "Controllo Manuale");
+    lv_label_set_text(ptitle, LV_SYMBOL_EDIT "  Controllo Manuale");
     style_section_lbl(ptitle);
     s_led_sw = lv_switch_create(pr);
     style_switch(s_led_sw);
@@ -908,7 +995,7 @@ static void build_led_tab(lv_obj_t *tab)
     /* Apply button */
     lv_obj_t *ab = lv_button_create(mc);
     lv_obj_set_width(ab, LV_PCT(100));
-    lv_obj_set_height(ab, 52);
+    lv_obj_set_height(ab, 56);
     style_btn_accent(ab);
     lv_obj_t *al = lv_label_create(ab);
     lv_label_set_text(al, "Applica");
@@ -928,7 +1015,7 @@ static void build_led_tab(lv_obj_t *tab)
     /* Enable row */
     lv_obj_t *se = make_row(sc);
     lv_obj_t *set = lv_label_create(se);
-    lv_label_set_text(set, "Programmazione");
+    lv_label_set_text(set, LV_SYMBOL_CHARGE "  Programmazione");
     style_section_lbl(set);
     s_sched_sw = lv_switch_create(se);
     style_switch(s_sched_sw);
@@ -1014,7 +1101,7 @@ static void build_led_tab(lv_obj_t *tab)
     /* Save schedule button */
     lv_obj_t *ssb = lv_button_create(sc);
     lv_obj_set_width(ssb, LV_PCT(100));
-    lv_obj_set_height(ssb, 52);
+    lv_obj_set_height(ssb, 56);
     style_btn_accent(ssb);
     lv_obj_t *ssl = lv_label_create(ssb);
     lv_label_set_text(ssl, "Salva Programma");
@@ -1314,7 +1401,7 @@ static void build_config_tab(lv_obj_t *tab)
     /* Title + enable */
     lv_obj_t *hhr = make_row(hc);
     lv_obj_t *hht = lv_label_create(hhr);
-    lv_label_set_text(hht, "Riscaldatore Auto");
+    lv_label_set_text(hht, LV_SYMBOL_WARNING "  Riscaldatore Auto");
     style_section_lbl(hht);
     s_ht_en = lv_switch_create(hhr);
     style_switch(s_ht_en);
@@ -1348,7 +1435,7 @@ static void build_config_tab(lv_obj_t *tab)
 
     lv_obj_t *ht_sb = lv_button_create(hc);
     lv_obj_set_width(ht_sb, LV_PCT(100));
-    lv_obj_set_height(ht_sb, 52);
+    lv_obj_set_height(ht_sb, 56);
     style_btn_accent(ht_sb);
     lv_obj_t *ht_sl = lv_label_create(ht_sb);
     lv_label_set_text(ht_sl, "Salva Riscaldatore");
@@ -1365,7 +1452,7 @@ static void build_config_tab(lv_obj_t *tab)
 
     lv_obj_t *chr = make_row(cc);
     lv_obj_t *cht = lv_label_create(chr);
-    lv_label_set_text(cht, "CO\u2082 Controller");
+    lv_label_set_text(cht, LV_SYMBOL_REFRESH "  CO\u2082 Controller");
     style_section_lbl(cht);
     s_co2_en = lv_switch_create(chr);
     style_switch(s_co2_en);
@@ -1393,7 +1480,7 @@ static void build_config_tab(lv_obj_t *tab)
 
     lv_obj_t *co2_sb = lv_button_create(cc);
     lv_obj_set_width(co2_sb, LV_PCT(100));
-    lv_obj_set_height(co2_sb, 52);
+    lv_obj_set_height(co2_sb, 56);
     style_btn_accent(co2_sb);
     lv_obj_t *co2_sl = lv_label_create(co2_sb);
     lv_label_set_text(co2_sl, "Salva CO\u2082");
@@ -1409,7 +1496,7 @@ static void build_config_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_gap(tzc, 8, 0);
 
     lv_obj_t *tzt = lv_label_create(tzc);
-    lv_label_set_text(tzt, "Fuso Orario");
+    lv_label_set_text(tzt, LV_SYMBOL_WIFI "  Fuso Orario");
     style_section_lbl(tzt);
 
     s_tz_dd = lv_dropdown_create(tzc);
@@ -1425,7 +1512,8 @@ static void build_config_tab(lv_obj_t *tab)
     lv_obj_set_width(s_tz_dd, LV_PCT(100));
     lv_obj_set_style_bg_color(s_tz_dd, lv_color_hex(C_INPUT), 0);
     lv_obj_set_style_text_color(s_tz_dd, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_border_color(s_tz_dd, lv_color_hex(C_BORDER), 0);
+    lv_obj_set_style_border_width(s_tz_dd, 0, 0);
+    lv_obj_set_style_radius(s_tz_dd, 10, 0);
 
     /* Pre-select current timezone */
     {
@@ -1451,7 +1539,7 @@ static void build_config_tab(lv_obj_t *tab)
 
     lv_obj_t *tz_btn = lv_button_create(tzc);
     lv_obj_set_width(tz_btn, LV_PCT(100));
-    lv_obj_set_height(tz_btn, 52);
+    lv_obj_set_height(tz_btn, 56);
     style_btn_accent(tz_btn);
     lv_obj_t *tz_lbl = lv_label_create(tz_btn);
     lv_label_set_text(tz_lbl, "Applica Fuso Orario");
@@ -1476,7 +1564,7 @@ static void build_info_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_gap(ic, 8, 0);
 
     lv_obj_t *it = lv_label_create(ic);
-    lv_label_set_text(it, "Sistema");
+    lv_label_set_text(it, LV_SYMBOL_LIST "  Sistema");
     style_section_lbl(it);
 
     make_kv_row(ic, "WiFi",    &s_info_wifi);
@@ -1502,16 +1590,29 @@ static void ui_refresh_cb(lv_timer_t *timer)
             lv_label_set_text_fmt(s_temp_lbl, "%.1f\xc2\xb0""C", temp_c);
             bool ok_range = (temp_c >= 24.0f && temp_c <= 28.0f);
             lv_obj_set_style_text_color(s_temp_lbl,
-                ok_range ? lv_color_hex(C_ON) : lv_color_hex(C_ERR), 0);
+                ok_range ? lv_color_hex(C_ON) : lv_color_hex(C_ORANGE), 0);
         } else {
             lv_label_set_text(s_temp_lbl, "--.-\xc2\xb0""C");
             lv_obj_set_style_text_color(s_temp_lbl, lv_color_hex(C_MUTED), 0);
         }
     }
+    if (s_temp_arc) {
+        int32_t arc_val = tok ? (int32_t)(temp_c * 10.0f + 0.5f) : 250;
+        /* clamp to arc range 150-400 */
+        if (arc_val < 150) arc_val = 150;
+        if (arc_val > 400) arc_val = 400;
+        lv_arc_set_value(s_temp_arc, arc_val);
+        /* Arc colour: green if in-range, orange outside */
+        bool ok_range = tok && (temp_c >= 24.0f && temp_c <= 28.0f);
+        lv_obj_set_style_arc_color(s_temp_arc,
+            ok_range ? lv_color_hex(C_ON) : lv_color_hex(C_ORANGE),
+            LV_PART_INDICATOR);
+    }
     if (s_temp_status) {
-        lv_label_set_text(s_temp_status, tok ? "Sensore: OK" : "Sensore: Errore");
+        lv_label_set_text(s_temp_status,
+            tok ? "Temperatura" : "Sensore: Errore");
         lv_obj_set_style_text_color(s_temp_status,
-            tok ? lv_color_hex(C_ON) : lv_color_hex(C_ERR), 0);
+            tok ? lv_color_hex(C_MUTED) : lv_color_hex(C_ERR), 0);
     }
 
     /* ── LED status (Home tab) ───────────────────────────────── */
@@ -1603,16 +1704,30 @@ static void build_ui(void)
 
     /* Style the tab button bar */
     lv_obj_t *tb = lv_tabview_get_tab_bar(tv);
-    lv_obj_set_style_bg_color(tb, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_color(tb, lv_color_hex(0x060b14), 0);
     lv_obj_set_style_bg_opa(tb, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_side(tb, LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_color(tb, lv_color_hex(C_BORDER), 0);
-    lv_obj_set_style_border_width(tb, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_width(tb, 1, 0);
+
+    /* Default tab item: muted text, transparent bg */
     lv_obj_set_style_text_color(tb, lv_color_hex(C_MUTED),
                                 LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_color(tb, lv_color_hex(C_ACCENT),
+    lv_obj_set_style_bg_opa(tb, LV_OPA_TRANSP,
+                             LV_PART_ITEMS | LV_STATE_DEFAULT);
+
+    /* Active tab item: white text, teal top-border underline, no bg */
+    lv_obj_set_style_text_color(tb, lv_color_hex(C_TEXT),
                                 LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_color(tb, lv_color_hex(0x1e293b),
-                              LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(tb, LV_OPA_TRANSP,
+                             LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_side(tb, LV_BORDER_SIDE_TOP,
+                                  LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(tb, lv_color_hex(C_ACCENT),
+                                   LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_border_width(tb, 3,
+                                   LV_PART_ITEMS | LV_STATE_CHECKED);
+
     lv_obj_set_style_text_font(tb, &lv_font_montserrat_14, LV_PART_ITEMS);
 
     /* Build each tab */
