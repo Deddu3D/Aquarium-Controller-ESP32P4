@@ -42,6 +42,9 @@
 #include "display_ui.h"
 
 static const char *TAG = "aquarium";
+static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
+static const UBaseType_t DISPLAY_INIT_TASK_PRIORITY = 4; /* above idle, below system-critical tasks */
+static const BaseType_t DISPLAY_INIT_TASK_CORE = tskNO_AFFINITY;
 
 /* ── Relay change callback → Telegram notification ─────────────── */
 static void on_relay_change(int index, bool on, const char *source)
@@ -49,6 +52,20 @@ static void on_relay_change(int index, bool on, const char *source)
     char name[RELAY_NAME_MAX];
     relay_controller_get_name(index, name, sizeof(name));
     telegram_notify_relay_change(index, on, name, source);
+}
+
+static void display_init_task(void *arg)
+{
+    (void)arg;
+    esp_err_t ret = display_ui_init();
+    if (ret == ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGI(TAG, "Touch display disabled in Kconfig – skipping");
+    } else if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Display UI init failed (0x%x) – continuing without display", ret);
+    } else {
+        ESP_LOGI(TAG, "Touch display UI ready");
+    }
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -216,15 +233,18 @@ void app_main(void)
         ESP_LOGI(TAG, "Connect to '%s' WiFi to configure credentials", "AquariumSetup");
     }
 
-    /* ── 11. Initialise touch display UI ──────────────────────────── */
+    /* ── 11. Start touch display UI initialisation task ───────────── */
     esp_task_wdt_reset();
-    ret = display_ui_init();
-    if (ret == ESP_ERR_NOT_SUPPORTED) {
-        ESP_LOGI(TAG, "Touch display disabled in Kconfig – skipping");
-    } else if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Display UI init failed (0x%x) – continuing without display", ret);
-    } else {
-        ESP_LOGI(TAG, "Touch display UI ready");
+    BaseType_t task_create_result = xTaskCreatePinnedToCore(
+        display_init_task,
+        "display_init",
+        DISPLAY_INIT_TASK_STACK_SIZE,
+        NULL,
+        DISPLAY_INIT_TASK_PRIORITY,
+        NULL,
+        DISPLAY_INIT_TASK_CORE);
+    if (task_create_result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to start display init task – continuing without display");
     }
 
     /* ── 12. Main application loop ─────────────────────────────────── */
