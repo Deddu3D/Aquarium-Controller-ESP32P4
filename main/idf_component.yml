@@ -15,9 +15,8 @@ dependencies:
   ## LVGL: embedded graphics library for the touch display
   lvgl/lvgl:
     version: "^9.2.0"
-  ## HX8394 MIPI-DSI panel driver (Waveshare 720×720 round display)
-  waveshare/esp_lcd_hx8394:
-    version: "^1.0.3"
+  ## HX8394 MIPI-DSI panel driver – provided by the local components/esp_lcd_hx8394
+  ## component (avoids the registry version which still uses the removed color_space field).
   ## GT911 capacitive touch controller driver
   espressif/esp_lcd_touch_gt911:
     version: "^1.1.0"
