@@ -7,6 +7,7 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 - notifiche **Telegram** (allarmi, promemoria, test, report)
 - modulo **Auto-Heater** e gestione **CO₂**
 - **Web UI REST** locale
+- **Touch Display UI** LVGL v9 su display 720×720 (Waveshare 4-DSI-TOUCH-A)
 
 > Stack: ESP-IDF + ESP Hosted (P4 + C6) + HTTP server embedded.
 
@@ -27,6 +28,151 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 | Mobile |
 |---|
 | ![Web UI – Mobile](docs/screenshots/web_ui_mobile.png) |
+
+---
+
+## 🖥️ Touch Display UI
+
+Il display circolare **Waveshare 4-DSI-TOUCH-A** (720 × 720, IPS, MIPI-DSI, touch capacitivo GT911) mostra
+una dashboard LVGL v9 a **5 tab** con stile _dark glassmorphism_ ispirato alle moderne home-automation UI.
+
+### Palette & stile
+
+| Token | Valore | Utilizzo |
+|---|---|---|
+| `C_BG` | `#080d18` | Sfondo pagina – navy profondo |
+| `C_CARD` | `#0f1729` | Superficie card – senza bordo, `r=14` |
+| `C_ACCENT` | `#06b6d4` | Teal – azioni primarie, tab attivo (underline) |
+| `C_ORANGE` | `#f97316` | Temperatura / riscaldatore |
+| `C_ON` | `#22c55e` | ON / attivo (con glow shadow) |
+| `C_ERR` | `#f87171` | Errore / OFF pericoloso |
+| `C_PINK` | `#e879f9` | CO₂ / preset |
+
+- **Bottoni** pill-shaped (`LV_RADIUS_CIRCLE`, h=56 px) con shadow glow sui pulsanti accent
+- **Switch** con alone verde (`shadow`) quando attivi
+- **Slider** a 6 px con knob luminoso
+- **Tab bar** in fondo: sfondo nero assoluto, tab attivo con bordo teal da 3 px in cima
+
+---
+
+### Tab 1 – 🏠 Home
+
+Panoramica in tempo reale con aggiornamento ogni 2 s.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│            ╭──── ARC GAUGE (270°, arancione) ────╮      │
+│           ╭│              25.4°C                 │╮      │
+│           ││  ←────────────────────────────→     ││      │
+│           ╰│          Temperatura                │╯      │
+│            ╰────────────────────────────────────╯       │
+│                                                          │
+│  ┌─ Illuminazione ──────────────────────── Accese 75% ─┐ │
+│  │  ████████████████████  (swatch colore LED)          │ │
+│  │  [ ▶  Accendi ]             [ ■  Spegni ]           │ │
+│  └──────────────────────────────────────────────────────┘ │
+│                                                          │
+│  ┌─ ⚙ Relè ───────────────────────────────────────────┐  │
+│  │  ● Filtro        [ ○ ]   ● Riscaldatore  [ ● ]     │  │
+│  │  ● CO₂           [ ○ ]   ● Pompa         [ ● ]     │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+- **Arc gauge**: verde se 24–28 °C, arancione fuori range; etichetta Montserrat 28 pt centrata
+- **Coloured dots**: ogni relè ha il suo colore (teal / arancio / verde / rosa)
+- **Swatch LED**: rispecchia il colore RGB corrente della strip
+
+---
+
+### Tab 2 – 💡 LED
+
+Controllo manuale + programmazione schedule + preset.
+
+```
+┌─ ✎ Controllo Manuale ─────────────────── [switch] ─┐
+│  Lum. ──────────────────────────────  75%           │
+│  ████████████████  (preview colore)                 │
+│  R ●══════════════════════════════════○  220        │
+│  G ●═══════════════════════════  ○  180             │
+│  B ●═══════════  ○  100                             │
+│             [     Applica     ]                     │
+└──────────────────────────────────────────────────────┘
+┌─ ⚡ Programmazione ─────────────────── [switch] ──┐
+│  Accensione  [ − ] 08 [ + ] : [ − ] 00 [ + ]     │
+│  Spegnimento [ − ] 22 [ + ] : [ − ] 00 [ + ]     │
+│  Ramp (min)  [ − ] 30 [ + ]                      │
+│  Luminosità  ●══════════════════════════○         │
+│  Colore giorno  R ●═══════○   G ●═══○  B ●═══○   │
+│  Pausa mezzogiorno  ─────────────────── [switch]  │
+│             [ Salva Programma ]                   │
+└──────────────────────────────────────────────────┘
+┌─ Preset ──────────────────────────────────────────┐
+│  [ Alba Tropicale ]  [ Giornata Piena ]            │
+│  [ Tramonto ]        [ Notte Blu ]                 │
+└───────────────────────────────────────────────────┘
+```
+
+---
+
+### Tab 3 – 🔌 Relè
+
+Quattro card (una per relè): tocca il nome per rinominare con tastiera on-screen.
+
+```
+┌── [ Filtro   ✎ ] ──────────────────── [●══ ON ══●] ─┐
+│
+├── [ Riscaldatore ✎ ] ──────────────── [○══ OFF ══○] ─┤
+│
+├── [ CO₂ ✎ ] ────────────────────────── [●══ ON ══●] ─┤
+│
+└── [ Pompa ✎ ] ──────────────────────── [○══ OFF ══○] ─┘
+```
+
+- Tap sul nome → modal di rinomina con tastiera LVGL e overlay semitrasparente
+
+---
+
+### Tab 4 – ⚙ Config
+
+Configurazione parametri di automazione (salvati in NVS).
+
+```
+┌─ ⚠ Riscaldatore Auto ──────────────── [switch] ──┐
+│  Relè (1-4)   [ − ] 2 [ + ]                      │
+│  Target (°C)  [ − ] 26.0 [ + ]                   │
+│  Isteresi     [ − ] 0.5 [ + ]                    │
+│         [ Salva Riscaldatore ]                    │
+└───────────────────────────────────────────────────┘
+┌─ 🔄 CO₂ Controller ──────────────── [switch] ───┐
+│  Relè (1-4)       [ − ] 3 [ + ]                 │
+│  Anticipo ON      [ − ] 30 [ + ]  min            │
+│  Ritardo OFF      [ − ] 10 [ + ]  min            │
+│              [ Salva CO₂ ]                       │
+└──────────────────────────────────────────────────┘
+┌─ 📶 Fuso Orario ─────────────────────────────────┐
+│  ┌─────────────────────────────────────────────┐ │
+│  │ Italia / Europa Centrale           ▼        │ │
+│  └─────────────────────────────────────────────┘ │
+│              [ Applica Fuso Orario ]              │
+└───────────────────────────────────────────────────┘
+```
+
+---
+
+### Tab 5 – ℹ Info
+
+Stato di sistema aggiornato ogni 2 s.
+
+```
+┌─ 📋 Sistema ───────────────────────────────────────┐
+│  WiFi     Connesso                                 │
+│  IP       192.168.1.42                             │
+│  Heap     184320 B                                 │
+│  Uptime   2h 17m                                   │
+│  Ora      09:34  18/04/2026                        │
+└────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -55,9 +201,13 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
   - allarmi temperatura
   - test messaggio
   - promemoria cambio acqua/fertilizzante
-- **Manutenzione**
-  - OTA da URL
-  - DuckDNS
+- **Touch Display UI** LVGL v9 su display 720×720
+  - 5 tab: Home / LED / Relè / Config / Info
+  - arc gauge temperatura
+  - coloured-dot relay grid
+  - pill buttons + glow switches
+  - schedule e preset LED
+  - rename relè via keyboard on-screen
   - fuso orario POSIX
   - stato heap/uptime/rete
 - **HTTPS opzionale** (certificato embedded)
@@ -77,12 +227,14 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 3. timezone + SNTP
 4. init moduli (LED, sensore, Telegram, relè, heater, CO₂, DuckDNS)
 5. avvio Web server
-6. loop applicativo (tick moduli)
+6. **display UI init** (LVGL + MIPI-DSI HX8394 + GT911 touch)
+7. loop applicativo (tick moduli)
 
 ### Moduli principali (`main/`)
 - `main.c` – orchestrazione bootstrap e loop
 - `wifi_manager.*` – STA/AP e provisioning
 - `web_server.*` – dashboard + endpoint REST
+- `display_ui.*` – touch UI LVGL v9 (5 tab, arc gauge, dark glassmorphism)
 - `led_controller.*`, `led_schedule.*`, `led_scenes.*`
 - `temperature_sensor.*`, `temperature_history.*`
 - `relay_controller.*`
@@ -95,10 +247,11 @@ Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
 ## 📌 Pin di default (Kconfig)
 
 ### Periferiche
-- LED strip data: **GPIO 8**
+- LED strip data: **GPIO 20**
 - DS18B20 data: **GPIO 21**
 - Relay 1..4: **GPIO 22 / 23 / 24 / 25**
 - Polarità relè: **active-low** (default, tipico moduli optoisolati)
+- **Display MIPI-DSI** touch I2C: SCL **GPIO 8**, SDA **GPIO 7** · Backlight: hardware-controlled (GPIO -1)
 
 > Tutti i valori sono modificabili da `idf.py menuconfig`.
 
@@ -198,11 +351,15 @@ idf.py -p /dev/ttyACM0 flash monitor
 ├── README.md
 ├── docs/
 │   └── screenshots/
+│       ├── web_ui_*.png
+│       └── display/          ← screenshot touch UI (da aggiungere)
 └── main/
     ├── Kconfig.projbuild
     ├── idf_component.yml
     ├── main.c
     ├── web_server.c
+    ├── display_ui.c          ← LVGL touch dashboard
+    ├── display_ui.h
     └── ...
 ```
 
