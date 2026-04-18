@@ -369,12 +369,6 @@ static void style_muted_lbl(lv_obj_t *o)
     lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
 }
 
-static void __attribute__((unused)) style_accent_lbl(lv_obj_t *o, uint32_t colour)
-{
-    lv_obj_set_style_text_color(o, lv_color_hex(colour), 0);
-    lv_obj_set_style_text_font(o, &lv_font_montserrat_14, 0);
-}
-
 static void style_btn_accent(lv_obj_t *o)
 {
     lv_obj_set_style_bg_color(o, lv_color_hex(C_ACCENT), 0);
