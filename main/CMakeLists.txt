@@ -10,5 +10,6 @@ idf_component_register(
              esp_timer log led_strip driver
              onewire_bus ds18b20 esp_http_client esp-tls app_update esp_app_format
              esp_lcd esp_lcd_touch
+    PRIV_REQUIRES esp_lcd_hx8394
     EMBED_TXTFILES "telegram_root_cert.pem" "server.crt" "server.key"
 )
