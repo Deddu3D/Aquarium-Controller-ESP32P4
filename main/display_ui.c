@@ -40,6 +40,7 @@ esp_err_t display_ui_init(void)
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_check.h"
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
@@ -182,7 +183,7 @@ static lv_obj_t *s_info_time   = NULL;
 static esp_lcd_dpi_panel_config_t s_dpi_cfg = {
     .virtual_channel    = 0,
     .dpi_clock_freq_mhz = DPI_CLK_MHZ,
-    .pixel_format       = LCD_COLOR_PIXEL_FORMAT_RGB565,
+    .color_format       = LCD_COLOR_FORMAT_RGB565,
     .num_fbs            = 1,
     .video_timing = {
         .h_size              = LCD_W,
@@ -272,6 +273,12 @@ static esp_err_t touch_hw_init(void)
                         TAG, "I2C master bus init failed");
 
     /* ── GT911 touch controller ──────────────────────────────────── */
+    esp_lcd_panel_io_handle_t tp_io = NULL;
+    esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+    ESP_RETURN_ON_ERROR(
+        esp_lcd_new_panel_io_i2c_v2(i2c_bus, &tp_io_cfg, &tp_io),
+        TAG, "GT911 panel IO init failed");
+
     esp_lcd_touch_config_t tp_cfg = {
         .x_max         = LCD_W,
         .y_max         = LCD_H,
@@ -281,7 +288,7 @@ static esp_err_t touch_hw_init(void)
         .flags         = { .swap_xy = 0, .mirror_x = 0, .mirror_y = 0 },
     };
     ESP_RETURN_ON_ERROR(
-        esp_lcd_touch_new_i2c_gt911(i2c_bus, &tp_cfg, &s_touch),
+        esp_lcd_touch_new_i2c_gt911(tp_io, &tp_cfg, &s_touch),
         TAG, "GT911 touch init failed");
 
     ESP_LOGI(TAG, "GT911 touch controller ready (I2C SCL=%d SDA=%d)",
@@ -306,13 +313,13 @@ static void lvgl_flush_cb(lv_display_t *disp,
 
 static void lvgl_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    uint16_t x[1], y[1], str[1];
-    uint8_t  cnt = 0;
+    esp_lcd_touch_point_data_t points[1];
+    uint8_t cnt = 0;
     esp_lcd_touch_read_data(s_touch);
-    bool pressed = esp_lcd_touch_get_coordinates(s_touch, x, y, str, &cnt, 1);
-    if (pressed && cnt > 0) {
-        data->point.x = (int32_t)x[0];
-        data->point.y = (int32_t)y[0];
+    esp_lcd_touch_get_data(s_touch, points, &cnt, 1);
+    if (cnt > 0) {
+        data->point.x = (int32_t)points[0].x;
+        data->point.y = (int32_t)points[0].y;
         data->state   = LV_INDEV_STATE_PRESSED;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
