@@ -249,15 +249,17 @@ Stato di sistema aggiornato ogni 2 s.
 ### Periferiche
 - LED strip data: **GPIO 20**
 - DS18B20 data: **GPIO 21**
-- Relay 1..4: **GPIO 36 / 38 / 40 / 42**
+- Relay 1..4: **GPIO 22 / 23 / 26 / 27**
 - Polarità relè: **active-low** (default, tipico moduli optoisolati)
 - **Display MIPI-DSI** touch I2C: SCL **GPIO 8**, SDA **GPIO 7** · Backlight: hardware-controlled (GPIO -1)
 
 > Tutti i valori sono modificabili da `idf.py menuconfig`.
 
-> ⚠️ **Non usare GPIO24/GPIO25 per i relè**: su ESP32-P4 sono dedicati all'interfaccia USB-JTAG e il loro utilizzo causa glitch al boot e conflitti col debugger.
+> ⚠️ **Non usare GPIO24/GPIO25**: su questa board sono DM/DP del bus USB; il loro uso causa conflitti con la programmazione e l'USB device.
 
-> 📌 **Layout fisico (Waveshare ESP32-P4-WiFi6)**: LED strip e DS18B20 stanno sull'header **sinistro** (GPIO20/21); i quattro relè stanno sull'header **destro** (GPIO36/38/40/42), dalla parte opposta della scheda.
+> 📌 **GPIO disponibili sull'header (Waveshare ESP32-P4-WiFi6)**:  
+> Lato destro: 20, 21, **22, 23, 26, 27**, 32, 33, 46, 47, 48  
+> Lato sinistro: 2, 3, 4, 5, 7(SDA), 8(SCL), 28, 29, 30, 31, 49, 50, 51, 52
 
 ---
 

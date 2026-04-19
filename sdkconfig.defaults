@@ -67,16 +67,17 @@ CONFIG_TEMP_HISTORY_INTERVAL_SEC=300
 CONFIG_DS18B20_CALIBRATION_OFFSET_CENTI=0
 
 # ── Relay defaults ────────────────────────────────────────────────
-# Relays 1–4 are wired to GPIO36/38/40/42 on the RIGHT-side expansion
-# header of the Waveshare ESP32-P4-WiFi6 board, keeping them physically
-# separate from the LED strip (GPIO20) and DS18B20 sensor (GPIO21) which
-# are on the LEFT-side header.
-# NOTE: GPIO24 and GPIO25 must NOT be used for relays on ESP32-P4 because
-# they are multiplexed with the USB-JTAG interface.
-CONFIG_RELAY_1_GPIO=36
-CONFIG_RELAY_2_GPIO=38
-CONFIG_RELAY_3_GPIO=40
-CONFIG_RELAY_4_GPIO=42
+# Relays 1–4 use GPIO22/23/26/27 on the right-side header of the
+# Waveshare ESP32-P4-WiFi6 board (same side as GPIO20/21 used for
+# LED strip and DS18B20).
+# Available header GPIOs (from board silkscreen):
+#   Right side: 20, 21, 22, 23, 26, 27, 32, 33, 46, 47, 48
+#   Left  side: 2, 3, 4, 5, 7(SDA), 8(SCL), 28, 29, 30, 31, 49, 50, 51, 52
+# NOTE: GPIO24 (DM/USB D-) and GPIO25 (DP/USB D+) must NOT be used.
+CONFIG_RELAY_1_GPIO=22
+CONFIG_RELAY_2_GPIO=23
+CONFIG_RELAY_3_GPIO=26
+CONFIG_RELAY_4_GPIO=27
 CONFIG_RELAY_ACTIVE_LOW=y
 
 # ── FreeRTOS hardening ────────────────────────────────────────────
