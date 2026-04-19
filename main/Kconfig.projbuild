@@ -108,27 +108,34 @@ menu "Aquarium Relay Settings"
 
     config RELAY_1_GPIO
         int "Relay 1 GPIO"
-        default 22
+        default 36
         help
             GPIO pin connected to relay channel 1.
+            On the Waveshare ESP32-P4-WiFi6 board, GPIO36–42 are located on
+            the right-side expansion header (opposite side from the LED strip
+            and temperature sensor). GPIO24/25 must not be used here because
+            they are multiplexed with the USB-JTAG interface on ESP32-P4.
 
     config RELAY_2_GPIO
         int "Relay 2 GPIO"
-        default 23
+        default 38
         help
             GPIO pin connected to relay channel 2.
+            See RELAY_1_GPIO for board-layout rationale.
 
     config RELAY_3_GPIO
         int "Relay 3 GPIO"
-        default 24
+        default 40
         help
             GPIO pin connected to relay channel 3.
+            See RELAY_1_GPIO for board-layout rationale.
 
     config RELAY_4_GPIO
         int "Relay 4 GPIO"
-        default 25
+        default 42
         help
             GPIO pin connected to relay channel 4.
+            See RELAY_1_GPIO for board-layout rationale.
 
     config RELAY_ACTIVE_LOW
         bool "Relays are active-low"
