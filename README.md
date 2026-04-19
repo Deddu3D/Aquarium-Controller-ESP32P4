@@ -249,7 +249,7 @@ Stato di sistema aggiornato ogni 2 s.
 ### Periferiche
 - LED strip data: **GPIO 20**
 - DS18B20 data: **GPIO 21**
-- Relay 1..4: **GPIO 22 / 23 / 26 / 27**
+- Relay 1..4: **GPIO 28 / 29 / 30 / 31** (lato sinistro, opposto a LED/sensore)
 - Polarità relè: **active-low** (default, tipico moduli optoisolati)
 - **Display MIPI-DSI** touch I2C: SCL **GPIO 8**, SDA **GPIO 7** · Backlight: hardware-controlled (GPIO -1)
 
@@ -258,8 +258,8 @@ Stato di sistema aggiornato ogni 2 s.
 > ⚠️ **Non usare GPIO24/GPIO25**: su questa board sono DM/DP del bus USB; il loro uso causa conflitti con la programmazione e l'USB device.
 
 > 📌 **GPIO disponibili sull'header (Waveshare ESP32-P4-WiFi6)**:  
-> Lato destro: 20, 21, **22, 23, 26, 27**, 32, 33, 46, 47, 48  
-> Lato sinistro: 2, 3, 4, 5, 7(SDA), 8(SCL), 28, 29, 30, 31, 49, 50, 51, 52
+> Lato destro (LED/sensore): 20, 21, 22, 23, 26, 27, 32, 33, 46, 47, 48  
+> Lato sinistro (relè): 2, 3, 4, 5, **28, 29, 30, 31**, 49, 50, 51, 52 · 7(SDA) · 8(SCL riservati touch)
 
 ---
 
