@@ -38,6 +38,7 @@
 #include "esp_ota_ops.h"
 #include "feeding_mode.h"
 #include "led_scenes.h"
+#include "daily_cycle.h"
 
 static const char *TAG = "web_srv";
 
@@ -128,6 +129,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_TZ_BUF_SIZE       128
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    256
+#define JSON_DAILY_BUF_SIZE    256
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -140,6 +142,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define POST_BODY_TZ_SIZE       128
 #define POST_BODY_FEEDING_SIZE  128
 #define POST_BODY_SCENE_SIZE    256
+#define POST_BODY_DAILY_SIZE    192
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
@@ -494,6 +497,33 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"btn\" onclick=\"applyScene()\" style=\"margin-top:.4rem\">"
     "&#x25B6; Avvia Scena Selezionata</button>"
     "</div></div></div>"
+    "<!-- Daily Cycle -->"
+    "<div class=\"ccard\" id=\"daily-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x2600;&#xFE0F; Giornata Naturale</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Abilitato</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"dc-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Latitudine (°)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"dc-lat\""
+    " step=\"0.0001\" min=\"-90\" max=\"90\" value=\"45.46\""
+    " style=\"max-width:110px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Longitudine (°)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"dc-lon\""
+    " step=\"0.0001\" min=\"-180\" max=\"180\" value=\"9.19\""
+    " style=\"max-width:110px\"></div>"
+    "<div class=\"sect\">&#x1F305; Orari calcolati oggi</div>"
+    "<div class=\"row\"><span class=\"label\">Alba</span>"
+    "<span class=\"value\" id=\"dc-sunrise\">--:--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Tramonto</span>"
+    "<span class=\"value\" id=\"dc-sunset\">--:--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Fase attuale</span>"
+    "<span class=\"value\" id=\"dc-phase\">--</span></div>"
+    "<button class=\"btn btn-sm\" onclick=\"saveDailyCycle()\" style=\"margin-top:.4rem\">"
+    "&#x1F4BE; Salva Giornata Naturale</button>"
+    "</div></div></div>"
     "</div>"
     ""
     "<!-- ═══ Panel 2: Telegram ═══ -->"
@@ -747,7 +777,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  tabs[n].classList.add('active');"
     "  _tab=n;"
     "  if(n===0){loadDash();loadFeeding()}"
-    "  if(n===1){loadLeds();loadSched();loadPresets();loadSceneConfig()}"
+    "  if(n===1){loadLeds();loadSched();loadPresets();loadSceneConfig();loadDailyCycle()}"
     "  if(n===2){loadTg()}"
     "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}}"
     "/* ── Color helpers ── */"
@@ -1445,8 +1475,37 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    var names=['Nessuna','Alba','Tramonto','Chiaro di Luna','Temporale','Nuvole'];"
     "    toast(sc===0?'Scene fermate':('Scena: '+names[sc]),1)"
     "  }).catch(function(){toast('Errore avvio scena',0)})}"
+    "/* ── Daily Cycle ── */"
+    "var DC_PHASES=['Notte','Alba','Mattina','Mezzogiorno','Pomeriggio','Tramonto','Sera'];"
+    "function minToHHMM(m){if(m<0)return'--:--';"
+    "  return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%%60).padStart(2,'0')}"
+    "function loadDailyCycle(){"
+    "  fetch('/api/daily_cycle').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if($('dc-en'))$('dc-en').checked=!!d.enabled;"
+    "    if($('dc-lat'))$('dc-lat').value=d.latitude||0;"
+    "    if($('dc-lon'))$('dc-lon').value=d.longitude||0;"
+    "    if($('dc-sunrise'))$('dc-sunrise').textContent=minToHHMM(d.sunrise_min);"
+    "    if($('dc-sunset'))$('dc-sunset').textContent=minToHHMM(d.sunset_min);"
+    "    if($('dc-phase'))$('dc-phase').textContent=DC_PHASES[d.phase]||'--';"
+    "  }).catch(function(){})}"
+    "function saveDailyCycle(){"
+    "  var data={"
+    "    enabled:$('dc-en').checked,"
+    "    latitude:parseFloat($('dc-lat').value),"
+    "    longitude:parseFloat($('dc-lon').value)};"
+    "  fetch('/api/daily_cycle',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(d){"
+    "    if($('dc-sunrise'))$('dc-sunrise').textContent=minToHHMM(d.sunrise_min);"
+    "    if($('dc-sunset'))$('dc-sunset').textContent=minToHHMM(d.sunset_min);"
+    "    if($('dc-phase'))$('dc-phase').textContent=DC_PHASES[d.phase]||'--';"
+    "    toast('Giornata naturale salvata',1)"
+    "  }).catch(function(){toast('Errore salvataggio',0)})}"
     "/* ── Init ── */"
     "loadDash();"
+    "loadSceneConfig();loadDailyCycle();"
     "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
     "  loadDashHeater();loadFeeding()},2000);"
     "setInterval(function(){loadHistory()},60000);"
@@ -2846,6 +2905,68 @@ static esp_err_t api_scene_post_handler(httpd_req_t *req)
     return api_scene_get_handler(req);
 }
 
+/* ── Daily Cycle GET endpoint (/api/daily_cycle  GET) ────────────── */
+
+static esp_err_t api_daily_cycle_get_handler(httpd_req_t *req)
+{
+    daily_cycle_config_t cfg = daily_cycle_get_config();
+    daily_cycle_phase_t  phase = daily_cycle_get_phase();
+    int sunrise_min = daily_cycle_get_sunrise_min();
+    int sunset_min  = daily_cycle_get_sunset_min();
+
+    char buf[JSON_DAILY_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"enabled\":%s,"
+        "\"latitude\":%.4f,"
+        "\"longitude\":%.4f,"
+        "\"phase\":%d,"
+        "\"sunrise_min\":%d,"
+        "\"sunset_min\":%d}",
+        cfg.enabled ? "true" : "false",
+        cfg.latitude,
+        cfg.longitude,
+        (int)phase,
+        sunrise_min,
+        sunset_min);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Daily Cycle POST endpoint (/api/daily_cycle  POST) ──────────── */
+/*
+ * {"enabled":true,"latitude":45.46,"longitude":9.19}
+ * Any subset of fields may be provided; missing fields retain current values.
+ */
+
+static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_DAILY_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    daily_cycle_config_t cfg = daily_cycle_get_config();
+    double dval;
+
+    int en = json_get_bool(buf, "\"enabled\"");
+    if (en >= 0) cfg.enabled = (bool)en;
+
+    if (json_get_double(buf, "\"latitude\"",  &dval) == 0) cfg.latitude  = (float)dval;
+    if (json_get_double(buf, "\"longitude\"", &dval) == 0) cfg.longitude = (float)dval;
+
+    esp_err_t err = daily_cycle_set_config(&cfg);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid config");
+        return ESP_FAIL;
+    }
+
+    return api_daily_cycle_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -3086,6 +3207,20 @@ static const httpd_uri_t uri_api_scene_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_daily_cycle_get = {
+    .uri      = "/api/daily_cycle",
+    .method   = HTTP_GET,
+    .handler  = api_daily_cycle_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_daily_cycle_post = {
+    .uri      = "/api/daily_cycle",
+    .method   = HTTP_POST,
+    .handler  = api_daily_cycle_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -3170,6 +3305,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_feeding_post);
     httpd_register_uri_handler(s_server, &uri_api_scene_get);
     httpd_register_uri_handler(s_server, &uri_api_scene_post);
+    httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
+    httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");

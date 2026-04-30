@@ -4,6 +4,7 @@ idf_component_register(
          "telegram_notify.c" "relay_controller.c" "duckdns.c" "ota_update.c"
          "auto_heater.c" "feeding_mode.c"
          "co2_controller.c" "timezone_manager.c" "sun_position.c"
+         "daily_cycle.c"
          "display_ui.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_https_server

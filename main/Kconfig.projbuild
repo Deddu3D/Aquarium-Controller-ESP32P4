@@ -221,6 +221,32 @@ menu "Aquarium Feeding Mode Settings"
 
 endmenu
 
+menu "Aquarium Daily Cycle Settings"
+
+    config DAILY_CYCLE_LATITUDE_E4
+        int "Default latitude × 10000 (e.g. 454600 = 45.46°N)"
+        default 454600
+        range -900000 900000
+        help
+            Geographic latitude of the aquarium installation, expressed as
+            an integer equal to the decimal-degree value multiplied by 10000.
+            Used to compute real sunrise / sunset times for the daily lighting
+            cycle.  Positive = North, negative = South.
+            Examples: Milan 454600, Rome 418902, London 515060, New York 407128
+
+    config DAILY_CYCLE_LONGITUDE_E4
+        int "Default longitude × 10000 (e.g. 91900 = 9.19°E)"
+        default 91900
+        range -1800000 1800000
+        help
+            Geographic longitude of the aquarium installation, expressed as
+            an integer equal to the decimal-degree value multiplied by 10000.
+            Used to compute real sunrise / sunset times for the daily lighting
+            cycle.  Positive = East, negative = West.
+            Examples: Milan 91900, Rome 124942, London -1250, New York -740060
+
+endmenu
+
 menu "Aquarium LED Scene Settings"
 
     config LED_SCENE_SUNRISE_DURATION_MIN
