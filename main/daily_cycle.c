@@ -31,10 +31,10 @@ static const char *TAG = "daily_cycle";
 /* ── Kconfig defaults ────────────────────────────────────────────── */
 
 #ifndef CONFIG_DAILY_CYCLE_LATITUDE_E4
-#define CONFIG_DAILY_CYCLE_LATITUDE_E4   454600   /* 45.46 °N – Milan, Italy */
+#define CONFIG_DAILY_CYCLE_LATITUDE_E4   454600   /* 45.46 N - Milan, Italy */
 #endif
 #ifndef CONFIG_DAILY_CYCLE_LONGITUDE_E4
-#define CONFIG_DAILY_CYCLE_LONGITUDE_E4   91900   /*  9.19 °E – Milan, Italy */
+#define CONFIG_DAILY_CYCLE_LONGITUDE_E4   91900   /*  9.19 E - Milan, Italy */
 #endif
 
 /* ── Private state ───────────────────────────────────────────────── */
