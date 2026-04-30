@@ -199,3 +199,52 @@ menu "Aquarium HTTPS Settings"
             Protects Telegram credentials and WiFi passwords from LAN sniffing.
 
 endmenu
+
+menu "Aquarium Feeding Mode Settings"
+
+    config FEEDING_DEFAULT_RELAY
+        int "Default relay index for feeding pause (0-3, -1 = none)"
+        default 0
+        range -1 3
+        help
+            Relay channel that is paused (turned OFF) during feeding mode.
+            Typically connected to the main filter/circulation pump.
+            Set to -1 to disable relay control during feeding.
+
+    config FEEDING_DEFAULT_DURATION_MIN
+        int "Default feeding pause duration (minutes)"
+        default 10
+        range 1 60
+        help
+            How long the feeding pause lasts in minutes before automatically
+            restoring the relay and LED state.
+
+endmenu
+
+menu "Aquarium LED Scene Settings"
+
+    config LED_SCENE_SUNRISE_DURATION_MIN
+        int "Default sunrise ramp duration (minutes)"
+        default 30
+        range 5 120
+        help
+            Time in minutes for the full sunrise colour ramp from darkness
+            to daylight white.  A value of 30 minutes mimics a natural dawn.
+
+    config LED_SCENE_SUNSET_DURATION_MIN
+        int "Default sunset ramp duration (minutes)"
+        default 30
+        range 5 120
+        help
+            Time in minutes for the full sunset colour ramp from daylight
+            white back to darkness.
+
+    config LED_SCENE_MOONLIGHT_BRIGHTNESS
+        int "Default moonlight brightness (0-60)"
+        default 15
+        range 0 60
+        help
+            LED brightness level during the moonlight scene.  Should be very
+            dim (< 30) to simulate natural moonlight without disturbing fish.
+
+endmenu

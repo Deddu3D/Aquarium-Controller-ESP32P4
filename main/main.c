@@ -40,6 +40,7 @@
 #include "co2_controller.h"
 #include "timezone_manager.h"
 #include "display_ui.h"
+#include "feeding_mode.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -213,6 +214,15 @@ void app_main(void)
         ESP_LOGI(TAG, "CO2 controller module ready");
     }
 
+    /* ── 8d. Initialise feeding mode module ──────────────────────── */
+    esp_task_wdt_reset();
+    ret = feeding_mode_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Feeding mode init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "Feeding mode module ready");
+    }
+
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
     esp_task_wdt_reset();
     ret = duckdns_init();
@@ -269,6 +279,9 @@ void app_main(void)
 
         /* Evaluate CO2 solenoid valve logic */
         co2_controller_tick();
+
+        /* Evaluate feeding mode timer */
+        feeding_mode_tick();
 
         esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */

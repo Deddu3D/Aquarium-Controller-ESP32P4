@@ -65,6 +65,7 @@ esp_err_t display_ui_init(void)
 #include "co2_controller.h"
 #include "timezone_manager.h"
 #include "wifi_manager.h"
+#include "feeding_mode.h"
 
 static const char *TAG = "display_ui";
 
@@ -127,6 +128,8 @@ static lv_obj_t *s_temp_status    = NULL;   /* "Temperatura" label below arc */
 static lv_obj_t *s_led_swatch     = NULL;   /* colour preview square */
 static lv_obj_t *s_led_state_lbl  = NULL;   /* "Accese 75%" */
 static lv_obj_t *s_home_relay_sw[RELAY_COUNT]; /* quick relay toggles */
+static lv_obj_t *s_feeding_lbl    = NULL;   /* feeding mode status label */
+static lv_obj_t *s_feeding_btn    = NULL;   /* start/stop feeding button */
 
 /* ─ LED tab ───────────────────────────────────────────────────────── */
 static lv_obj_t *s_led_sw         = NULL;
@@ -807,6 +810,56 @@ static void build_home_tab(lv_obj_t *tab)
                                 (void *)(uintptr_t)idx);
             s_home_relay_sw[idx] = sw;
         }
+    }
+
+    /* ── Feeding mode card ────────────────────────────────────────── */
+    lv_obj_t *fc = lv_obj_create(tab);
+    style_bg(fc);
+    lv_obj_set_width(fc, LV_PCT(100));
+    lv_obj_set_height(fc, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(fc, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_gap(fc, 10, 0);
+
+    lv_obj_t *fhdr = lv_label_create(fc);
+    lv_label_set_text(fhdr, "\xf0\x9f\x90\x9f  Alimentazione");
+    style_section_lbl(fhdr);
+
+    /* Feeding button */
+    s_feeding_btn = lv_button_create(fc);
+    lv_obj_set_width(s_feeding_btn, LV_PCT(100));
+    lv_obj_set_height(s_feeding_btn, 56);
+    lv_obj_set_style_bg_color(s_feeding_btn, lv_color_hex(0x16a34a), 0);
+    lv_obj_set_style_bg_opa(s_feeding_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(s_feeding_btn, 0, 0);
+    lv_obj_set_style_radius(s_feeding_btn, 12, 0);
+
+    s_feeding_lbl = lv_label_create(s_feeding_btn);
+    lv_label_set_text(s_feeding_lbl, LV_SYMBOL_PAUSE "  Avvia Alimentazione");
+    lv_obj_set_style_text_color(s_feeding_lbl, lv_color_hex(C_TEXT), 0);
+    lv_obj_set_style_text_font(s_feeding_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_center(s_feeding_lbl);
+
+    lv_obj_add_event_cb(s_feeding_btn, feeding_start_cb, LV_EVENT_CLICKED, NULL);
+}
+
+/* Feeding mode button callbacks */
+static void feeding_start_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (feeding_mode_is_active()) {
+        feeding_mode_stop();
+        if (s_feeding_lbl)
+            lv_label_set_text(s_feeding_lbl, LV_SYMBOL_PAUSE "  Avvia Alimentazione");
+        if (s_feeding_btn)
+            lv_obj_set_style_bg_color(s_feeding_btn,
+                                      lv_color_hex(0x16a34a), 0);
+    } else {
+        feeding_mode_start();
+        if (s_feeding_lbl)
+            lv_label_set_text(s_feeding_lbl, LV_SYMBOL_STOP "  Ferma Alimentazione");
+        if (s_feeding_btn)
+            lv_obj_set_style_bg_color(s_feeding_btn,
+                                      lv_color_hex(0xdc2626), 0);
     }
 }
 
@@ -1643,6 +1696,25 @@ static void ui_refresh_cb(lv_timer_t *timer)
         if (s_rel_sw[i]) {
             if (on) lv_obj_add_state(s_rel_sw[i], LV_STATE_CHECKED);
             else    lv_obj_remove_state(s_rel_sw[i], LV_STATE_CHECKED);
+        }
+    }
+
+    /* ── Feeding mode button ─────────────────────────────────── */
+    if (s_feeding_lbl && s_feeding_btn) {
+        bool feeding = feeding_mode_is_active();
+        int  rem_s   = feeding_mode_get_remaining_s();
+        if (feeding) {
+            int m = rem_s / 60;
+            int s = rem_s % 60;
+            lv_label_set_text_fmt(s_feeding_lbl,
+                LV_SYMBOL_STOP "  Ferma (%02d:%02d)", m, s);
+            lv_obj_set_style_bg_color(s_feeding_btn,
+                                      lv_color_hex(0xdc2626), 0);
+        } else {
+            lv_label_set_text(s_feeding_lbl,
+                LV_SYMBOL_PAUSE "  Avvia Alimentazione");
+            lv_obj_set_style_bg_color(s_feeding_btn,
+                                      lv_color_hex(0x16a34a), 0);
         }
     }
 
