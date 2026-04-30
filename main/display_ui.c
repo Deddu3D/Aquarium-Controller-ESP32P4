@@ -178,6 +178,9 @@ static lv_obj_t *s_info_heap   = NULL;
 static lv_obj_t *s_info_uptime = NULL;
 static lv_obj_t *s_info_time   = NULL;
 
+/* ─ Forward declarations ──────────────────────────────────────────── */
+static void feeding_start_cb(lv_event_t *e);
+
 /* ╔══════════════════════════════════════════════════════════════════════
  * ║  3. Hardware initialisation
  * ╚══════════════════════════════════════════════════════════════════════ */
