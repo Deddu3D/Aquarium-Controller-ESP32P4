@@ -167,7 +167,10 @@ static void sunrise_color(float t, uint8_t max_br,
 }
 
 /* ── Sunset color model ──────────────────────────────────────────── */
-/* Reverse of sunrise: daylight → warm amber → dark red */
+/* Reverse of sunrise: daylight → warm amber → dark.
+ * Intentionally reuses sunrise_max_brightness as the peak brightness;
+ * the two values are symmetric – sunrise and sunset reach the same
+ * maximum LED intensity, only the time direction is reversed. */
 static void sunset_color(float t, uint8_t max_br,
                           uint8_t *r, uint8_t *g, uint8_t *b,
                           uint8_t *br)

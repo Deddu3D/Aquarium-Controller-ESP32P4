@@ -201,11 +201,18 @@ esp_err_t feeding_mode_start(void)
     /* Telegram notification */
     {
         char msg[128];
-        snprintf(msg, sizeof(msg),
-                 "\xf0\x9f\x90\x9f <b>Modalit\xc3\xa0 Alimentazione ATTIVA</b>\n"
-                 "Durata: %d minuti\n"
-                 "Relay %d in pausa.",
-                 cfg.duration_min, cfg.relay_index + 1);
+        if (cfg.relay_index >= 0) {
+            snprintf(msg, sizeof(msg),
+                     "\xf0\x9f\x90\x9f <b>Modalit\xc3\xa0 Alimentazione ATTIVA</b>\n"
+                     "Durata: %d minuti\n"
+                     "Relay %d in pausa.",
+                     cfg.duration_min, cfg.relay_index + 1);
+        } else {
+            snprintf(msg, sizeof(msg),
+                     "\xf0\x9f\x90\x9f <b>Modalit\xc3\xa0 Alimentazione ATTIVA</b>\n"
+                     "Durata: %d minuti",
+                     cfg.duration_min);
+        }
         telegram_notify_send(msg);
     }
 

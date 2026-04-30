@@ -2688,34 +2688,6 @@ static esp_err_t api_timezone_post_handler(httpd_req_t *req)
     return api_timezone_get_handler(req);
 }
 
-/* ── Timezone POST endpoint (/api/timezone  POST) ────────────────── */
-
-static esp_err_t api_timezone_post_handler(httpd_req_t *req)
-{
-    char buf[POST_BODY_TZ_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    char tz_str[TZ_STRING_MAX];
-    if (json_get_str(buf, "\"tz\"", tz_str, sizeof(tz_str)) != 0 ||
-        tz_str[0] == '\0') {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'tz' field");
-        return ESP_FAIL;
-    }
-
-    esp_err_t err = timezone_manager_set(tz_str);
-    if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid TZ string");
-        return ESP_FAIL;
-    }
-
-    return api_timezone_get_handler(req);
-}
-
 /* ── Feeding mode GET endpoint (/api/feeding  GET) ───────────────── */
 
 static esp_err_t api_feeding_get_handler(httpd_req_t *req)
