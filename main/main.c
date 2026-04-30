@@ -41,6 +41,7 @@
 #include "timezone_manager.h"
 #include "display_ui.h"
 #include "feeding_mode.h"
+#include "daily_cycle.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -158,6 +159,14 @@ void app_main(void)
         ret = led_scenes_init();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "LED scenes init failed (0x%x)", ret);
+        }
+
+        /* Initialise daily lighting cycle module */
+        ret = daily_cycle_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Daily cycle init failed (0x%x)", ret);
+        } else {
+            ESP_LOGI(TAG, "Daily cycle module ready");
         }
     }
 
@@ -282,6 +291,9 @@ void app_main(void)
 
         /* Evaluate feeding mode timer */
         feeding_mode_tick();
+
+        /* Evaluate daily lighting cycle */
+        daily_cycle_tick();
 
         esp_task_wdt_reset();   /* feed the watchdog */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
