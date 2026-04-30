@@ -36,6 +36,8 @@
 #include "co2_controller.h"
 #include "timezone_manager.h"
 #include "esp_ota_ops.h"
+#include "feeding_mode.h"
+#include "led_scenes.h"
 
 static const char *TAG = "web_srv";
 
@@ -124,6 +126,8 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_TEMP_CHUNK_SIZE   64
 #define JSON_CO2_BUF_SIZE      256
 #define JSON_TZ_BUF_SIZE       128
+#define JSON_FEEDING_BUF_SIZE  192
+#define JSON_SCENE_BUF_SIZE    256
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -134,10 +138,12 @@ static void get_wifi_status(wifi_status_t *out)
 #define POST_BODY_DDNS_SIZE     256
 #define POST_BODY_CO2_SIZE      256
 #define POST_BODY_TZ_SIZE       128
+#define POST_BODY_FEEDING_SIZE  128
+#define POST_BODY_SCENE_SIZE    256
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  42
+#define HTTP_MAX_URI_HANDLERS  50
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -356,6 +362,18 @@ static const char STATUS_HTML_TEMPLATE[] =
     "</div>"
     "</div>"
     "</div>"
+    "<!-- Feeding mode card (full-width) -->"
+    "<div class=\"card\" id=\"feeding-card\">"
+    "<div class=\"card-hdr\"><span class=\"icon\">&#x1F41F;</span> PAUSA ALIMENTAZIONE</div>"
+    "<div id=\"feeding-status\" style=\"font-size:.85rem;color:#64748b;margin-bottom:.5rem\">"
+    "Stato: <span id=\"feeding-state\" class=\"ok\">Inattiva</span></div>"
+    "<div id=\"feeding-countdown\" style=\"font-size:1.6rem;font-weight:700;"
+    "color:#fbbf24;display:none\">&#x23F1; <span id=\"feeding-remain\">--:--</span></div>"
+    "<div class=\"btn-row\" style=\"margin-top:.5rem\">"
+    "<button class=\"btn-green\" id=\"btn-feed-start\" onclick=\"startFeeding()\">&#x1F41F; Avvia</button>"
+    "<button class=\"btn-red\" id=\"btn-feed-stop\" onclick=\"stopFeeding()\" style=\"display:none\">&#x23F9; Ferma</button>"
+    "</div>"
+    "</div>"
     "</div>"
     "<!-- ═══ Panel 1: LED Strip ═══ -->"
     "<div class=\"panel\" id=\"p1\">"
@@ -427,6 +445,54 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"arr\">&#x25BC;</span></div>"
     "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
     "<div id=\"preset-rows\"></div>"
+    "</div></div></div>"
+    "<!-- Scenes -->"
+    "<div class=\"ccard\" id=\"scene-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F305; Scene LED</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Scena attiva</span>"
+    "<select class=\"fin\" id=\"scene-sel\" style=\"max-width:160px\">"
+    "<option value=\"0\">Nessuna</option>"
+    "<option value=\"1\">&#x1F305; Alba</option>"
+    "<option value=\"2\">&#x1F307; Tramonto</option>"
+    "<option value=\"3\">&#x1F319; Chiaro di Luna</option>"
+    "<option value=\"4\">&#x26C8; Temporale</option>"
+    "<option value=\"5\">&#x2601; Nuvole</option>"
+    "</select></div>"
+    "<div class=\"sect\">&#x1F305; Alba / &#x1F307; Tramonto</div>"
+    "<div class=\"row\"><span class=\"label\">Durata alba (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-sr-dur\""
+    " min=\"5\" max=\"120\" value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; massima</span>"
+    "<span class=\"value\" id=\"sc-sr-br-val\">255</span></div>"
+    "<div class=\"row\"><input type=\"range\" id=\"sc-sr-br\" min=\"0\" max=\"255\" value=\"255\""
+    " oninput=\"$('sc-sr-br-val').textContent=this.value\"></div>"
+    "<div class=\"row\"><span class=\"label\">Durata tramonto (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-ss-dur\""
+    " min=\"5\" max=\"120\" value=\"30\" style=\"max-width:80px\"></div>"
+    "<div class=\"sect\">&#x1F319; Chiaro di Luna</div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; luna</span>"
+    "<span class=\"value\" id=\"sc-ml-br-val\">15</span></div>"
+    "<div class=\"row\"><input type=\"range\" id=\"sc-ml-br\" min=\"0\" max=\"60\" value=\"15\""
+    " oninput=\"$('sc-ml-br-val').textContent=this.value\"></div>"
+    "<div class=\"row\"><span class=\"label\">Colore luna</span>"
+    "<input type=\"color\" id=\"sc-ml-color\" value=\"#14285a\"></div>"
+    "<div class=\"sect\">&#x26C8; Temporale / &#x2601; Nuvole</div>"
+    "<div class=\"row\"><span class=\"label\">Intensit&#xE0; temporale %%</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-storm\""
+    " min=\"0\" max=\"100\" value=\"70\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Profondit&#xE0; nuvole %%</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-cloud-d\""
+    " min=\"0\" max=\"80\" value=\"40\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Periodo nuvole (s)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"sc-cloud-p\""
+    " min=\"10\" max=\"600\" value=\"120\" style=\"max-width:90px\"></div>"
+    "<button class=\"btn btn-sm\" onclick=\"saveScene()\" style=\"margin-top:.4rem\">"
+    "&#x1F4BE; Salva Impostazioni Scena</button>"
+    "<button class=\"btn\" onclick=\"applyScene()\" style=\"margin-top:.4rem\">"
+    "&#x25B6; Avvia Scena Selezionata</button>"
     "</div></div></div>"
     "</div>"
     ""
@@ -605,6 +671,27 @@ static const char STATUS_HTML_TEMPLATE[] =
     " min=\"0\" max=\"60\" style=\"max-width:80px\"></div>"
     "<button class=\"btn\" onclick=\"saveCo2()\">Salva CO&#x2082;</button>"
     "</div></div></div>"
+    "<!-- Feeding mode settings -->"
+    "<div class=\"ccard\" id=\"feed-cfg-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F41F; Alimentazione - Impostazioni</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Canale Rel&#xE8; da pausare</span>"
+    "<input type=\"number\" class=\"fin\" id=\"feed-relay\""
+    " min=\"-1\" max=\"3\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Durata pausa (min)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"feed-dur\""
+    " min=\"1\" max=\"60\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">Abbassa luci</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"feed-dim\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Luminosit&#xE0; alimentazione</span>"
+    "<span class=\"value\" id=\"feed-dim-br-val\">60</span></div>"
+    "<div class=\"row\"><input type=\"range\" id=\"feed-dim-br\" min=\"0\" max=\"255\" value=\"60\""
+    " oninput=\"$('feed-dim-br-val').textContent=this.value\"></div>"
+    "<button class=\"btn\" onclick=\"saveFeeding()\">Salva Impostazioni</button>"
+    "</div></div></div>"
     "<!-- Timezone -->"
     "<div class=\"ccard\" id=\"tz-card\">"
     "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
@@ -659,10 +746,10 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  $('p'+n).classList.add('active');"
     "  tabs[n].classList.add('active');"
     "  _tab=n;"
-    "  if(n===0){loadDash()}"
-    "  if(n===1){loadLeds();loadSched();loadPresets()}"
+    "  if(n===0){loadDash();loadFeeding()}"
+    "  if(n===1){loadLeds();loadSched();loadPresets();loadSceneConfig()}"
     "  if(n===2){loadTg()}"
-    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone()}}"
+    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}}"
     "/* ── Color helpers ── */"
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
@@ -1245,10 +1332,123 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    toast('Fuso orario salvato',1)}).catch(function(){toast('Errore TZ',0)})}"
     "function tzPreset(){"
     "  var v=$('tz-preset').value;if(v)$('tz-str').value=v}"
+    "/* ── Colour helpers ── */"
+    "function hexToRgb(hex){"
+    "  var r=parseInt(hex.slice(1,3),16)||0;"
+    "  var g=parseInt(hex.slice(3,5),16)||0;"
+    "  var b=parseInt(hex.slice(5,7),16)||0;"
+    "  return{r:r,g:g,b:b}}"
+    "function rgbToHex(r,g,b){"
+    "  return'#'+('0'+r.toString(16)).slice(-2)"
+    "         +('0'+g.toString(16)).slice(-2)"
+    "         +('0'+b.toString(16)).slice(-2)}"
+    "/* ── Feeding mode ── */"
+    "var _feedTmr=null;"
+    "function updateFeedingUI(d){"
+    "  var active=d.active||false;"
+    "  $('feeding-state').textContent=active?'ATTIVA':'Inattiva';"
+    "  $('feeding-state').className=active?'warn':'ok';"
+    "  var cd=$('feeding-countdown');"
+    "  if(active&&d.remaining_s>0){"
+    "    cd.style.display='block';"
+    "    var m=Math.floor(d.remaining_s/60);"
+    "    var s=d.remaining_s%%60;"
+    "    $('feeding-remain').textContent=('0'+m).slice(-2)+':'+('0'+s).slice(-2);"
+    "    $('btn-feed-start').style.display='none';"
+    "    $('btn-feed-stop').style.display='';"
+    "  }else{"
+    "    cd.style.display='none';"
+    "    $('btn-feed-start').style.display='';"
+    "    $('btn-feed-stop').style.display='none';"
+    "    if(_feedTmr){clearInterval(_feedTmr);_feedTmr=null}}}"
+    "function loadFeeding(){"
+    "  fetch('/api/feeding').then(function(r){return r.json()})"
+    "  .then(function(d){updateFeedingUI(d)})"
+    "  .catch(function(){})}"
+    "function startFeeding(){"
+    "  fetch('/api/feeding',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({action:'start'})"
+    "  }).then(function(r){return r.json()}).then(function(d){"
+    "    updateFeedingUI(d);toast('Alimentazione avviata!',1);"
+    "    if(!_feedTmr)_feedTmr=setInterval(function(){loadFeeding()},5000)"
+    "  }).catch(function(){toast('Errore avvio alimentazione',0)})}"
+    "function stopFeeding(){"
+    "  fetch('/api/feeding',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({action:'stop'})"
+    "  }).then(function(r){return r.json()}).then(function(d){"
+    "    updateFeedingUI(d);toast('Alimentazione fermata',1)"
+    "  }).catch(function(){toast('Errore stop alimentazione',0)})}"
+    "function loadFeedingConfig(){"
+    "  fetch('/api/feeding').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if($('feed-relay'))$('feed-relay').value=d.relay_index;"
+    "    if($('feed-dur'))$('feed-dur').value=d.duration_min;"
+    "    if($('feed-dim'))$('feed-dim').checked=d.dim_lights;"
+    "    if($('feed-dim-br')){$('feed-dim-br').value=d.dim_brightness;"
+    "      $('feed-dim-br-val').textContent=d.dim_brightness}})"
+    "  .catch(function(){})}"
+    "function saveFeeding(){"
+    "  var data={"
+    "    relay_index:parseInt($('feed-relay').value),"
+    "    duration_min:parseInt($('feed-dur').value),"
+    "    dim_lights:$('feed-dim').checked,"
+    "    dim_brightness:parseInt($('feed-dim-br').value)};"
+    "  fetch('/api/feeding',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Impostazioni alimentazione salvate',1)"
+    "  }).catch(function(){toast('Errore salvataggio',0)})}"
+    "/* ── LED Scenes ── */"
+    "function loadSceneConfig(){"
+    "  fetch('/api/scene').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if($('scene-sel'))$('scene-sel').value=d.active||0;"
+    "    if($('sc-sr-dur'))$('sc-sr-dur').value=d.sunrise_duration_min||30;"
+    "    if($('sc-sr-br')){$('sc-sr-br').value=d.sunrise_max_brightness||255;"
+    "      $('sc-sr-br-val').textContent=d.sunrise_max_brightness||255}"
+    "    if($('sc-ss-dur'))$('sc-ss-dur').value=d.sunset_duration_min||30;"
+    "    if($('sc-ml-br')){$('sc-ml-br').value=d.moonlight_brightness||15;"
+    "      $('sc-ml-br-val').textContent=d.moonlight_brightness||15}"
+    "    if($('sc-ml-color')){"
+    "      var r=d.moonlight_r||20,g=d.moonlight_g||40,b=d.moonlight_b||100;"
+    "      $('sc-ml-color').value=rgbToHex(r,g,b)}"
+    "    if($('sc-storm'))$('sc-storm').value=d.storm_intensity||70;"
+    "    if($('sc-cloud-d'))$('sc-cloud-d').value=d.clouds_depth||40;"
+    "    if($('sc-cloud-p'))$('sc-cloud-p').value=d.clouds_period_s||120;"
+    "  }).catch(function(){})}"
+    "function saveScene(){"
+    "  var c=hexToRgb($('sc-ml-color').value);"
+    "  var data={"
+    "    sunrise_duration_min:parseInt($('sc-sr-dur').value),"
+    "    sunrise_max_brightness:parseInt($('sc-sr-br').value),"
+    "    sunset_duration_min:parseInt($('sc-ss-dur').value),"
+    "    moonlight_brightness:parseInt($('sc-ml-br').value),"
+    "    moonlight_r:c.r,moonlight_g:c.g,moonlight_b:c.b,"
+    "    storm_intensity:parseInt($('sc-storm').value),"
+    "    clouds_depth:parseInt($('sc-cloud-d').value),"
+    "    clouds_period_s:parseInt($('sc-cloud-p').value)};"
+    "  fetch('/api/scene',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(data)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Impostazioni scena salvate',1)"
+    "  }).catch(function(){toast('Errore salvataggio scena',0)})}"
+    "function applyScene(){"
+    "  var sc=parseInt($('scene-sel').value);"
+    "  fetch('/api/scene',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify({start_scene:sc})"
+    "  }).then(function(r){return r.json()}).then(function(d){"
+    "    var names=['Nessuna','Alba','Tramonto','Chiaro di Luna','Temporale','Nuvole'];"
+    "    toast(sc===0?'Scene fermate':('Scena: '+names[sc]),1)"
+    "  }).catch(function(){toast('Errore avvio scena',0)})}"
     "/* ── Init ── */"
     "loadDash();"
     "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
-    "  loadDashHeater()},2000);"
+    "  loadDashHeater();loadFeeding()},2000);"
     "setInterval(function(){loadHistory()},60000);"
     "</script>"
     "</body></html>";
@@ -2488,6 +2688,164 @@ static esp_err_t api_timezone_post_handler(httpd_req_t *req)
     return api_timezone_get_handler(req);
 }
 
+/* ── Feeding mode GET endpoint (/api/feeding  GET) ───────────────── */
+
+static esp_err_t api_feeding_get_handler(httpd_req_t *req)
+{
+    feeding_config_t cfg = feeding_mode_get_config();
+    bool active      = feeding_mode_is_active();
+    int  remaining_s = feeding_mode_get_remaining_s();
+
+    char buf[JSON_FEEDING_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"active\":%s,"
+        "\"remaining_s\":%d,"
+        "\"relay_index\":%d,"
+        "\"duration_min\":%d,"
+        "\"dim_lights\":%s,"
+        "\"dim_brightness\":%d}",
+        active ? "true" : "false",
+        remaining_s,
+        cfg.relay_index,
+        cfg.duration_min,
+        cfg.dim_lights ? "true" : "false",
+        cfg.dim_brightness);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── Feeding mode POST endpoint (/api/feeding  POST) ─────────────── */
+/*
+ * Actions:
+ *   {"action":"start"}              – start feeding mode
+ *   {"action":"stop"}               – stop feeding mode
+ *   {"relay_index":N,"duration_min":M,...} – update config only
+ */
+
+static esp_err_t api_feeding_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_FEEDING_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    char action[16] = {0};
+    json_get_str(buf, "\"action\"", action, sizeof(action));
+
+    if (strcmp(action, "start") == 0) {
+        feeding_mode_start();
+    } else if (strcmp(action, "stop") == 0) {
+        feeding_mode_stop();
+    } else {
+        /* Config update */
+        feeding_config_t cfg = feeding_mode_get_config();
+        double dval;
+        int bval;
+
+        if (json_get_double(buf, "\"relay_index\"", &dval) == 0)
+            cfg.relay_index = (int)dval;
+        if (json_get_double(buf, "\"duration_min\"", &dval) == 0)
+            cfg.duration_min = (int)dval;
+        bval = json_get_bool(buf, "\"dim_lights\"");
+        if (bval >= 0) cfg.dim_lights = (bval == 1);
+        if (json_get_double(buf, "\"dim_brightness\"", &dval) == 0)
+            cfg.dim_brightness = (uint8_t)(dval > 255 ? 255 : dval);
+
+        feeding_mode_set_config(&cfg);
+    }
+
+    return api_feeding_get_handler(req);
+}
+
+/* ── LED Scene GET endpoint (/api/scene  GET) ────────────────────── */
+
+static esp_err_t api_scene_get_handler(httpd_req_t *req)
+{
+    led_scenes_config_t cfg = led_scenes_get_config();
+    led_scene_t active = led_scenes_get_active();
+
+    char buf[JSON_SCENE_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"active\":%d,"
+        "\"sunrise_duration_min\":%d,"
+        "\"sunrise_max_brightness\":%d,"
+        "\"sunset_duration_min\":%d,"
+        "\"moonlight_brightness\":%d,"
+        "\"moonlight_r\":%d,\"moonlight_g\":%d,\"moonlight_b\":%d,"
+        "\"storm_intensity\":%d,"
+        "\"clouds_depth\":%d,"
+        "\"clouds_period_s\":%d}",
+        (int)active,
+        cfg.sunrise_duration_min,
+        cfg.sunrise_max_brightness,
+        cfg.sunset_duration_min,
+        cfg.moonlight_brightness,
+        cfg.moonlight_r, cfg.moonlight_g, cfg.moonlight_b,
+        cfg.storm_intensity,
+        cfg.clouds_depth,
+        cfg.clouds_period_s);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── LED Scene POST endpoint (/api/scene  POST) ──────────────────── */
+/*
+ * {"start_scene":N}                          – start/stop scene N
+ * {"sunrise_duration_min":30,...}            – update config only
+ * Both can be combined: start + config update in one call.
+ */
+
+static esp_err_t api_scene_post_handler(httpd_req_t *req)
+{
+    char buf[POST_BODY_SCENE_SIZE];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    /* Config update */
+    led_scenes_config_t cfg = led_scenes_get_config();
+    double dval;
+
+    if (json_get_double(buf, "\"sunrise_duration_min\"", &dval) == 0)
+        cfg.sunrise_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 5 ? 5 : dval));
+    if (json_get_double(buf, "\"sunrise_max_brightness\"", &dval) == 0)
+        cfg.sunrise_max_brightness = (uint8_t)(dval > 255 ? 255 : dval);
+    if (json_get_double(buf, "\"sunset_duration_min\"", &dval) == 0)
+        cfg.sunset_duration_min = (uint8_t)(dval > 120 ? 120 : (dval < 5 ? 5 : dval));
+    if (json_get_double(buf, "\"moonlight_brightness\"", &dval) == 0)
+        cfg.moonlight_brightness = (uint8_t)(dval > 60 ? 60 : dval);
+    if (json_get_double(buf, "\"moonlight_r\"", &dval) == 0)
+        cfg.moonlight_r = (uint8_t)(dval > 255 ? 255 : dval);
+    if (json_get_double(buf, "\"moonlight_g\"", &dval) == 0)
+        cfg.moonlight_g = (uint8_t)(dval > 255 ? 255 : dval);
+    if (json_get_double(buf, "\"moonlight_b\"", &dval) == 0)
+        cfg.moonlight_b = (uint8_t)(dval > 255 ? 255 : dval);
+    if (json_get_double(buf, "\"storm_intensity\"", &dval) == 0)
+        cfg.storm_intensity = (uint8_t)(dval > 100 ? 100 : dval);
+    if (json_get_double(buf, "\"clouds_depth\"", &dval) == 0)
+        cfg.clouds_depth = (uint8_t)(dval > 80 ? 80 : dval);
+    if (json_get_double(buf, "\"clouds_period_s\"", &dval) == 0)
+        cfg.clouds_period_s = (uint16_t)(dval > 600 ? 600 : (dval < 10 ? 10 : dval));
+
+    led_scenes_set_config(&cfg);
+
+    /* Scene activation */
+    int start_scene = json_get_int(buf, "\"start_scene\"");
+    if (start_scene >= 0) {
+        led_scenes_start((led_scene_t)start_scene);
+    }
+
+    return api_scene_get_handler(req);
+}
+
 /* ── URI registrations ───────────────────────────────────────────── */
 
 static const httpd_uri_t uri_root = {
@@ -2700,6 +3058,34 @@ static const httpd_uri_t uri_api_tz_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_feeding_get = {
+    .uri      = "/api/feeding",
+    .method   = HTTP_GET,
+    .handler  = api_feeding_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_feeding_post = {
+    .uri      = "/api/feeding",
+    .method   = HTTP_POST,
+    .handler  = api_feeding_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_scene_get = {
+    .uri      = "/api/scene",
+    .method   = HTTP_GET,
+    .handler  = api_scene_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_scene_post = {
+    .uri      = "/api/scene",
+    .method   = HTTP_POST,
+    .handler  = api_scene_post_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -2780,6 +3166,10 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_co2_post);
     httpd_register_uri_handler(s_server, &uri_api_tz_get);
     httpd_register_uri_handler(s_server, &uri_api_tz_post);
+    httpd_register_uri_handler(s_server, &uri_api_feeding_get);
+    httpd_register_uri_handler(s_server, &uri_api_feeding_post);
+    httpd_register_uri_handler(s_server, &uri_api_scene_get);
+    httpd_register_uri_handler(s_server, &uri_api_scene_post);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");
