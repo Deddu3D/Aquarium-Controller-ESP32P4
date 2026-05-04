@@ -3469,8 +3469,10 @@ static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         char val[128];
         if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            /* Basic sanitisation: must start with mount point */
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0) {
+            /* Sanitise: must start with mount point and must not contain
+             * path traversal sequences. */
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
                 strncpy(path, val, sizeof(path) - 1);
                 path[sizeof(path) - 1] = '\0';
             }
@@ -3500,7 +3502,12 @@ static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
 
         /* Get file size */
         char full_path[192];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        int fp_len = snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        /* Reject if path overflowed or traverses outside mount point */
+        if (fp_len >= (int)sizeof(full_path) ||
+            strncmp(full_path, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) != 0) {
+            continue;
+        }
         struct stat st;
         long fsize = 0;
         bool is_dir = (entry->d_type == DT_DIR);
@@ -3534,7 +3541,8 @@ static esp_err_t api_sdcard_download_handler(httpd_req_t *req)
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         char val[192];
         if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0) {
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
                 strncpy(path, val, sizeof(path) - 1);
                 path[sizeof(path) - 1] = '\0';
             }
@@ -3594,7 +3602,8 @@ static esp_err_t api_sdcard_delete_handler(httpd_req_t *req)
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         char val[192];
         if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0) {
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
                 strncpy(path, val, sizeof(path) - 1);
                 path[sizeof(path) - 1] = '\0';
             }

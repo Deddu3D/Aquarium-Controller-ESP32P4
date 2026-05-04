@@ -33,6 +33,7 @@ static const char *TAG = "ota";
 #define OTA_TIMEOUT_MS    30000
 #define OTA_URL_MAX       256
 #define OTA_SD_PATH_MAX   128
+#define OTA_REBOOT_DELAY_MS 3000
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -476,7 +477,7 @@ static void ota_sd_task(void *arg)
     s_in_progress           = false;
     xSemaphoreGive(s_mutex);
 
-    vTaskDelay(pdMS_TO_TICKS(3000));
+    vTaskDelay(pdMS_TO_TICKS(OTA_REBOOT_DELAY_MS));
     esp_restart();
 }
 

@@ -56,6 +56,9 @@ static const char *TAG = "sd_card";
 
 /* ── Private state ───────────────────────────────────────────────── */
 
+/** FAT32 sector size in bytes (standard for SD cards). */
+#define SD_FAT_SECTOR_SIZE   512U
+
 static sdmmc_card_t      *s_card        = NULL;
 static bool               s_mounted     = false;
 static SemaphoreHandle_t  s_mutex       = NULL;
@@ -197,7 +200,7 @@ void sd_card_get_info(sd_card_info_t *info)
     if (f_getfree("0:", &fre_clust, &fs) == FR_OK) {
         uint64_t free_clust_bytes = (uint64_t)fre_clust *
                                     fs->csize *
-                                    512U;  /* FAT sector size (512 bytes) */
+                                    SD_FAT_SECTOR_SIZE;
         info->free_bytes = free_clust_bytes;
     }
 }
