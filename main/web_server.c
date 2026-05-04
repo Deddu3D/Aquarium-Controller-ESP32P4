@@ -3388,6 +3388,15 @@ static const httpd_uri_t uri_api_daily_cycle_post = {
     .user_ctx = NULL,
 };
 
+/* Forward declarations for SD card and SD-OTA handlers defined later */
+static esp_err_t api_sdcard_status_handler(httpd_req_t *req);
+static esp_err_t api_sdcard_ls_handler(httpd_req_t *req);
+static esp_err_t api_sdcard_download_handler(httpd_req_t *req);
+static esp_err_t api_sdcard_delete_handler(httpd_req_t *req);
+static esp_err_t api_sdcard_config_export_handler(httpd_req_t *req);
+static esp_err_t api_sdcard_config_import_handler(httpd_req_t *req);
+static esp_err_t api_ota_sd_post_handler(httpd_req_t *req);
+
 static const httpd_uri_t uri_api_sdcard_status = {
     .uri      = "/api/sdcard",
     .method   = HTTP_GET,
