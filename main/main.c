@@ -42,6 +42,7 @@
 #include "display_ui.h"
 #include "feeding_mode.h"
 #include "daily_cycle.h"
+#include "voice_control.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -230,6 +231,15 @@ void app_main(void)
         ESP_LOGE(TAG, "Feeding mode init failed (0x%x)", ret);
     } else {
         ESP_LOGI(TAG, "Feeding mode module ready");
+    }
+
+    /* ── 8e. Initialise voice control module ─────────────────────── */
+    esp_task_wdt_reset();
+    ret = voice_control_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Voice control init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "Voice control module ready");
     }
 
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */

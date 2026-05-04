@@ -274,3 +274,56 @@ menu "Aquarium LED Scene Settings"
             dim (< 30) to simulate natural moonlight without disturbing fish.
 
 endmenu
+
+menu "Aquarium Voice Control Settings"
+
+    config VOICE_GROQ_STT_MODEL
+        string "Groq Whisper STT model"
+        default "whisper-large-v3-turbo"
+        help
+            Groq Whisper model used for Italian speech-to-text.
+            Available models: whisper-large-v3-turbo, whisper-large-v3.
+            whisper-large-v3-turbo is faster and free-tier friendly.
+
+    config VOICE_GROQ_LLM_MODEL
+        string "Groq LLM model for NLU"
+        default "llama-3.1-8b-instant"
+        help
+            Groq chat-completions model used to convert the Italian
+            transcript into a structured JSON command.
+            Recommended: llama-3.1-8b-instant (fast, free tier).
+            Alternatives: llama3-8b-8192, mixtral-8x7b-32768.
+
+    config VOICE_RECORD_MS
+        int "Default recording duration (milliseconds)"
+        default 5000
+        range 1000 10000
+        help
+            How long the I2S microphone records before sending audio
+            to the Groq Whisper API.  5000 ms (5 seconds) is a good
+            default for short aquarium voice commands.
+
+    config VOICE_I2S_SCK_IO
+        int "I2S bit-clock GPIO (BCLK / SCK)"
+        default 32
+        help
+            GPIO connected to the INMP441 SCK (bit-clock) pin.
+            On the Waveshare ESP32-P4-WiFi6 board GPIO 32 is on the
+            right-side header and not used by other peripherals.
+
+    config VOICE_I2S_WS_IO
+        int "I2S word-select GPIO (LRCLK / WS)"
+        default 33
+        help
+            GPIO connected to the INMP441 WS (word-select / L-R clock)
+            pin.  GPIO 33 is on the right-side header.
+
+    config VOICE_I2S_SD_IO
+        int "I2S data GPIO (DIN / SD)"
+        default 46
+        help
+            GPIO connected to the INMP441 SD (serial data output) pin.
+            GPIO 46 is on the right-side header of the
+            Waveshare ESP32-P4-WiFi6 board.
+
+endmenu

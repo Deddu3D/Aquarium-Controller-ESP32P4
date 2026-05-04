@@ -39,6 +39,7 @@
 #include "feeding_mode.h"
 #include "led_scenes.h"
 #include "daily_cycle.h"
+#include "voice_control.h"
 
 static const char *TAG = "web_srv";
 
@@ -130,6 +131,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    256
 #define JSON_DAILY_BUF_SIZE    256
+#define JSON_VOICE_BUF_SIZE    1024
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -143,6 +145,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define POST_BODY_FEEDING_SIZE  128
 #define POST_BODY_SCENE_SIZE    256
 #define POST_BODY_DAILY_SIZE    192
+#define POST_BODY_VOICE_SIZE    384
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
@@ -316,6 +319,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"tab\" onclick=\"switchTab(1)\">&#x25B3; LED Strip</button>"
     "<button class=\"tab\" onclick=\"switchTab(2)\">&#x1F514; Telegram</button>"
     "<button class=\"tab\" onclick=\"switchTab(3)\">&#x2699; Manutenzione</button>"
+    "<button class=\"tab\" onclick=\"switchTab(4)\">&#x1F3A4; Voce</button>"
     "</div>"
     ""
     "<!-- ═══ Panel 0: Riepilogo ═══ -->"
@@ -749,6 +753,76 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"btn\" onclick=\"saveTz()\">Salva Fuso Orario</button>"
     "</div></div></div>"
     "</div>"
+    "<!-- ═══ Panel 4: Voce ═══ -->"
+    "<div class=\"panel\" id=\"p4\">"
+    "<!-- Voice configuration -->"
+    "<div class=\"ccard open\" id=\"voice-cfg-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F511; Configurazione Groq API</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Abilitato</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"vc-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Groq API Key</span></div>"
+    "<div class=\"row\" style=\"border-bottom:none;padding-top:0\">"
+    "<input type=\"password\" class=\"fin fin-wide\" id=\"vc-key\""
+    " placeholder=\"sk-...\"></div>"
+    "<div class=\"row\"><span class=\"label\">Modello STT</span>"
+    "<input type=\"text\" class=\"fin\" id=\"vc-stt\""
+    " style=\"max-width:220px\""
+    " placeholder=\"whisper-large-v3-turbo\"></div>"
+    "<div class=\"row\"><span class=\"label\">Modello LLM</span>"
+    "<input type=\"text\" class=\"fin\" id=\"vc-llm\""
+    " style=\"max-width:220px\""
+    " placeholder=\"llama-3.1-8b-instant\"></div>"
+    "<div class=\"row\"><span class=\"label\">Durata registrazione (ms)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"vc-rec\""
+    " min=\"1000\" max=\"10000\" step=\"500\" style=\"max-width:100px\"></div>"
+    "<div class=\"row\"><span class=\"label\">GPIO SCK (BCLK)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"vc-sck\""
+    " min=\"0\" max=\"54\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">GPIO WS (LRCLK)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"vc-ws\""
+    " min=\"0\" max=\"54\" style=\"max-width:80px\"></div>"
+    "<div class=\"row\"><span class=\"label\">GPIO SD (DIN)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"vc-sd\""
+    " min=\"0\" max=\"54\" style=\"max-width:80px\"></div>"
+    "<button class=\"btn\" onclick=\"saveVoiceConfig()\">Salva Configurazione</button>"
+    "</div></div></div>"
+    "<!-- Voice recording -->"
+    "<div class=\"ccard open\" id=\"voice-rec-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F3A4; Controllo Vocale</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div style=\"font-size:.82rem;color:#64748b;margin-bottom:.75rem\">"
+    "Parla dopo aver premuto il pulsante. Comandi supportati:<br>"
+    "<span style=\"color:#94a3b8\">"
+    "&#x2022; &quot;Accendi/spegni il filtro&quot; &#x2022; "
+    "&quot;Imposta luminosit&#xE0; al 50%%&quot; &#x2022; "
+    "&quot;Avvia la scena luna piena&quot;<br>"
+    "&#x2022; &quot;Pausa alimentazione&quot; &#x2022; "
+    "&quot;Abilita/disabilita ciclo giornaliero&quot;"
+    "</span></div>"
+    "<div class=\"row\"><span class=\"label\">Stato</span>"
+    "<span class=\"value\" id=\"vc-status\">idle</span></div>"
+    "<div id=\"vc-transcript-row\" class=\"row\" style=\"display:none\">"
+    "<span class=\"label\">Trascrizione</span>"
+    "<span class=\"value\" id=\"vc-transcript\" style=\"color:#fbbf24\">--</span>"
+    "</div>"
+    "<div id=\"vc-command-row\" class=\"row\" style=\"display:none\">"
+    "<span class=\"label\">Comando</span>"
+    "<span class=\"value\" id=\"vc-command\" style=\"color:#38bdf8;font-size:.78rem\">--</span>"
+    "</div>"
+    "<div id=\"vc-result-row\" class=\"row\" style=\"display:none\">"
+    "<span class=\"label\">Risultato</span>"
+    "<span class=\"value\" id=\"vc-result\">--</span>"
+    "</div>"
+    "<button class=\"btn\" id=\"btn-vc-rec\" onclick=\"startVoiceRec()\">"
+    "&#x1F3A4; Avvia Registrazione</button>"
+    "</div></div></div>"
+    "</div>"
     "<!-- end panels -->"
     "</div>"
     "<!-- Status bar -->"
@@ -779,7 +853,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  if(n===0){loadDash();loadFeeding()}"
     "  if(n===1){loadLeds();loadSched();loadPresets();loadSceneConfig();loadDailyCycle()}"
     "  if(n===2){loadTg()}"
-    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}}"
+    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}"
+    "  if(n===4){loadVoiceConfig()}}"
     "/* ── Color helpers ── */"
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
@@ -1503,6 +1578,69 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    if($('dc-phase'))$('dc-phase').textContent=DC_PHASES[d.phase]||'--';"
     "    toast('Giornata naturale salvata',1)"
     "  }).catch(function(){toast('Errore salvataggio',0)})}"
+    "/* ── Voice control ── */"
+    "var _vcPoll=null;"
+    "var VC_STATUS=['idle','registrazione...','trascrizione...','elaborazione...','completato','errore'];"
+    "function loadVoiceConfig(){"
+    "  fetch('/api/voice/config').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('vc-en').checked=d.enabled;"
+    "    $('vc-key').value=d.api_key_set?'**** (configurato)':'';"
+    "    $('vc-stt').value=d.stt_model||'';"
+    "    $('vc-llm').value=d.llm_model||'';"
+    "    $('vc-rec').value=d.record_ms||5000;"
+    "    $('vc-sck').value=d.i2s_sck_io;"
+    "    $('vc-ws').value=d.i2s_ws_io;"
+    "    $('vc-sd').value=d.i2s_sd_io;"
+    "  }).catch(function(){})}"
+    "function saveVoiceConfig(){"
+    "  var key=$('vc-key').value;"
+    "  var body={enabled:$('vc-en').checked,"
+    "    stt_model:$('vc-stt').value,"
+    "    llm_model:$('vc-llm').value,"
+    "    record_ms:parseInt($('vc-rec').value)||5000,"
+    "    i2s_sck_io:parseInt($('vc-sck').value),"
+    "    i2s_ws_io:parseInt($('vc-ws').value),"
+    "    i2s_sd_io:parseInt($('vc-sd').value)};"
+    "  if(key&&key.indexOf('*')<0)body.api_key=key;"
+    "  fetch('/api/voice/config',{method:'POST',"
+    "    headers:{'Content-Type':'application/json'},"
+    "    body:JSON.stringify(body)"
+    "  }).then(function(r){return r.json()}).then(function(){"
+    "    toast('Voce salvata',1)}).catch(function(){"
+    "    toast('Errore salvataggio voce',0)})}"
+    "function startVoiceRec(){"
+    "  fetch('/api/voice/record',{method:'POST'})"
+    "  .then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if(d.ok){"
+    "      $('btn-vc-rec').disabled=true;"
+    "      $('vc-status').textContent='registrazione...';"
+    "      if(_vcPoll)clearInterval(_vcPoll);"
+    "      _vcPoll=setInterval(pollVoiceStatus,1500);"
+    "    }else{"
+    "      toast(d.error||'Errore avvio registrazione',0)}"
+    "  }).catch(function(){toast('Errore connessione',0)})}"
+    "function pollVoiceStatus(){"
+    "  fetch('/api/voice/status').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    var st=VC_STATUS[d.status]||'?';"
+    "    $('vc-status').textContent=st;"
+    "    if(d.transcript){"
+    "      $('vc-transcript').textContent=d.transcript;"
+    "      $('vc-transcript-row').style.display='flex'}"
+    "    if(d.command){"
+    "      $('vc-command').textContent=d.command;"
+    "      $('vc-command-row').style.display='flex'}"
+    "    if(d.result){"
+    "      $('vc-result').textContent=d.result;"
+    "      $('vc-result-row').style.display='flex'}"
+    "    if(d.status>=4){"
+    "      clearInterval(_vcPoll);_vcPoll=null;"
+    "      $('btn-vc-rec').disabled=false;"
+    "      if(d.status===4)toast(d.result||'Comando eseguito',1);"
+    "      else toast('Errore: '+d.result,0)}"
+    "  }).catch(function(){})}"
     "/* ── Init ── */"
     "loadDash();"
     "loadSceneConfig();loadDailyCycle();"
@@ -2967,7 +3105,170 @@ static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
     return api_daily_cycle_get_handler(req);
 }
 
-/* ── URI registrations ───────────────────────────────────────────── */
+/* ── /api/voice/config (GET) ─────────────────────────────────────── */
+
+static esp_err_t api_voice_config_get_handler(httpd_req_t *req)
+{
+    voice_config_t cfg = voice_control_get_config();
+    char buf[JSON_VOICE_BUF_SIZE];
+    snprintf(buf, sizeof(buf),
+        "{"
+          "\"enabled\":%s,"
+          "\"api_key_set\":%s,"
+          "\"stt_model\":\"%s\","
+          "\"llm_model\":\"%s\","
+          "\"record_ms\":%d,"
+          "\"i2s_sck_io\":%d,"
+          "\"i2s_ws_io\":%d,"
+          "\"i2s_sd_io\":%d"
+        "}",
+        cfg.enabled ? "true" : "false",
+        cfg.groq_api_key[0] != '\0' ? "true" : "false",
+        cfg.stt_model,
+        cfg.llm_model,
+        cfg.record_ms,
+        cfg.i2s_sck_io,
+        cfg.i2s_ws_io,
+        cfg.i2s_sd_io);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+/* ── /api/voice/config (POST) ────────────────────────────────────── */
+
+static esp_err_t api_voice_config_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_VOICE_SIZE];
+    int  received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    voice_config_t cfg = voice_control_get_config();
+
+    /* enabled */
+    const char *en = strstr(body, "\"enabled\":");
+    if (en) cfg.enabled = (strstr(en + 10, "true") != NULL);
+
+    /* api_key – only update when present and not the placeholder */
+    const char *key_tag = strstr(body, "\"api_key\":\"");
+    if (key_tag) {
+        key_tag += 11;
+        const char *end = strchr(key_tag, '"');
+        if (end && end > key_tag && (end - key_tag) < (int)sizeof(cfg.groq_api_key)) {
+            size_t klen = (size_t)(end - key_tag);
+            strncpy(cfg.groq_api_key, key_tag, klen);
+            cfg.groq_api_key[klen] = '\0';
+        }
+    }
+
+    /* stt_model */
+    const char *sm = strstr(body, "\"stt_model\":\"");
+    if (sm) {
+        sm += 13;
+        const char *e = strchr(sm, '"');
+        if (e && e > sm && (e - sm) < (int)sizeof(cfg.stt_model)) {
+            size_t l = (size_t)(e - sm);
+            strncpy(cfg.stt_model, sm, l);
+            cfg.stt_model[l] = '\0';
+        }
+    }
+
+    /* llm_model */
+    const char *lm = strstr(body, "\"llm_model\":\"");
+    if (lm) {
+        lm += 13;
+        const char *e = strchr(lm, '"');
+        if (e && e > lm && (e - lm) < (int)sizeof(cfg.llm_model)) {
+            size_t l = (size_t)(e - lm);
+            strncpy(cfg.llm_model, lm, l);
+            cfg.llm_model[l] = '\0';
+        }
+    }
+
+    /* record_ms */
+    const char *rm = strstr(body, "\"record_ms\":");
+    if (rm) cfg.record_ms = (int)strtol(rm + 12, NULL, 10);
+
+    /* GPIOs */
+    const char *sck = strstr(body, "\"i2s_sck_io\":");
+    if (sck) cfg.i2s_sck_io = (int)strtol(sck + 13, NULL, 10);
+    const char *ws = strstr(body, "\"i2s_ws_io\":");
+    if (ws)  cfg.i2s_ws_io  = (int)strtol(ws  + 12, NULL, 10);
+    const char *sd = strstr(body, "\"i2s_sd_io\":");
+    if (sd)  cfg.i2s_sd_io  = (int)strtol(sd  + 12, NULL, 10);
+
+    esp_err_t err = voice_control_set_config(&cfg);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* ── /api/voice/record (POST) ────────────────────────────────────── */
+
+static esp_err_t api_voice_record_post_handler(httpd_req_t *req)
+{
+    /* Consume any request body (ignored) */
+    char dummy[32];
+    httpd_req_recv(req, dummy, sizeof(dummy) - 1);
+
+    esp_err_t err = voice_control_start_record();
+    httpd_resp_set_type(req, "application/json");
+    if (err == ESP_OK) {
+        httpd_resp_sendstr(req, "{\"ok\":true}");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        char buf[128];
+        voice_status_t st = voice_control_get_status();
+        if (st >= VOICE_STATUS_RECORDING && st <= VOICE_STATUS_PROCESSING) {
+            snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"Pipeline in corso\"}");
+        } else {
+            snprintf(buf, sizeof(buf),
+                     "{\"ok\":false,\"error\":\"Voce disabilitata o API key mancante\"}");
+        }
+        httpd_resp_sendstr(req, buf);
+    } else {
+        httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Avvio fallito\"}");
+    }
+    return ESP_OK;
+}
+
+/* ── /api/voice/status (GET) ─────────────────────────────────────── */
+
+static esp_err_t api_voice_status_get_handler(httpd_req_t *req)
+{
+    voice_status_t st = voice_control_get_status();
+    char transcript[512], command[512], result[128];
+    voice_control_get_transcript(transcript, sizeof(transcript));
+    voice_control_get_last_command(command, sizeof(command));
+    voice_control_get_last_result(result, sizeof(result));
+
+    /* JSON-escape the strings */
+    char esc_transcript[1024], esc_command[1024], esc_result[256];
+    json_escape(transcript, esc_transcript, sizeof(esc_transcript));
+    json_escape(command,    esc_command,    sizeof(esc_command));
+    json_escape(result,     esc_result,     sizeof(esc_result));
+
+    char buf[JSON_VOICE_BUF_SIZE + 1024];
+    snprintf(buf, sizeof(buf),
+        "{"
+          "\"status\":%d,"
+          "\"transcript\":\"%s\","
+          "\"command\":\"%s\","
+          "\"result\":\"%s\""
+        "}",
+        (int)st, esc_transcript, esc_command, esc_result);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
 
 static const httpd_uri_t uri_root = {
     .uri      = "/",
@@ -3221,6 +3522,34 @@ static const httpd_uri_t uri_api_daily_cycle_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_voice_config_get = {
+    .uri      = "/api/voice/config",
+    .method   = HTTP_GET,
+    .handler  = api_voice_config_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_voice_config_post = {
+    .uri      = "/api/voice/config",
+    .method   = HTTP_POST,
+    .handler  = api_voice_config_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_voice_record_post = {
+    .uri      = "/api/voice/record",
+    .method   = HTTP_POST,
+    .handler  = api_voice_record_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_voice_status_get = {
+    .uri      = "/api/voice/status",
+    .method   = HTTP_GET,
+    .handler  = api_voice_status_get_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -3307,6 +3636,10 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scene_post);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
+    httpd_register_uri_handler(s_server, &uri_api_voice_config_get);
+    httpd_register_uri_handler(s_server, &uri_api_voice_config_post);
+    httpd_register_uri_handler(s_server, &uri_api_voice_record_post);
+    httpd_register_uri_handler(s_server, &uri_api_voice_status_get);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");
