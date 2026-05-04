@@ -3390,6 +3390,8 @@ static const httpd_uri_t uri_api_voice_listen_post = {
     .handler  = api_voice_listen_post_handler,
     .user_ctx = NULL,
 };
+
+static const httpd_uri_t uri_root = {
     .uri      = "/",
     .method   = HTTP_GET,
     .handler  = root_get_handler,
