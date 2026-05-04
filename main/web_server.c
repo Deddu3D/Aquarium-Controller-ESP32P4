@@ -115,7 +115,7 @@ static void get_wifi_status(wifi_status_t *out)
  * with mobile-optimized UI and temperature chart; 52 KiB gives
  * comfortable margin.
  */
-#define HTML_BUF_SIZE          65536
+#define HTML_BUF_SIZE          81920
 
 /* JSON response buffer sizes */
 #define JSON_STATUS_BUF_SIZE   384
@@ -131,7 +131,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    256
 #define JSON_DAILY_BUF_SIZE    256
-#define JSON_VOICE_BUF_SIZE    1024
+#define JSON_VOICE_BUF_SIZE    2048
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -3390,6 +3390,8 @@ static const httpd_uri_t uri_api_voice_listen_post = {
     .handler  = api_voice_listen_post_handler,
     .user_ctx = NULL,
 };
+
+static const httpd_uri_t uri_root = {
     .uri      = "/",
     .method   = HTTP_GET,
     .handler  = root_get_handler,
