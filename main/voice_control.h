@@ -28,12 +28,14 @@ extern "C" {
  * @brief Processing pipeline status.
  */
 typedef enum {
-    VOICE_STATUS_IDLE        = 0, /**< Waiting for trigger             */
-    VOICE_STATUS_RECORDING   = 1, /**< Capturing audio from I2S mic    */
-    VOICE_STATUS_TRANSCRIBING = 2,/**< Uploading audio to Groq Whisper */
-    VOICE_STATUS_PROCESSING  = 3, /**< Sending transcript to Groq LLM  */
-    VOICE_STATUS_DONE        = 4, /**< Command executed successfully    */
-    VOICE_STATUS_ERROR       = 5, /**< Pipeline failed (see last_error) */
+    VOICE_STATUS_IDLE         = 0, /**< Waiting for trigger              */
+    VOICE_STATUS_RECORDING    = 1, /**< Capturing audio from I2S mic     */
+    VOICE_STATUS_TRANSCRIBING = 2, /**< Uploading audio to Groq Whisper  */
+    VOICE_STATUS_PROCESSING   = 3, /**< Sending transcript to Groq LLM   */
+    VOICE_STATUS_DONE         = 4, /**< Command executed successfully     */
+    VOICE_STATUS_ERROR        = 5, /**< Pipeline failed (see last_error)  */
+    VOICE_STATUS_LISTENING    = 6, /**< Wake-word monitor loop running    */
+    VOICE_STATUS_WAKEWORD     = 7, /**< Wake-word detected, recording cmd */
 } voice_status_t;
 
 /* ── Configuration ───────────────────────────────────────────────── */
@@ -50,6 +52,9 @@ typedef struct {
     int  i2s_sck_io;        /**< I2S bit-clock GPIO (BCLK)              */
     int  i2s_ws_io;         /**< I2S word-select GPIO (LRCLK)           */
     int  i2s_sd_io;         /**< I2S data GPIO (SD / DIN from INMP441)  */
+    bool wakeword_enabled;  /**< Enable always-on wake-word monitoring  */
+    char wakeword[48];      /**< Wake phrase, e.g. "hey acquario"       */
+    int  wakeword_listen_ms;/**< Duration of each wake-word clip (ms)   */
 } voice_config_t;
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -125,6 +130,34 @@ voice_config_t voice_control_get_config(void);
  * @return ESP_OK on success.
  */
 esp_err_t voice_control_set_config(const voice_config_t *cfg);
+
+/**
+ * @brief Start the continuous wake-word monitoring loop.
+ *
+ * Spawns a long-running FreeRTOS task that records short audio clips
+ * (wakeword_listen_ms) and sends them to Groq Whisper.  When the
+ * transcript contains the configured wake phrase the task triggers the
+ * full command pipeline and then resumes listening.
+ *
+ * Returns ESP_ERR_INVALID_STATE if already listening, disabled, or the
+ * API key has not been configured.
+ *
+ * @return ESP_OK if the monitoring task was spawned.
+ */
+esp_err_t voice_control_start_listening(void);
+
+/**
+ * @brief Stop the wake-word monitoring loop.
+ *
+ * Signals the monitor task to exit.  The call returns immediately;
+ * the task stops at the end of its current clip.
+ */
+void voice_control_stop_listening(void);
+
+/**
+ * @brief Return true while the wake-word monitor loop is running.
+ */
+bool voice_control_is_listening(void);
 
 #ifdef __cplusplus
 }

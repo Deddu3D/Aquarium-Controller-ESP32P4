@@ -788,6 +788,18 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<div class=\"row\"><span class=\"label\">GPIO SD (DIN)</span>"
     "<input type=\"number\" class=\"fin\" id=\"vc-sd\""
     " min=\"0\" max=\"54\" style=\"max-width:80px\"></div>"
+    "<!-- Wake-word -->"
+    "<div style=\"margin:.75rem 0 .35rem;font-size:.8rem;color:#64748b;font-weight:600\">"
+    "&#x1F50A; Wake Word</div>"
+    "<div class=\"row\"><span class=\"label\">Attiva wake word</span>"
+    "<label class=\"toggle\"><input type=\"checkbox\" id=\"vc-ww-en\">"
+    "<span class=\"slider\"></span></label></div>"
+    "<div class=\"row\"><span class=\"label\">Frase di attivazione</span>"
+    "<input type=\"text\" class=\"fin\" id=\"vc-ww\""
+    " style=\"max-width:200px\" placeholder=\"hey acquario\"></div>"
+    "<div class=\"row\"><span class=\"label\">Durata clip wake (ms)</span>"
+    "<input type=\"number\" class=\"fin\" id=\"vc-ww-ms\""
+    " min=\"800\" max=\"3000\" step=\"100\" style=\"max-width:100px\"></div>"
     "<button class=\"btn\" onclick=\"saveVoiceConfig()\">Salva Configurazione</button>"
     "</div></div></div>"
     "<!-- Voice recording -->"
@@ -797,7 +809,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"arr\">&#x25BC;</span></div>"
     "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
     "<div style=\"font-size:.82rem;color:#64748b;margin-bottom:.75rem\">"
-    "Parla dopo aver premuto il pulsante. Comandi supportati:<br>"
+    "Parla dopo aver premuto il pulsante, oppure usa la modalit&#xE0; wake word. "
+    "Comandi supportati:<br>"
     "<span style=\"color:#94a3b8\">"
     "&#x2022; &quot;Accendi/spegni il filtro&quot; &#x2022; "
     "&quot;Imposta luminosit&#xE0; al 50%%&quot; &#x2022; "
@@ -819,8 +832,12 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<span class=\"label\">Risultato</span>"
     "<span class=\"value\" id=\"vc-result\">--</span>"
     "</div>"
+    "<div style=\"display:flex;gap:.5rem;flex-wrap:wrap\">"
     "<button class=\"btn\" id=\"btn-vc-rec\" onclick=\"startVoiceRec()\">"
-    "&#x1F3A4; Avvia Registrazione</button>"
+    "&#x1F3A4; Registra ora</button>"
+    "<button class=\"btn\" id=\"btn-vc-listen\" onclick=\"toggleWakeListen()\">"
+    "&#x1F50A; Avvia ascolto</button>"
+    "</div>"
     "</div></div></div>"
     "</div>"
     "<!-- end panels -->"
@@ -1580,7 +1597,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  }).catch(function(){toast('Errore salvataggio',0)})}"
     "/* ── Voice control ── */"
     "var _vcPoll=null;"
-    "var VC_STATUS=['idle','registrazione...','trascrizione...','elaborazione...','completato','errore'];"
+    "var VC_STATUS=['idle','registrazione...','trascrizione...','elaborazione...','completato','errore','in ascolto...','wake word rilevato!'];"
     "function loadVoiceConfig(){"
     "  fetch('/api/voice/config').then(function(r){return r.json()})"
     "  .then(function(d){"
@@ -1592,7 +1609,15 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    $('vc-sck').value=d.i2s_sck_io;"
     "    $('vc-ws').value=d.i2s_ws_io;"
     "    $('vc-sd').value=d.i2s_sd_io;"
+    "    $('vc-ww-en').checked=d.wakeword_enabled;"
+    "    $('vc-ww').value=d.wakeword||'';"
+    "    $('vc-ww-ms').value=d.wakeword_listen_ms||1500;"
+    "    updateListenBtn(d.listening);"
     "  }).catch(function(){})}"
+    "function updateListenBtn(listening){"
+    "  var b=$('btn-vc-listen');"
+    "  if(listening){b.textContent='\\uD83D\\uDD0A Ferma ascolto';b.style.background='#dc2626'}"
+    "  else{b.textContent='\\uD83D\\uDD0A Avvia ascolto';b.style.background=''}}"
     "function saveVoiceConfig(){"
     "  var key=$('vc-key').value;"
     "  var body={enabled:$('vc-en').checked,"
@@ -1601,7 +1626,10 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    record_ms:parseInt($('vc-rec').value)||5000,"
     "    i2s_sck_io:parseInt($('vc-sck').value),"
     "    i2s_ws_io:parseInt($('vc-ws').value),"
-    "    i2s_sd_io:parseInt($('vc-sd').value)};"
+    "    i2s_sd_io:parseInt($('vc-sd').value),"
+    "    wakeword_enabled:$('vc-ww-en').checked,"
+    "    wakeword:$('vc-ww').value,"
+    "    wakeword_listen_ms:parseInt($('vc-ww-ms').value)||1500};"
     "  if(key&&key.indexOf('*')<0)body.api_key=key;"
     "  fetch('/api/voice/config',{method:'POST',"
     "    headers:{'Content-Type':'application/json'},"
@@ -1621,11 +1649,28 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    }else{"
     "      toast(d.error||'Errore avvio registrazione',0)}"
     "  }).catch(function(){toast('Errore connessione',0)})}"
+    "function toggleWakeListen(){"
+    "  fetch('/api/voice/status').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    var listening=d.listening;"
+    "    fetch('/api/voice/listen',{method:'POST',"
+    "      headers:{'Content-Type':'application/json'},"
+    "      body:JSON.stringify({action:listening?'stop':'start'})"
+    "    }).then(function(r){return r.json()}).then(function(res){"
+    "      if(res.ok){updateListenBtn(!listening);"
+    "        toast(listening?'Ascolto fermato':'Ascolto avviato',1);"
+    "        if(!listening){"
+    "          if(_vcPoll)clearInterval(_vcPoll);"
+    "          _vcPoll=setInterval(pollVoiceStatus,1500)}}"
+    "      else toast(res.error||'Errore',0)"
+    "    }).catch(function(){toast('Errore',0)})"
+    "  }).catch(function(){toast('Errore stato',0)})}"
     "function pollVoiceStatus(){"
     "  fetch('/api/voice/status').then(function(r){return r.json()})"
     "  .then(function(d){"
     "    var st=VC_STATUS[d.status]||'?';"
     "    $('vc-status').textContent=st;"
+    "    updateListenBtn(d.listening);"
     "    if(d.transcript){"
     "      $('vc-transcript').textContent=d.transcript;"
     "      $('vc-transcript-row').style.display='flex'}"
@@ -1635,11 +1680,14 @@ static const char STATUS_HTML_TEMPLATE[] =
     "    if(d.result){"
     "      $('vc-result').textContent=d.result;"
     "      $('vc-result-row').style.display='flex'}"
-    "    if(d.status>=4){"
-    "      clearInterval(_vcPoll);_vcPoll=null;"
+    "    var pipelineDone=d.status===4||d.status===5;"
+    "    var idleOrListening=d.status===0||d.status===6;"
+    "    if(pipelineDone){"
     "      $('btn-vc-rec').disabled=false;"
+    "      if(!d.listening){clearInterval(_vcPoll);_vcPoll=null;}"
     "      if(d.status===4)toast(d.result||'Comando eseguito',1);"
     "      else toast('Errore: '+d.result,0)}"
+    "    if(idleOrListening&&!d.listening){clearInterval(_vcPoll);_vcPoll=null;}"
     "  }).catch(function(){})}"
     "/* ── Init ── */"
     "loadDash();"
@@ -3120,7 +3168,11 @@ static esp_err_t api_voice_config_get_handler(httpd_req_t *req)
           "\"record_ms\":%d,"
           "\"i2s_sck_io\":%d,"
           "\"i2s_ws_io\":%d,"
-          "\"i2s_sd_io\":%d"
+          "\"i2s_sd_io\":%d,"
+          "\"wakeword_enabled\":%s,"
+          "\"wakeword\":\"%s\","
+          "\"wakeword_listen_ms\":%d,"
+          "\"listening\":%s"
         "}",
         cfg.enabled ? "true" : "false",
         cfg.groq_api_key[0] != '\0' ? "true" : "false",
@@ -3129,7 +3181,11 @@ static esp_err_t api_voice_config_get_handler(httpd_req_t *req)
         cfg.record_ms,
         cfg.i2s_sck_io,
         cfg.i2s_ws_io,
-        cfg.i2s_sd_io);
+        cfg.i2s_sd_io,
+        cfg.wakeword_enabled ? "true" : "false",
+        cfg.wakeword,
+        cfg.wakeword_listen_ms,
+        voice_control_is_listening() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
     return ESP_OK;
@@ -3201,6 +3257,24 @@ static esp_err_t api_voice_config_post_handler(httpd_req_t *req)
     const char *sd = strstr(body, "\"i2s_sd_io\":");
     if (sd)  cfg.i2s_sd_io  = (int)strtol(sd  + 12, NULL, 10);
 
+    /* wake-word */
+    const char *wwen = strstr(body, "\"wakeword_enabled\":");
+    if (wwen) cfg.wakeword_enabled = (strstr(wwen + 19, "true") != NULL);
+
+    const char *ww = strstr(body, "\"wakeword\":\"");
+    if (ww) {
+        ww += 12;
+        const char *e = strchr(ww, '"');
+        if (e && e > ww && (e - ww) < (int)sizeof(cfg.wakeword)) {
+            size_t l = (size_t)(e - ww);
+            strncpy(cfg.wakeword, ww, l);
+            cfg.wakeword[l] = '\0';
+        }
+    }
+
+    const char *wwms = strstr(body, "\"wakeword_listen_ms\":");
+    if (wwms) cfg.wakeword_listen_ms = (int)strtol(wwms + 21, NULL, 10);
+
     esp_err_t err = voice_control_set_config(&cfg);
     if (err != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
@@ -3262,15 +3336,60 @@ static esp_err_t api_voice_status_get_handler(httpd_req_t *req)
           "\"status\":%d,"
           "\"transcript\":\"%s\","
           "\"command\":\"%s\","
-          "\"result\":\"%s\""
+          "\"result\":\"%s\","
+          "\"listening\":%s"
         "}",
-        (int)st, esc_transcript, esc_command, esc_result);
+        (int)st, esc_transcript, esc_command, esc_result,
+        voice_control_is_listening() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
     return ESP_OK;
 }
 
-static const httpd_uri_t uri_root = {
+/* ── /api/voice/listen (POST) ────────────────────────────────────── */
+/* {"action":"start"} or {"action":"stop"}                            */
+
+static esp_err_t api_voice_listen_post_handler(httpd_req_t *req)
+{
+    char body[64];
+    int received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "No body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    bool start = (strstr(body, "\"start\"") != NULL);
+    bool stop  = (strstr(body, "\"stop\"")  != NULL);
+
+    httpd_resp_set_type(req, "application/json");
+
+    if (start) {
+        esp_err_t err = voice_control_start_listening();
+        if (err == ESP_OK) {
+            httpd_resp_sendstr(req, "{\"ok\":true}");
+        } else {
+            httpd_resp_sendstr(req,
+                "{\"ok\":false,\"error\":\"Impossibile avviare ascolto: "
+                "verifica che voce sia abilitata, wake word configurata e API key presente\"}");
+        }
+    } else if (stop) {
+        voice_control_stop_listening();
+        httpd_resp_sendstr(req, "{\"ok\":true}");
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "action must be start or stop");
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+static const httpd_uri_t uri_api_voice_listen_post = {
+    .uri      = "/api/voice/listen",
+    .method   = HTTP_POST,
+    .handler  = api_voice_listen_post_handler,
+    .user_ctx = NULL,
+};
     .uri      = "/",
     .method   = HTTP_GET,
     .handler  = root_get_handler,
@@ -3640,6 +3759,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_voice_config_post);
     httpd_register_uri_handler(s_server, &uri_api_voice_record_post);
     httpd_register_uri_handler(s_server, &uri_api_voice_status_get);
+    httpd_register_uri_handler(s_server, &uri_api_voice_listen_post);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
@@ -50,6 +51,9 @@ static const char *TAG = "voice";
 #define NVS_KEY_SCK_IO      "sck_io"
 #define NVS_KEY_WS_IO       "ws_io"
 #define NVS_KEY_SD_IO       "sd_io"
+#define NVS_KEY_WW_ENABLED  "ww_en"
+#define NVS_KEY_WAKEWORD    "wakeword"
+#define NVS_KEY_WW_LISTEN   "ww_listen_ms"
 
 #define GROQ_WHISPER_URL    "https://api.groq.com/openai/v1/audio/transcriptions"
 #define GROQ_CHAT_URL       "https://api.groq.com/openai/v1/chat/completions"
@@ -61,6 +65,8 @@ static const char *TAG = "voice";
 
 #define VOICE_TASK_STACK    20480   /* 20 KB: TLS + cJSON + PSRAM alloc     */
 #define VOICE_TASK_PRIO     3
+#define WAKE_TASK_STACK     20480   /* same budget – also does TLS          */
+#define WAKE_TASK_PRIO      2       /* lower priority than pipeline task    */
 
 #define MULTIPART_BOUNDARY  "----AquariumVoiceBoundary0x7a3f"
 #define RESPONSE_BUF_SIZE   4096   /* Buffer for Groq JSON responses       */
@@ -108,6 +114,10 @@ static char              s_transcript[TRANSCRIPT_MAX];
 static char              s_last_command[COMMAND_MAX];
 static char              s_last_result[RESULT_MAX];
 
+/* Wake-word monitor state */
+static volatile bool     s_wake_stop   = false; /* signal to stop monitor  */
+static TaskHandle_t      s_wake_task   = NULL;  /* handle of monitor task  */
+
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
 static void nvs_load_config(void)
@@ -124,6 +134,10 @@ static void nvs_load_config(void)
     s_config.i2s_sck_io = CONFIG_VOICE_I2S_SCK_IO;
     s_config.i2s_ws_io  = CONFIG_VOICE_I2S_WS_IO;
     s_config.i2s_sd_io  = CONFIG_VOICE_I2S_SD_IO;
+    s_config.wakeword_enabled = false;
+    strncpy(s_config.wakeword, CONFIG_VOICE_WAKEWORD,
+            sizeof(s_config.wakeword) - 1);
+    s_config.wakeword_listen_ms = CONFIG_VOICE_WAKEWORD_LISTEN_MS;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
@@ -147,6 +161,13 @@ static void nvs_load_config(void)
     len = sizeof(s_config.llm_model);
     nvs_get_str(h, NVS_KEY_LLM_MODEL, s_config.llm_model, &len);
 
+    if (nvs_get_u8(h, NVS_KEY_WW_ENABLED, &u8) == ESP_OK)
+        s_config.wakeword_enabled = u8;
+    len = sizeof(s_config.wakeword);
+    nvs_get_str(h, NVS_KEY_WAKEWORD, s_config.wakeword, &len);
+    if (nvs_get_i32(h, NVS_KEY_WW_LISTEN, &i32) == ESP_OK)
+        s_config.wakeword_listen_ms = i32;
+
     nvs_close(h);
 }
 
@@ -164,6 +185,9 @@ static esp_err_t nvs_save_config(const voice_config_t *cfg)
     nvs_set_i32(h, NVS_KEY_SD_IO,     (int32_t)cfg->i2s_sd_io);
     nvs_set_str(h, NVS_KEY_STT_MODEL, cfg->stt_model);
     nvs_set_str(h, NVS_KEY_LLM_MODEL, cfg->llm_model);
+    nvs_set_u8 (h, NVS_KEY_WW_ENABLED, (uint8_t)cfg->wakeword_enabled);
+    nvs_set_str(h, NVS_KEY_WAKEWORD,   cfg->wakeword);
+    nvs_set_i32(h, NVS_KEY_WW_LISTEN,  (int32_t)cfg->wakeword_listen_ms);
     nvs_commit(h);
     nvs_close(h);
     return ESP_OK;
@@ -843,6 +867,139 @@ static void voice_pipeline_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* ── Wake-word helpers ───────────────────────────────────────────── */
+
+/*
+ * Case-insensitive substring search (both strings must be NUL-terminated).
+ * Returns true if 'needle' appears anywhere inside 'haystack', after
+ * lowercasing both buffers into temporary heap allocations.
+ */
+static bool str_contains_ci(const char *haystack, const char *needle)
+{
+    if (!haystack || !needle || needle[0] == '\0') return false;
+
+    size_t hlen = strlen(haystack);
+    size_t nlen = strlen(needle);
+    if (nlen > hlen) return false;
+
+    char *h = malloc(hlen + 1);
+    char *n = malloc(nlen + 1);
+    if (!h || !n) { free(h); free(n); return false; }
+
+    for (size_t i = 0; i <= hlen; i++)
+        h[i] = (char)tolower((unsigned char)haystack[i]);
+    for (size_t i = 0; i <= nlen; i++)
+        n[i] = (char)tolower((unsigned char)needle[i]);
+
+    bool found = (strstr(h, n) != NULL);
+    free(h);
+    free(n);
+    return found;
+}
+
+/* ── Wake-word monitor task ──────────────────────────────────────── */
+
+/*
+ * Runs continuously while wake-word monitoring is enabled.
+ * Each iteration:
+ *   1. Records a short clip (wakeword_listen_ms, default 1500 ms).
+ *   2. Sends the clip to Groq Whisper (fast transcription).
+ *   3. If the transcript contains the wake phrase, pauses monitoring,
+ *      waits for the voice_pipeline_task to finish, then resumes.
+ *   4. If s_wake_stop is set, exits cleanly.
+ */
+static void wake_monitor_task(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "Wake-word monitor started");
+
+    while (!s_wake_stop) {
+        /* Read current config under mutex */
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        voice_config_t cfg       = s_config;
+        bool           stop      = s_wake_stop;
+        xSemaphoreGive(s_mutex);
+
+        if (stop) break;
+        if (!cfg.enabled || cfg.groq_api_key[0] == '\0') {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        /* Temporarily override record length for the short wake clip */
+        voice_config_t short_cfg = cfg;
+        short_cfg.record_ms = cfg.wakeword_listen_ms;
+
+        /* Record short clip */
+        int n_samples = 0;
+        int16_t *pcm = i2s_record(&short_cfg, &n_samples);
+        if (!pcm || n_samples == 0) {
+            if (pcm) free(pcm);
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        /* Transcribe the clip */
+        char transcript[TRANSCRIPT_MAX];
+        transcript[0] = '\0';
+        esp_err_t err = groq_whisper(cfg.groq_api_key, cfg.stt_model,
+                                     pcm, n_samples,
+                                     transcript, sizeof(transcript));
+        free(pcm);
+
+        if (err != ESP_OK || transcript[0] == '\0') {
+            /* Network / API error – back off briefly before retrying */
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        ESP_LOGD(TAG, "Wake clip transcript: \"%s\"", transcript);
+
+        /* Check for wake phrase */
+        if (!str_contains_ci(transcript, cfg.wakeword)) {
+            continue;  /* no wake word – immediately record next clip */
+        }
+
+        ESP_LOGI(TAG, "Wake word detected! Starting command pipeline.");
+
+        /* Signal wake-word detected */
+        set_status(VOICE_STATUS_WAKEWORD);
+
+        /* Spawn the command pipeline task (non-blocking) */
+        BaseType_t ok = xTaskCreate(
+            voice_pipeline_task, "voice_pipeline",
+            VOICE_TASK_STACK, NULL,
+            VOICE_TASK_PRIO, NULL);
+        if (ok != pdPASS) {
+            ESP_LOGE(TAG, "Wake: failed to spawn pipeline task");
+            set_status(VOICE_STATUS_LISTENING);
+            continue;
+        }
+
+        /* Wait for pipeline to finish before resuming monitoring.
+         * Poll status every 500 ms. Pipeline task sets DONE or ERROR. */
+        for (int wait = 0; wait < 120; wait++) {   /* up to 60 s */
+            if (s_wake_stop) break;
+            vTaskDelay(pdMS_TO_TICKS(500));
+            voice_status_t st = voice_control_get_status();
+            if (st == VOICE_STATUS_DONE || st == VOICE_STATUS_ERROR) break;
+        }
+
+        if (!s_wake_stop) {
+            set_status(VOICE_STATUS_LISTENING);
+        }
+    }
+
+    ESP_LOGI(TAG, "Wake-word monitor stopped");
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_wake_task = NULL;
+    if (s_status == VOICE_STATUS_LISTENING || s_status == VOICE_STATUS_WAKEWORD) {
+        s_status = VOICE_STATUS_IDLE;
+    }
+    xSemaphoreGive(s_mutex);
+    vTaskDelete(NULL);
+}
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 esp_err_t voice_control_init(void)
@@ -957,9 +1114,74 @@ esp_err_t voice_control_set_config(const voice_config_t *cfg)
     if (tmp.record_ms < 1000)  tmp.record_ms = 1000;
     if (tmp.record_ms > 10000) tmp.record_ms = 10000;
 
+    /* Clamp wake-word listen duration */
+    if (tmp.wakeword_listen_ms < 800)  tmp.wakeword_listen_ms = 800;
+    if (tmp.wakeword_listen_ms > 3000) tmp.wakeword_listen_ms = 3000;
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config = tmp;
     xSemaphoreGive(s_mutex);
 
     return nvs_save_config(&tmp);
+}
+
+esp_err_t voice_control_start_listening(void)
+{
+    if (!s_mutex) return ESP_ERR_INVALID_STATE;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool already   = (s_wake_task != NULL);
+    bool enabled   = s_config.enabled;
+    bool has_key   = (s_config.groq_api_key[0] != '\0');
+    bool ww_en     = s_config.wakeword_enabled;
+    bool has_word  = (s_config.wakeword[0] != '\0');
+    xSemaphoreGive(s_mutex);
+
+    if (already) {
+        ESP_LOGW(TAG, "Wake monitor already running");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!enabled || !has_key) {
+        ESP_LOGW(TAG, "Voice control disabled or API key missing");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!ww_en || !has_word) {
+        ESP_LOGW(TAG, "Wake-word feature disabled or phrase not configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_wake_stop = false;
+    set_status(VOICE_STATUS_LISTENING);
+
+    BaseType_t ok = xTaskCreate(
+        wake_monitor_task, "voice_wake",
+        WAKE_TASK_STACK, NULL,
+        WAKE_TASK_PRIO, &s_wake_task);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create wake monitor task");
+        s_wake_task = NULL;
+        set_status(VOICE_STATUS_IDLE);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "Wake-word monitor started (phrase: \"%s\")",
+             s_config.wakeword);
+    return ESP_OK;
+}
+
+void voice_control_stop_listening(void)
+{
+    if (!s_mutex) return;
+    s_wake_stop = true;
+    /* The task will check s_wake_stop on its next iteration and exit */
+    ESP_LOGI(TAG, "Wake-word monitor stop requested");
+}
+
+bool voice_control_is_listening(void)
+{
+    if (!s_mutex) return false;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool running = (s_wake_task != NULL);
+    xSemaphoreGive(s_mutex);
+    return running;
 }

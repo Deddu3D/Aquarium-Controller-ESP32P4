@@ -326,4 +326,22 @@ menu "Aquarium Voice Control Settings"
             GPIO 46 is on the right-side header of the
             Waveshare ESP32-P4-WiFi6 board.
 
+    config VOICE_WAKEWORD
+        string "Wake-word phrase (Italian)"
+        default "hey acquario"
+        help
+            The Italian phrase that activates the full voice command
+            pipeline when the wake-word monitor is running.
+            The comparison is case-insensitive.  Keep it short and
+            distinctive, e.g. "hey acquario" or "ehi acquario".
+
+    config VOICE_WAKEWORD_LISTEN_MS
+        int "Wake-word clip duration (milliseconds)"
+        default 1500
+        range 800 3000
+        help
+            Duration of each short audio clip recorded during
+            wake-word monitoring.  Shorter clips reduce latency but
+            may miss slower speech.  1500 ms is a good default.
+
 endmenu
