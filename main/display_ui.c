@@ -113,6 +113,10 @@ static const char *TAG = "display_ui";
 /* ── Chart ──────────────────────────────────────────────────────────── */
 #define CHART_POINTS    48                /* 48 × 30-min slots = 24 h     */
 
+/* ── Temperature OK range (used for status colour feedback) ────────── */
+#define TEMP_OK_MIN_C   24.0f
+#define TEMP_OK_MAX_C   28.0f
+
 /* ── Colour palette – IoT dashboard dark theme ──────────────────────── */
 #define C_BG        0x0B1E2D   /* deep navy background                    */
 #define C_CARD      0x102A3D   /* card surface                            */
@@ -775,7 +779,7 @@ static void build_home_tab(lv_obj_t *tab)
 
     /* Card 4 – Livello Acqua */
     lv_obj_t *c4 = make_home_card(row2, -1);
-    make_card_header(c4, LV_SYMBOL_WIFI, C_PRIMARY, "LIVELLO ACQUA");
+    make_card_header(c4, LV_SYMBOL_LOOP, C_PRIMARY, "LIVELLO ACQUA");
     s_home_water_val = lv_label_create(c4);
     lv_label_set_text(s_home_water_val, "OK");
     lv_obj_set_style_text_font(s_home_water_val, &lv_font_montserrat_28, 0);
@@ -1648,7 +1652,7 @@ static void ui_refresh_cb(lv_timer_t *timer)
     /* ── Temperature ─────────────────────────────────────────── */
     float temp_c = 0.0f;
     bool  tok    = temperature_sensor_get(&temp_c);
-    bool  tok_ok = tok && (temp_c >= 24.0f && temp_c <= 28.0f);
+    bool  tok_ok = tok && (temp_c >= TEMP_OK_MIN_C && temp_c <= TEMP_OK_MAX_C);
 
     /* Status bar */
     if (s_status_temp_lbl) {
