@@ -269,14 +269,6 @@ void app_main(void)
     /* ── 12. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
-        if (wifi_manager_is_connected()) {
-            ESP_LOGI(TAG, "WiFi: connected");
-        } else {
-            ESP_LOGW(TAG, "WiFi: not connected");
-        }
-
-        /* Placeholder – aquarium control logic goes here */
-
         /* Evaluate LED time-of-day schedule */
         led_schedule_tick();
 
