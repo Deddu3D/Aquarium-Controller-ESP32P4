@@ -32,6 +32,7 @@
 #include "cJSON.h"
 
 #include "voice_control.h"
+#include "wifi_manager.h"
 #include "relay_controller.h"
 #include "led_controller.h"
 #include "led_scenes.h"
@@ -844,6 +845,15 @@ static void voice_pipeline_task(void *arg)
     }
 
     /* ── Stage 2: Whisper transcription ────────────────────────── */
+    if (!wifi_manager_is_connected()) {
+        ESP_LOGE(TAG, "No network – aborting voice pipeline");
+        free(pcm);
+        set_result("Errore: nessuna connessione di rete");
+        set_status(VOICE_STATUS_ERROR);
+        vTaskDelete(NULL);
+        return;
+    }
+
     set_status(VOICE_STATUS_TRANSCRIBING);
     ESP_LOGI(TAG, "Stage 2: Groq Whisper transcription");
 
@@ -967,7 +977,14 @@ static void wake_monitor_task(void *arg)
             continue;
         }
 
-        /* Transcribe the clip */
+        /* Transcribe the clip – skip if network is unavailable */
+        if (!wifi_manager_is_connected()) {
+            free(pcm);
+            ESP_LOGW(TAG, "Wake monitor: no network, waiting 5 s …");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+            continue;
+        }
+
         char transcript[TRANSCRIPT_MAX];
         transcript[0] = '\0';
         esp_err_t err = groq_whisper(cfg.groq_api_key, cfg.stt_model,
