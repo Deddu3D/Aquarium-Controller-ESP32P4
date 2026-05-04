@@ -68,6 +68,11 @@ static const char *TAG = "voice";
 #define WAKE_TASK_STACK     20480   /* same budget – also does TLS          */
 #define WAKE_TASK_PRIO      2       /* lower priority than pipeline task    */
 
+/* Wake-word monitor constants */
+#define MAX_PIPELINE_WAIT_ITER  120  /* 120 × 500 ms = 60 s max pipeline wait */
+#define MIN_WAKEWORD_LISTEN_MS  800
+#define MAX_WAKEWORD_LISTEN_MS  3000
+
 #define MULTIPART_BOUNDARY  "----AquariumVoiceBoundary0x7a3f"
 #define RESPONSE_BUF_SIZE   4096   /* Buffer for Groq JSON responses       */
 #define TRANSCRIPT_MAX      512
@@ -367,8 +372,8 @@ static int16_t *i2s_record(const voice_config_t *cfg, int *n_samples)
      */
     for (int i = 0; i < samples_read; i++) {
         int32_t s32 = raw[i] >> 14;
-        if (s32 >  32767) s32 =  32767;
-        if (s32 < -32768) s32 = -32768;
+        if (s32 >  INT16_MAX) s32 =  INT16_MAX;
+        if (s32 <  INT16_MIN) s32 =  INT16_MIN;
         pcm[i] = (int16_t)s32;
     }
 
@@ -978,7 +983,7 @@ static void wake_monitor_task(void *arg)
 
         /* Wait for pipeline to finish before resuming monitoring.
          * Poll status every 500 ms. Pipeline task sets DONE or ERROR. */
-        for (int wait = 0; wait < 120; wait++) {   /* up to 60 s */
+        for (int wait = 0; wait < MAX_PIPELINE_WAIT_ITER; wait++) {
             if (s_wake_stop) break;
             vTaskDelay(pdMS_TO_TICKS(500));
             voice_status_t st = voice_control_get_status();
@@ -1115,8 +1120,10 @@ esp_err_t voice_control_set_config(const voice_config_t *cfg)
     if (tmp.record_ms > 10000) tmp.record_ms = 10000;
 
     /* Clamp wake-word listen duration */
-    if (tmp.wakeword_listen_ms < 800)  tmp.wakeword_listen_ms = 800;
-    if (tmp.wakeword_listen_ms > 3000) tmp.wakeword_listen_ms = 3000;
+    if (tmp.wakeword_listen_ms < MIN_WAKEWORD_LISTEN_MS)
+        tmp.wakeword_listen_ms = MIN_WAKEWORD_LISTEN_MS;
+    if (tmp.wakeword_listen_ms > MAX_WAKEWORD_LISTEN_MS)
+        tmp.wakeword_listen_ms = MAX_WAKEWORD_LISTEN_MS;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config = tmp;
