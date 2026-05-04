@@ -42,7 +42,6 @@
 #include "display_ui.h"
 #include "feeding_mode.h"
 #include "daily_cycle.h"
-#include "voice_control.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -233,15 +232,6 @@ void app_main(void)
         ESP_LOGI(TAG, "Feeding mode module ready");
     }
 
-    /* ── 8e. Initialise voice control module ─────────────────────── */
-    esp_task_wdt_reset();
-    ret = voice_control_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Voice control init failed (0x%x)", ret);
-    } else {
-        ESP_LOGI(TAG, "Voice control module ready");
-    }
-
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
     esp_task_wdt_reset();
     ret = duckdns_init();
@@ -279,14 +269,6 @@ void app_main(void)
     /* ── 12. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
-        if (wifi_manager_is_connected()) {
-            ESP_LOGI(TAG, "WiFi: connected");
-        } else {
-            ESP_LOGW(TAG, "WiFi: not connected");
-        }
-
-        /* Placeholder – aquarium control logic goes here */
-
         /* Evaluate LED time-of-day schedule */
         led_schedule_tick();
 
