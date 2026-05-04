@@ -24,6 +24,7 @@
 #include "nvs.h"
 
 #include "relay_controller.h"
+#include "sd_logger.h"
 
 static const char *TAG = "relay";
 
@@ -228,6 +229,13 @@ esp_err_t relay_controller_set(int index, bool on)
         cb(index, on, "manual");
     }
 
+    /* Log relay event to SD card */
+    if (prev != on) {
+        char detail[48];
+        snprintf(detail, sizeof(detail), "relay%d(%s)", index, s_relay[index].name);
+        sd_logger_log_event(time(NULL), on ? "relay_on" : "relay_off", detail);
+    }
+
     return ESP_OK;
 }
 
@@ -373,6 +381,15 @@ void relay_controller_tick_schedules(void)
 
             if (cb) {
                 cb(i, should_be_on, "schedule");
+            }
+
+            /* Log relay schedule event to SD card */
+            {
+                char detail[48];
+                snprintf(detail, sizeof(detail), "relay%d(%s) src=schedule",
+                         i, s_relay[i].name);
+                sd_logger_log_event(now, should_be_on ? "relay_on" : "relay_off",
+                                    detail);
             }
 
             xSemaphoreTake(s_mutex, portMAX_DELAY);

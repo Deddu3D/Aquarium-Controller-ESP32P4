@@ -30,6 +30,7 @@
 #include "temperature_sensor.h"
 #include "led_schedule.h"
 #include "led_controller.h"
+#include "sd_logger.h"
 
 static const char *TAG = "telegram";
 
@@ -637,7 +638,14 @@ esp_err_t telegram_notify_send(const char *message)
         return ESP_ERR_INVALID_STATE;
     }
 
-    return send_telegram_message(cfg.bot_token, cfg.chat_id, message);
+    esp_err_t ret = send_telegram_message(cfg.bot_token, cfg.chat_id, message);
+
+    /* Log all sent notifications to the SD card (no-op if not mounted) */
+    if (ret == ESP_OK) {
+        sd_logger_log_telegram(time(NULL), message);
+    }
+
+    return ret;
 }
 
 esp_err_t telegram_notify_reset_water_change(void)

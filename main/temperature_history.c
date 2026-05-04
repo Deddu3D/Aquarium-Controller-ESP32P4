@@ -20,6 +20,7 @@
 
 #include "temperature_sensor.h"
 #include "temperature_history.h"
+#include "sd_logger.h"
 
 static const char *TAG = "temp_hist";
 
@@ -58,6 +59,8 @@ static void history_task(void *arg)
                     s_count++;
                 }
                 xSemaphoreGive(s_mutex);
+                /* Persist to SD card (no-op if SD not mounted) */
+                sd_logger_log_temperature(now, temp_c);
                 ESP_LOGD(TAG, "Recorded %.2f °C  (count=%d)", temp_c, s_count);
             }
         }

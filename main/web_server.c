@@ -39,6 +39,11 @@
 #include "feeding_mode.h"
 #include "led_scenes.h"
 #include "daily_cycle.h"
+#include "sd_card.h"
+#include "sd_logger.h"
+
+#include <sys/stat.h>
+#include <dirent.h>
 
 static const char *TAG = "web_srv";
 
@@ -130,6 +135,8 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    256
 #define JSON_DAILY_BUF_SIZE    256
+#define JSON_SD_STATUS_BUF_SIZE 256
+#define SD_DOWNLOAD_CHUNK       4096
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -146,7 +153,7 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  50
+#define HTTP_MAX_URI_HANDLERS  60
 
 static const char STATUS_HTML_TEMPLATE[] =
     "<!DOCTYPE html>"
@@ -316,6 +323,7 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"tab\" onclick=\"switchTab(1)\">&#x25B3; LED Strip</button>"
     "<button class=\"tab\" onclick=\"switchTab(2)\">&#x1F514; Telegram</button>"
     "<button class=\"tab\" onclick=\"switchTab(3)\">&#x2699; Manutenzione</button>"
+    "<button class=\"tab\" onclick=\"switchTab(4)\">&#x1F4BE; SD Card</button>"
     "</div>"
     ""
     "<!-- ═══ Panel 0: Riepilogo ═══ -->"
@@ -749,6 +757,68 @@ static const char STATUS_HTML_TEMPLATE[] =
     "<button class=\"btn\" onclick=\"saveTz()\">Salva Fuso Orario</button>"
     "</div></div></div>"
     "</div>"
+
+    "<!-- ═══ Panel 4: SD Card ═══ -->"
+    "<div class=\"panel\" id=\"p4\">"
+    "<!-- SD Card Status -->"
+    "<div class=\"ccard open\" id=\"sd-status-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F4BE; Stato SD Card</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Stato</span>"
+    "<span class=\"value\" id=\"sd-mounted\">--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Scheda</span>"
+    "<span class=\"value\" id=\"sd-name\">--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Spazio totale</span>"
+    "<span class=\"value\" id=\"sd-total\">--</span></div>"
+    "<div class=\"row\"><span class=\"label\">Spazio libero</span>"
+    "<span class=\"value\" id=\"sd-free\">--</span></div>"
+    "<button class=\"btn btn-sm\" onclick=\"loadSdStatus()\">&#x1F504; Aggiorna</button>"
+    "</div></div></div>"
+
+    "<!-- Config Backup/Restore -->"
+    "<div class=\"ccard\" id=\"sd-config-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F4CB; Backup Configurazione</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">Percorso backup</span>"
+    "<span class=\"value\">/sdcard/config/aquarium_config.json</span></div>"
+    "<button class=\"btn\" onclick=\"sdExportConfig()\">&#x1F4E4; Esporta Config</button>"
+    "<button class=\"btn\" onclick=\"sdImportConfig()\">&#x1F4E5; Importa Config</button>"
+    "</div></div></div>"
+
+    "<!-- File Browser -->"
+    "<div class=\"ccard\" id=\"sd-files-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F4C1; File SD Card</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\" style=\"border-bottom:none;padding:.3rem 0\">"
+    "<span class=\"label\">Percorso</span>"
+    "<input type=\"text\" class=\"fin fin-wide\" id=\"sd-path\" value=\"/sdcard\">"
+    "</div>"
+    "<button class=\"btn btn-sm\" onclick=\"sdListFiles()\">&#x1F50D; Elenca</button>"
+    "<div id=\"sd-file-list\" style=\"margin-top:.5rem\"></div>"
+    "</div></div></div>"
+
+    "<!-- OTA from SD -->"
+    "<div class=\"ccard\" id=\"sd-ota-card\">"
+    "<div class=\"ccard-hdr\" onclick=\"tog(this)\">"
+    "<h2>&#x1F504; Aggiornamento OTA da SD</h2>"
+    "<span class=\"arr\">&#x25BC;</span></div>"
+    "<div class=\"ccard-body\"><div class=\"ccard-inner\">"
+    "<div class=\"row\"><span class=\"label\">File firmware</span>"
+    "<span class=\"value\">/sdcard/firmware.bin</span></div>"
+    "<div class=\"row\"><span class=\"label\">Stato OTA</span>"
+    "<span class=\"value\" id=\"sd-ota-status\">idle</span></div>"
+    "<div class=\"ota-bar\"><div class=\"ota-fill\" id=\"sd-ota-fill\"></div></div>"
+    "<button class=\"btn\" onclick=\"sdStartOta()\">&#x26A1; Aggiorna da SD</button>"
+    "</div></div></div>"
+
+    "</div>"
+
     "<!-- end panels -->"
     "</div>"
     "<!-- Status bar -->"
@@ -779,7 +849,8 @@ static const char STATUS_HTML_TEMPLATE[] =
     "  if(n===0){loadDash();loadFeeding()}"
     "  if(n===1){loadLeds();loadSched();loadPresets();loadSceneConfig();loadDailyCycle()}"
     "  if(n===2){loadTg()}"
-    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}}"
+    "  if(n===3){loadSys();loadDdns();loadOtaStatus();loadHeater();loadRelays();loadCo2();loadTimezone();loadFeedingConfig()}"
+    "  if(n===4){loadSdStatus();loadSdFiles()}}"
     "/* ── Color helpers ── */"
     "function hexToRgb(h){"
     "  return{r:parseInt(h.slice(1,3),16),"
@@ -1509,6 +1580,104 @@ static const char STATUS_HTML_TEMPLATE[] =
     "setInterval(function(){loadTemp();loadDashLeds();loadDashRelays();"
     "  loadDashHeater();loadFeeding()},2000);"
     "setInterval(function(){loadHistory()},60000);"
+    "/* ── SD Card ── */"
+    "function fmtBytes(b){"
+    "  if(b===0)return'0 B';"
+    "  var k=1024,s=['B','KB','MB','GB'],i=Math.floor(Math.log(b)/Math.log(k));"
+    "  return(b/Math.pow(k,i)).toFixed(1)+' '+s[i]}"
+    "function loadSdStatus(){"
+    "  fetch('/api/sdcard').then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    $('sd-mounted').textContent=d.mounted?'Montata \\u2713':'Non presente';"
+    "    $('sd-mounted').style.color=d.mounted?'#4ade80':'#f87171';"
+    "    $('sd-name').textContent=d.mounted?(d.card_name||'--'):'--';"
+    "    $('sd-total').textContent=d.mounted?fmtBytes(d.total_bytes):'--';"
+    "    $('sd-free').textContent=d.mounted?fmtBytes(d.free_bytes):'--'"
+    "  }).catch(function(){})}"
+    "function loadSdFiles(){"
+    "  var path=$('sd-path').value||'/sdcard';"
+    "  sdListFilesAt(path)}"
+    "function sdListFiles(){"
+    "  var path=$('sd-path').value||'/sdcard';"
+    "  sdListFilesAt(path)}"
+    "function sdListFilesAt(path){"
+    "  fetch('/api/sdcard/ls?path='+encodeURIComponent(path))"
+    "  .then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    var c=$('sd-file-list');c.innerHTML='';"
+    "    if(!d.entries||d.entries.length===0){"
+    "      c.textContent='(vuoto)';return}"
+    "    d.entries.forEach(function(e){"
+    "      var row=document.createElement('div');"
+    "      row.style.cssText='display:flex;align-items:center;gap:.4rem;"
+    "padding:.3rem 0;border-bottom:1px solid #1a2540;font-size:.8rem';"
+    "      var icon=e.is_dir?'\\uD83D\\uDCC1':'\\uD83D\\uDCC4';"
+    "      var nm=document.createElement('span');"
+    "      nm.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';"
+    "      nm.textContent=icon+' '+e.name;"
+    "      if(e.is_dir){nm.style.cursor='pointer';"
+    "        nm.onclick=function(){$('sd-path').value=path+'/'+e.name;"
+    "          sdListFilesAt(path+'/'+e.name)}}"
+    "      var sz=document.createElement('span');"
+    "      sz.style.cssText='color:#64748b;min-width:64px;text-align:right';"
+    "      sz.textContent=e.is_dir?'--':fmtBytes(e.size);"
+    "      row.appendChild(nm);row.appendChild(sz);"
+    "      if(!e.is_dir){"
+    "        var dl=document.createElement('a');"
+    "        dl.href='/api/sdcard/download?path='+encodeURIComponent(path+'/'+e.name);"
+    "        dl.download=e.name;"
+    "        dl.textContent='\\u2B07';"
+    "        dl.style.cssText='color:#38bdf8;text-decoration:none;padding:0 .3rem';"
+    "        row.appendChild(dl);"
+    "        var del=document.createElement('button');"
+    "        del.textContent='\\uD83D\\uDDD1';"
+    "        del.style.cssText='background:none;border:none;cursor:pointer;"
+    "color:#f87171;font-size:.9rem;padding:0 .2rem';"
+    "        del.onclick=(function(fp){return function(){"
+    "          if(!confirm('Eliminare '+fp+'?'))return;"
+    "          fetch('/api/sdcard/delete?path='+encodeURIComponent(fp),"
+    "            {method:'DELETE'})"
+    "          .then(function(){sdListFilesAt(path);"
+    "            toast('File eliminato',1)})"
+    "          .catch(function(){toast('Errore eliminazione',0)})"
+    "        }})(path+'/'+e.name);"
+    "        row.appendChild(del)}"
+    "      c.appendChild(row)})"
+    "  }).catch(function(){toast('Errore elenco file',0)})}"
+    "function sdExportConfig(){"
+    "  fetch('/api/sdcard/config/export',{method:'POST'})"
+    "  .then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if(d.ok){toast('Config esportata: '+d.path,1);"
+    "      loadSdStatus();loadSdFiles()}"
+    "    else{toast('Errore export: '+(d.error||'?'),0)}"
+    "  }).catch(function(){toast('Errore export config',0)})}"
+    "function sdImportConfig(){"
+    "  if(!confirm('Importare config dalla SD? Le impostazioni correnti saranno sovrascritte.'))return;"
+    "  fetch('/api/sdcard/config/import',{method:'POST'})"
+    "  .then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if(d.ok){toast('Config importata! Riavviare il controller.',1)}"
+    "    else{toast('Errore import: '+(d.error||'?'),0)}"
+    "  }).catch(function(){toast('Errore import config',0)})}"
+    "function sdStartOta(){"
+    "  if(!confirm('Avviare OTA da /sdcard/firmware.bin?\\nIl controller si riavvier\\u00e0 automaticamente.'))return;"
+    "  fetch('/api/ota/sd',{method:'POST'})"
+    "  .then(function(r){return r.json()})"
+    "  .then(function(d){"
+    "    if(d.ok){toast('OTA avviata!',1);pollSdOta()}"
+    "    else{toast('Errore: '+(d.error||'?'),0)}"
+    "  }).catch(function(){toast('Errore OTA SD',0)})}"
+    "function pollSdOta(){"
+    "  var iv=setInterval(function(){"
+    "    fetch('/api/ota_status').then(function(r){return r.json()})"
+    "    .then(function(d){"
+    "      $('sd-ota-status').textContent=d.status;"
+    "      $('sd-ota-fill').style.width=d.progress+'%%';"
+    "      if(d.status==='done'||d.status==='error'){"
+    "        clearInterval(iv);"
+    "        if(d.status==='done')toast('OTA completata! Riavvio...',1);"
+    "        else toast('Errore OTA: '+d.error,0)}})},2000)}"
     "</script>"
     "</body></html>";
 
@@ -3219,6 +3388,289 @@ static const httpd_uri_t uri_api_daily_cycle_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_sdcard_status = {
+    .uri      = "/api/sdcard",
+    .method   = HTTP_GET,
+    .handler  = api_sdcard_status_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_sdcard_ls = {
+    .uri      = "/api/sdcard/ls",
+    .method   = HTTP_GET,
+    .handler  = api_sdcard_ls_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_sdcard_download = {
+    .uri      = "/api/sdcard/download",
+    .method   = HTTP_GET,
+    .handler  = api_sdcard_download_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_sdcard_delete = {
+    .uri      = "/api/sdcard/delete",
+    .method   = HTTP_DELETE,
+    .handler  = api_sdcard_delete_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_sdcard_config_export = {
+    .uri      = "/api/sdcard/config/export",
+    .method   = HTTP_POST,
+    .handler  = api_sdcard_config_export_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_sdcard_config_import = {
+    .uri      = "/api/sdcard/config/import",
+    .method   = HTTP_POST,
+    .handler  = api_sdcard_config_import_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ota_sd = {
+    .uri      = "/api/ota/sd",
+    .method   = HTTP_POST,
+    .handler  = api_ota_sd_post_handler,
+    .user_ctx = NULL,
+};
+
+/* ── SD Card REST API handlers ───────────────────────────────────── */
+
+static esp_err_t api_sdcard_status_handler(httpd_req_t *req)
+{
+    sd_card_info_t info;
+    sd_card_get_info(&info);
+
+    char buf[JSON_SD_STATUS_BUF_SIZE];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"mounted\":%s,"
+        "\"card_name\":\"%s\","
+        "\"total_bytes\":%" PRIu64 ","
+        "\"free_bytes\":%" PRIu64 ","
+        "\"card_speed_khz\":%" PRIu32 "}",
+        info.mounted ? "true" : "false",
+        info.card_name,
+        info.total_bytes,
+        info.free_bytes,
+        info.card_speed_khz);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
+{
+    /* Read ?path= query parameter */
+    char path[128] = SD_MOUNT_POINT;
+    char query[256];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[128];
+        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
+            /* Sanitise: must start with mount point and must not contain
+             * path traversal sequences. */
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
+                strncpy(path, val, sizeof(path) - 1);
+                path[sizeof(path) - 1] = '\0';
+            }
+        }
+    }
+
+    if (!sd_card_is_mounted()) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"error\":\"SD card not mounted\",\"entries\":[]}");
+    }
+
+    DIR *dir = opendir(path);
+    if (dir == NULL) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"error\":\"Cannot open directory\",\"entries\":[]}");
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr_chunk(req, "{\"path\":\"");
+    httpd_resp_sendstr_chunk(req, path);
+    httpd_resp_sendstr_chunk(req, "\",\"entries\":[");
+
+    struct dirent *entry;
+    bool first = true;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        /* Get file size */
+        char full_path[192];
+        int fp_len = snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        /* Reject if path overflowed or traverses outside mount point */
+        if (fp_len >= (int)sizeof(full_path) ||
+            strncmp(full_path, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) != 0) {
+            continue;
+        }
+        struct stat st;
+        long fsize = 0;
+        bool is_dir = (entry->d_type == DT_DIR);
+        if (!is_dir && stat(full_path, &st) == 0) {
+            fsize = (long)st.st_size;
+        }
+
+        char chunk[256];
+        /* Escape name for JSON */
+        char ename[128];
+        json_escape(entry->d_name, ename, sizeof(ename));
+        snprintf(chunk, sizeof(chunk),
+                 "%s{\"name\":\"%s\",\"is_dir\":%s,\"size\":%ld}",
+                 first ? "" : ",",
+                 ename,
+                 is_dir ? "true" : "false",
+                 fsize);
+        httpd_resp_sendstr_chunk(req, chunk);
+        first = false;
+    }
+    closedir(dir);
+
+    httpd_resp_sendstr_chunk(req, "]}");
+    return httpd_resp_sendstr_chunk(req, NULL);
+}
+
+static esp_err_t api_sdcard_download_handler(httpd_req_t *req)
+{
+    char query[256];
+    char path[192] = "";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[192];
+        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
+                strncpy(path, val, sizeof(path) - 1);
+                path[sizeof(path) - 1] = '\0';
+            }
+        }
+    }
+
+    if (path[0] == '\0' || !sd_card_is_mounted()) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad path or SD not mounted");
+        return ESP_FAIL;
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+        return ESP_FAIL;
+    }
+
+    /* Derive filename from path for Content-Disposition */
+    const char *fname = strrchr(path, '/');
+    fname = fname ? (fname + 1) : path;
+
+    char disp[256];
+    snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", fname);
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+
+    char *buf = malloc(SD_DOWNLOAD_CHUNK);
+    if (buf == NULL) {
+        fclose(f);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    esp_err_t ret = ESP_OK;
+    while (!feof(f)) {
+        size_t len = fread(buf, 1, SD_DOWNLOAD_CHUNK, f);
+        if (len > 0) {
+            if (httpd_resp_send_chunk(req, buf, (ssize_t)len) != ESP_OK) {
+                ret = ESP_FAIL;
+                break;
+            }
+        }
+    }
+    free(buf);
+    fclose(f);
+
+    if (ret == ESP_OK) {
+        httpd_resp_send_chunk(req, NULL, 0);
+    }
+    return ret;
+}
+
+static esp_err_t api_sdcard_delete_handler(httpd_req_t *req)
+{
+    char query[256];
+    char path[192] = "";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[192];
+        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
+            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
+                strstr(val, "..") == NULL) {
+                strncpy(path, val, sizeof(path) - 1);
+                path[sizeof(path) - 1] = '\0';
+            }
+        }
+    }
+
+    if (path[0] == '\0' || !sd_card_is_mounted()) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Bad path or SD not mounted\"}");
+    }
+
+    int r = remove(path);
+    httpd_resp_set_type(req, "application/json");
+    if (r == 0) {
+        return httpd_resp_sendstr(req, "{\"ok\":true}");
+    } else {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Delete failed\"}");
+    }
+}
+
+static esp_err_t api_sdcard_config_export_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    if (!sd_card_is_mounted()) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
+    }
+    esp_err_t err = sd_card_config_export(SD_CONFIG_FILE);
+    if (err == ESP_OK) {
+        return httpd_resp_sendstr(req,
+            "{\"ok\":true,\"path\":\"" SD_CONFIG_FILE "\"}");
+    } else {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Export failed\"}");
+    }
+}
+
+static esp_err_t api_sdcard_config_import_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    if (!sd_card_is_mounted()) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
+    }
+    esp_err_t err = sd_card_config_import(SD_CONFIG_FILE);
+    if (err == ESP_OK) {
+        return httpd_resp_sendstr(req, "{\"ok\":true}");
+    } else {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Import failed\"}");
+    }
+}
+
+static esp_err_t api_ota_sd_post_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    if (!sd_card_is_mounted()) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
+    }
+    if (ota_update_in_progress()) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"OTA already in progress\"}");
+    }
+    esp_err_t err = ota_update_start_from_sd(SD_FIRMWARE_FILE);
+    if (err == ESP_OK) {
+        return httpd_resp_sendstr(req, "{\"ok\":true}");
+    }
+    char buf[128];
+    snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
+    return httpd_resp_sendstr(req, buf);
+}
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -3305,6 +3757,13 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scene_post);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_status);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_ls);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_download);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_delete);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_config_export);
+    httpd_register_uri_handler(s_server, &uri_api_sdcard_config_import);
+    httpd_register_uri_handler(s_server, &uri_api_ota_sd);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");

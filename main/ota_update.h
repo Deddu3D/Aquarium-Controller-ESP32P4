@@ -58,6 +58,21 @@ ota_progress_t ota_update_get_progress(void);
  */
 bool ota_update_in_progress(void);
 
+/**
+ * @brief Start a local OTA firmware update from a file on the SD card.
+ *
+ * Reads the firmware binary from @p path (e.g. SD_FIRMWARE_FILE) and
+ * writes it directly to the next OTA partition.  Runs in a background
+ * FreeRTOS task and reboots automatically on success.  Non-blocking.
+ *
+ * Requires the SD card to be mounted before calling.
+ *
+ * @param path  Absolute path to the firmware binary on the SD card
+ *              (e.g. "/sdcard/firmware.bin").
+ * @return ESP_OK if the update task was launched successfully.
+ */
+esp_err_t ota_update_start_from_sd(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

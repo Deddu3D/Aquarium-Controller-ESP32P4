@@ -10,6 +10,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -31,6 +32,8 @@ static const char *TAG = "ota";
 #define OTA_BUF_SIZE      4096
 #define OTA_TIMEOUT_MS    30000
 #define OTA_URL_MAX       256
+#define OTA_SD_PATH_MAX   128
+#define OTA_REBOOT_DELAY_MS 3000
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -38,6 +41,7 @@ static SemaphoreHandle_t s_mutex       = NULL;
 static ota_progress_t    s_progress    = { .status = OTA_STATUS_IDLE };
 static bool              s_in_progress = false;
 static char              s_url[OTA_URL_MAX];
+static char              s_sd_path[OTA_SD_PATH_MAX];
 
 /* ── OTA task ────────────────────────────────────────────────────── */
 
@@ -312,4 +316,209 @@ bool ota_update_in_progress(void)
     bool in_prog = s_in_progress;
     xSemaphoreGive(s_mutex);
     return in_prog;
+}
+
+/* ── SD-card OTA ─────────────────────────────────────────────────── */
+
+static void ota_sd_task(void *arg)
+{
+    (void)arg;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_progress.status       = OTA_STATUS_FLASHING;
+    s_progress.progress_pct = 0;
+    s_progress.error_msg[0] = '\0';
+    char path_copy[OTA_SD_PATH_MAX];
+    strncpy(path_copy, s_sd_path, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+    xSemaphoreGive(s_mutex);
+
+    ESP_LOGI(TAG, "Starting SD OTA from: %s", path_copy);
+
+    /* Open firmware file */
+    FILE *f = fopen(path_copy, "rb");
+    if (f == NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Cannot open %s", path_copy);
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "Cannot open firmware file: %s", path_copy);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    struct stat st;
+    long file_size = 0;
+    if (stat(path_copy, &st) == 0) {
+        file_size = (long)st.st_size;
+    }
+    ESP_LOGI(TAG, "Firmware file size: %ld bytes", file_size);
+
+    /* Prepare OTA partition */
+    const esp_partition_t *update_partition =
+        esp_ota_get_next_update_partition(NULL);
+    if (update_partition == NULL) {
+        fclose(f);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "No OTA partition found");
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "No OTA partition available");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    esp_ota_handle_t ota_handle = 0;
+    esp_err_t err = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES,
+                                  &ota_handle);
+    if (err != ESP_OK) {
+        fclose(f);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "OTA begin: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Read + flash loop */
+    char *buf = malloc(OTA_BUF_SIZE);
+    if (buf == NULL) {
+        fclose(f);
+        esp_ota_abort(ota_handle);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg), "OOM");
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    long bytes_read = 0;
+    bool success = true;
+    while (!feof(f)) {
+        size_t len = fread(buf, 1, OTA_BUF_SIZE, f);
+        if (len == 0) {
+            if (ferror(f)) {
+                ESP_LOGE(TAG, "File read error");
+                success = false;
+            }
+            break;
+        }
+        err = esp_ota_write(ota_handle, buf, len);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA write failed: %s", esp_err_to_name(err));
+            success = false;
+            break;
+        }
+        bytes_read += (long)len;
+        if (file_size > 0) {
+            int pct = (int)(bytes_read * 100L / file_size);
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+            s_progress.progress_pct = pct > 100 ? 100 : pct;
+            xSemaphoreGive(s_mutex);
+        }
+    }
+
+    free(buf);
+    fclose(f);
+
+    if (!success) {
+        esp_ota_abort(ota_handle);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Read/flash failed");
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "OTA end: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Set boot partition: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "Set boot partition failed: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "SD OTA successful (%ld bytes) – rebooting in 3 s …", bytes_read);
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_progress.status       = OTA_STATUS_DONE;
+    s_progress.progress_pct = 100;
+    s_in_progress           = false;
+    xSemaphoreGive(s_mutex);
+
+    vTaskDelay(pdMS_TO_TICKS(OTA_REBOOT_DELAY_MS));
+    esp_restart();
+}
+
+esp_err_t ota_update_start_from_sd(const char *path)
+{
+    if (path == NULL || path[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_in_progress) {
+        xSemaphoreGive(s_mutex);
+        ESP_LOGW(TAG, "OTA already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_in_progress = true;
+    strncpy(s_sd_path, path, sizeof(s_sd_path) - 1);
+    s_sd_path[sizeof(s_sd_path) - 1] = '\0';
+    s_progress.status       = OTA_STATUS_FLASHING;
+    s_progress.progress_pct = 0;
+    s_progress.error_msg[0] = '\0';
+    xSemaphoreGive(s_mutex);
+
+    BaseType_t ret = xTaskCreate(ota_sd_task, "ota_sd",
+                                 OTA_TASK_STACK, NULL, 5, NULL);
+    if (ret != pdPASS) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_in_progress = false;
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Task creation failed");
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+
+    return ESP_OK;
 }

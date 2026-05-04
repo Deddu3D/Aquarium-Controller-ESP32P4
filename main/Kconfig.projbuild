@@ -274,3 +274,86 @@ menu "Aquarium LED Scene Settings"
             dim (< 30) to simulate natural moonlight without disturbing fish.
 
 endmenu
+
+menu "Aquarium SD Card Settings"
+
+    config SD_CARD_ENABLED
+        bool "Enable SD card (SDMMC1)"
+        default y
+        help
+            Mount the onboard microSD card slot via the SDMMC1 host peripheral.
+            When enabled, data logging, config backup/restore and local OTA are
+            available.  Disable only if no SD card is physically present and you
+            want to save the mount attempt time at boot.
+
+    if SD_CARD_ENABLED
+
+    config SD_CLK_GPIO
+        int "SDMMC1 CLK GPIO"
+        default 43
+        range 0 56
+        help
+            GPIO number for the SDMMC1 clock signal.
+            On the Waveshare ESP32-P4-WiFi6 board the onboard TF slot
+            is connected to SDMMC1_CLK on GPIO 43.
+
+    config SD_CMD_GPIO
+        int "SDMMC1 CMD GPIO"
+        default 44
+        range 0 56
+        help
+            GPIO number for the SDMMC1 command signal (GPIO 44 on Waveshare
+            ESP32-P4-WiFi6).
+
+    config SD_D0_GPIO
+        int "SDMMC1 D0 GPIO"
+        default 39
+        range 0 56
+        help
+            GPIO number for the SDMMC1 data 0 signal (GPIO 39 on Waveshare
+            ESP32-P4-WiFi6).
+
+    config SD_4BIT_MODE
+        bool "Enable 4-bit SDMMC bus"
+        default n
+        help
+            Use all four data lines (D0-D3) for higher transfer speeds.
+            Leave disabled for 1-bit mode (D0 only), which is compatible
+            with all SD cards and requires fewer GPIOs.
+
+    if SD_4BIT_MODE
+
+    config SD_D1_GPIO
+        int "SDMMC1 D1 GPIO"
+        default 40
+        range 0 56
+        help
+            GPIO number for the SDMMC1 data 1 signal (4-bit mode only).
+
+    config SD_D2_GPIO
+        int "SDMMC1 D2 GPIO"
+        default 41
+        range 0 56
+        help
+            GPIO number for the SDMMC1 data 2 signal (4-bit mode only).
+
+    config SD_D3_GPIO
+        int "SDMMC1 D3 GPIO"
+        default 38
+        range 0 56
+        help
+            GPIO number for the SDMMC1 data 3 signal (4-bit mode only).
+
+    endif # SD_4BIT_MODE
+
+    config SD_CD_GPIO
+        int "SDMMC1 Card Detect GPIO (-1 = none)"
+        default -1
+        range -1 56
+        help
+            GPIO number for the card-detect switch.  Set to -1 if no CD
+            pin is wired (the Waveshare board has no separate CD pin).
+
+    endif # SD_CARD_ENABLED
+
+endmenu
