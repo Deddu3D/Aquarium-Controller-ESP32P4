@@ -224,6 +224,16 @@ static void build_wav_header(uint8_t hdr[44], uint32_t wav_data_bytes,
 /* ── I2S audio capture ───────────────────────────────────────────── */
 
 /*
+ * Allocates size bytes, preferring PSRAM (MALLOC_CAP_SPIRAM) and
+ * falling back to internal DRAM.  Equivalent to a PSRAM-aware malloc.
+ */
+static void *psram_alloc(size_t size)
+{
+    void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : malloc(size);
+}
+
+/*
  * Opens an I2S RX channel, records for record_ms milliseconds, and
  * converts the raw int32 INMP441 output to int16 PCM samples.
  *
@@ -235,27 +245,16 @@ static int16_t *i2s_record(const voice_config_t *cfg, int *n_samples)
     int total_samples = (cfg->record_ms * SAMPLE_RATE) / 1000;
     *n_samples = 0;
 
-    /* Allocate raw (int32) buffer from PSRAM */
-    int32_t *raw = heap_caps_malloc(
-        (size_t)total_samples * sizeof(int32_t),
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!raw) {
-        /* Fall back to internal DRAM if PSRAM is unavailable */
-        raw = malloc((size_t)total_samples * sizeof(int32_t));
-    }
+    /* Allocate raw (int32) buffer – prefer PSRAM for large buffers */
+    int32_t *raw = psram_alloc((size_t)total_samples * sizeof(int32_t));
     if (!raw) {
         ESP_LOGE(TAG, "Cannot allocate %d bytes for raw audio",
                  total_samples * (int)sizeof(int32_t));
         return NULL;
     }
 
-    /* Allocate int16 output buffer from PSRAM */
-    int16_t *pcm = heap_caps_malloc(
-        (size_t)total_samples * sizeof(int16_t),
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pcm) {
-        pcm = malloc((size_t)total_samples * sizeof(int16_t));
-    }
+    /* Allocate int16 output buffer – prefer PSRAM */
+    int16_t *pcm = psram_alloc((size_t)total_samples * sizeof(int16_t));
     if (!pcm) {
         ESP_LOGE(TAG, "Cannot allocate %d bytes for PCM audio",
                  total_samples * (int)sizeof(int16_t));
@@ -547,10 +546,14 @@ static esp_err_t groq_llm(const char *api_key, const char *model,
                            const char *transcript,
                            char *out_cmd, size_t out_len)
 {
-    /* Escape transcript for JSON embedding (simple " and \ escaping) */
-    char escaped[TRANSCRIPT_MAX * 2];
+    /* Escape transcript for JSON embedding – allocate from heap to
+     * avoid consuming stack in this already large task.             */
+    size_t escaped_size = TRANSCRIPT_MAX * 2 + 1;
+    char *escaped = malloc(escaped_size);
+    if (!escaped) return ESP_ERR_NO_MEM;
+
     size_t j = 0;
-    for (size_t i = 0; transcript[i] && j + 3 < sizeof(escaped); i++) {
+    for (size_t i = 0; transcript[i] && j + 3 < escaped_size; i++) {
         switch (transcript[i]) {
         case '"':  escaped[j++] = '\\'; escaped[j++] = '"'; break;
         case '\\': escaped[j++] = '\\'; escaped[j++] = '\\'; break;
@@ -563,9 +566,12 @@ static esp_err_t groq_llm(const char *api_key, const char *model,
 
     /* Build JSON request body */
     /* System prompt contains apostrophes (e') which are fine in JSON */
-    size_t body_size = strlen(SYSTEM_PROMPT) + sizeof(escaped) + 512;
+    size_t body_size = strlen(SYSTEM_PROMPT) + escaped_size + 512;
     char *body = malloc(body_size);
-    if (!body) return ESP_ERR_NO_MEM;
+    if (!body) {
+        free(escaped);
+        return ESP_ERR_NO_MEM;
+    }
 
     int written = snprintf(body, body_size,
         "{"
@@ -579,6 +585,7 @@ static esp_err_t groq_llm(const char *api_key, const char *model,
           "\"temperature\":0.1"
         "}",
         model, SYSTEM_PROMPT, escaped);
+    free(escaped);
 
     if (written < 0 || (size_t)written >= body_size) {
         free(body);
