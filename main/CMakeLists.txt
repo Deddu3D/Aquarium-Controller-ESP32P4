@@ -9,7 +9,7 @@ idf_component_register(
          "voice_control.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_https_server
-             esp_timer log led_strip driver
+             esp_timer log led_strip driver esp_driver_i2s
              onewire_bus ds18b20 esp_http_client esp-tls app_update esp_app_format
              esp_lcd esp_lcd_touch
     PRIV_REQUIRES esp_lcd_hx8394
