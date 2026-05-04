@@ -593,12 +593,34 @@ static esp_err_t groq_llm(const char *api_key, const char *model,
     }
     escaped[j] = '\0';
 
+    /* JSON-escape the system prompt: it contains literal '"' and '\n'
+     * characters that would break the JSON body if inserted raw.      */
+    size_t sys_raw_len     = strlen(SYSTEM_PROMPT);
+    size_t escaped_sys_size = sys_raw_len * 2 + 1;
+    char *escaped_sys = malloc(escaped_sys_size);
+    if (!escaped_sys) {
+        free(escaped);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t k = 0;
+    for (size_t i = 0; SYSTEM_PROMPT[i] && k + 2 < escaped_sys_size; i++) {
+        switch (SYSTEM_PROMPT[i]) {
+        case '"':  escaped_sys[k++] = '\\'; escaped_sys[k++] = '"';  break;
+        case '\\': escaped_sys[k++] = '\\'; escaped_sys[k++] = '\\'; break;
+        case '\n': escaped_sys[k++] = '\\'; escaped_sys[k++] = 'n';  break;
+        case '\r': /* strip bare CR – keep only LF-based newlines */   break;
+        default:   escaped_sys[k++] = SYSTEM_PROMPT[i]; break;
+        }
+    }
+    escaped_sys[k] = '\0';
+
     /* Build JSON request body */
-    /* System prompt contains apostrophes (e') which are fine in JSON */
-    size_t body_size = strlen(SYSTEM_PROMPT) + escaped_size + 512;
+    size_t body_size = escaped_sys_size + escaped_size + 512;
     char *body = malloc(body_size);
     if (!body) {
         free(escaped);
+        free(escaped_sys);
         return ESP_ERR_NO_MEM;
     }
 
@@ -613,8 +635,9 @@ static esp_err_t groq_llm(const char *api_key, const char *model,
           "\"max_tokens\":150,"
           "\"temperature\":0.1"
         "}",
-        model, SYSTEM_PROMPT, escaped);
+        model, escaped_sys, escaped);
     free(escaped);
+    free(escaped_sys);
 
     if (written < 0 || (size_t)written >= body_size) {
         free(body);
