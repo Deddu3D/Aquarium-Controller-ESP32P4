@@ -385,8 +385,8 @@ void relay_controller_tick_schedules(void)
 
             /* Log relay schedule event to SD card */
             {
-                /* "relay%d(%s) src=schedule": 5 + 2 + RELAY_NAME_MAX + 15 + NUL */
-                char detail[8 + RELAY_NAME_MAX];
+                /* "relay%d(%s) src=schedule\0": 5 + 10 + 1 + (RELAY_NAME_MAX-1) + 14 + 1 */
+                char detail[RELAY_NAME_MAX + 30];
                 snprintf(detail, sizeof(detail), "relay%d(%s) src=schedule",
                          i, s_relay[i].name);
                 sd_logger_log_event(now, should_be_on ? "relay_on" : "relay_off",
