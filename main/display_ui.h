@@ -6,11 +6,11 @@
  * (720 × 720 round IPS, HX8394 panel driver, GT911 touch controller).
  *
  * Tabs:
- *  0 – Home   : temperature, LED quick control, relay toggle buttons
- *  1 – LED    : manual control, schedule, presets
- *  2 – Relè   : 4-channel relay names + manual on/off
- *  3 – Config : auto-heater, CO2 controller, timezone
- *  4 – Info   : WiFi status, IP, heap, uptime, date/time
+ *  0 – Home        : 2×2 card grid (Temperatura, Luci, CO₂, Livello Acqua)
+ *  1 – Luci        : brightness slider, scene buttons (Alba/Giorno/Tramonto/Notte)
+ *  2 – Temperatura : arc gauge, target ±, heater/cooling status
+ *  3 – Automazioni : scrollable list with toggles (Luci, CO₂, Riscaldatore, Relè)
+ *  4 – Dati        : LVGL line/bar chart with Temperatura/Luci/CO₂ selector
  *
  * Excluded intentionally (web-UI-only): Telegram, OTA, DuckDNS.
  *
@@ -43,6 +43,20 @@ extern "C" {
  *                          continues without display in that case.
  */
 esp_err_t display_ui_init(void);
+
+/**
+ * @brief Show a modal alarm overlay on top of the dashboard.
+ *
+ * Thread-safe: may be called from any FreeRTOS task.
+ * Displays a red modal popup with a warning icon, the given title message,
+ * an optional detail line, and two action buttons:
+ *  – "DISATTIVA ALLARME" (dismiss/hide)
+ *  – "OK" (acknowledge and clear)
+ *
+ * @param msg    Main alarm message (e.g. "TEMPERATURA TROPPO ALTA!"). Must not be NULL.
+ * @param detail Optional detail line (e.g. "Attuale: 28.7°C"). Pass NULL or "" to omit.
+ */
+void display_ui_show_alarm(const char *msg, const char *detail);
 
 #ifdef __cplusplus
 }
