@@ -429,16 +429,6 @@ static void style_btn_primary(lv_obj_t *o)
     lv_obj_set_style_shadow_opa(o, LV_OPA_30, 0);
 }
 
-/* Green button */
-static void style_btn_green(lv_obj_t *o)
-{
-    lv_obj_set_style_bg_color(o, lv_color_hex(C_ON_BG), 0);
-    lv_obj_set_style_bg_color(o, lv_color_hex(0x0E3320), LV_STATE_PRESSED);
-    lv_obj_set_style_text_color(o, lv_color_hex(C_ON), 0);
-    lv_obj_set_style_radius(o, 10, 0);
-    lv_obj_set_style_border_width(o, 0, 0);
-}
-
 /* Red / alarm button */
 static void style_btn_red(lv_obj_t *o)
 {
@@ -1213,7 +1203,8 @@ static void build_automazioni_tab(lv_obj_t *tab)
     int co2_off_min = sched.off_hour * 60 + sched.off_minute + co2.post_off_min;
     if (co2_on_min  < 0)    co2_on_min  = 0;
     if (co2_off_min > 1439) co2_off_min = 1439;
-    char co2_time[24];
+    /* "%02d:%02d <UTF-8 en dash> %02d:%02d": max 5+1+3+1+5 = 15 chars + NUL */
+    char co2_time[32];
     snprintf(co2_time, sizeof(co2_time), "%02d:%02d \xe2\x80\x93 %02d:%02d",
              co2_on_min / 60, co2_on_min % 60,
              co2_off_min / 60, co2_off_min % 60);

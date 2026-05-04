@@ -28,13 +28,17 @@ typedef enum {
     OTA_STATUS_ERROR,          /**< Update failed                  */
 } ota_status_t;
 
+/** Maximum length of the OTA error message string.
+ *  Sized to hold "Cannot open " (13) + OTA_SD_PATH_MAX (128) + NUL. */
+#define OTA_ERROR_MSG_MAX 192
+
 /**
  * @brief Current OTA progress information.
  */
 typedef struct {
     ota_status_t status;       /**< Current OTA status             */
     int          progress_pct; /**< Download progress 0-100        */
-    char         error_msg[64];/**< Error description if failed    */
+    char         error_msg[OTA_ERROR_MSG_MAX];/**< Error description if failed */
 } ota_progress_t;
 
 /**
