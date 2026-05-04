@@ -11,6 +11,13 @@
 # ── Target ──────────────────────────────────────────────────────────
 CONFIG_IDF_TARGET="esp32p4"
 
+# ── Chip revision ────────────────────────────────────────────────────
+# The Waveshare ESP32-P4-WiFi6 board carries a v1.3 chip.
+# ESP-IDF v6.0 defaults to requiring rev ≥ v3.1; override so the
+# bootloader is built for v1.0 and accepts any v1.x silicon.
+# Encoding: major*100 + minor  →  v1.0 = 100
+CONFIG_ESP32P4_REV_MIN_FULL=100
+
 # ── Flash configuration (16 MB usable NOR Flash) ───────────────────
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
