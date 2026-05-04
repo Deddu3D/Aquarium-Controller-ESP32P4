@@ -42,6 +42,8 @@
 #include "display_ui.h"
 #include "feeding_mode.h"
 #include "daily_cycle.h"
+#include "sd_card.h"
+#include "sd_logger.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -105,6 +107,19 @@ void app_main(void)
         } else {
             ESP_LOGW(TAG, "Task WDT init failed (0x%x) – continuing", ret);
         }
+    }
+
+    /* ── 1c. Initialise SD card (non-fatal) ───────────────────────── */
+    esp_task_wdt_reset();
+    ret = sd_card_init();
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "SD card mounted");
+        sd_logger_init();
+        ESP_LOGI(TAG, "SD logger ready");
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGI(TAG, "SD card disabled in Kconfig – skipping");
+    } else {
+        ESP_LOGW(TAG, "SD card mount failed (0x%x) – continuing without SD", ret);
     }
 
     /* ── 2. Bring up WiFi via C6 coprocessor ──────────────────── */
