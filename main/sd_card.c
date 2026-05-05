@@ -103,7 +103,6 @@ esp_err_t sd_card_init(void)
 
     /* SPI bus – SD card uses SPI2 to avoid conflict with the WiFi
      * coprocessor (esp_hosted) which occupies SDMMC_HOST_SLOT_1. */
-    s_spi_host = SPI2_HOST;
     spi_bus_config_t bus_cfg = {
         .mosi_io_num     = CONFIG_SD_CMD_GPIO,  /* CMD  → MOSI */
         .miso_io_num     = CONFIG_SD_D0_GPIO,   /* D0   → MISO */
