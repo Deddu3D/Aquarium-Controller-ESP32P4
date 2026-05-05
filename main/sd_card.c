@@ -2,22 +2,23 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager implementation
- * Mounts a FAT32 microSD card via the SDMMC1 host peripheral and
+ * Mounts a FAT32 microSD card via the SPI peripheral (SPI2_HOST) and
  * provides configuration backup / restore via JSON.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
  *
- * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot):
- *   SDMMC1_CLK  = GPIO 43   (configurable via Kconfig)
- *   SDMMC1_CMD  = GPIO 44
- *   SDMMC1_D0   = GPIO 39
- *   SDMMC1_D1   = GPIO 40   (only in 4-bit mode)
- *   SDMMC1_D2   = GPIO 41   (only in 4-bit mode)
- *   SDMMC1_D3   = GPIO 38   (only in 4-bit mode)
+ * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SPI mode):
+ *   SPI_CLK   = GPIO 43   (SDMMC1_CLK, configurable via Kconfig)
+ *   SPI_MOSI  = GPIO 44   (SDMMC1_CMD)
+ *   SPI_MISO  = GPIO 39   (SDMMC1_D0)
+ *   SPI_CS    = GPIO 38   (SDMMC1_D3, configurable via Kconfig)
  *
- * Note: SDMMC0 pins (GPIO 14-19) are already reserved for the C6
- * WiFi coprocessor (esp_hosted SDIO transport) – we use SDMMC1.
+ * Note: SDMMC_HOST_SLOT_1 (the GPIO-matrix-routable slot) is already
+ * claimed by the esp_hosted WiFi coprocessor SDIO transport (GPIOs
+ * 14-19).  Attempting to re-use it for the SD card causes the
+ * "no available sd host controller" boot error.  SPI mode (SPI2_HOST)
+ * is a separate peripheral and has no such conflict.
  */
 
 #include <stdio.h>
@@ -34,7 +35,8 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
-#include "driver/sdmmc_host.h"
+#include "driver/sdspi_host.h"
+#include "driver/spi_master.h"
 #include "sdmmc_cmd.h"
 #include "cJSON.h"
 
@@ -62,6 +64,7 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t      *s_card        = NULL;
 static bool               s_mounted     = false;
 static SemaphoreHandle_t  s_mutex       = NULL;
+static spi_host_device_t  s_spi_host    = SPI2_HOST;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -94,37 +97,34 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d)",
-             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO);
+    ESP_LOGI(TAG, "Initialising SD card (SPI, CLK=%d MOSI=%d MISO=%d CS=%d)",
+             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
+             CONFIG_SD_D0_GPIO, CONFIG_SD_CS_GPIO);
 
-    /* SDMMC host – slot 1 (SDMMC1, separate from WiFi SDIO on slot 0) */
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot = SDMMC_HOST_SLOT_1;
+    /* SPI bus – SD card uses SPI2 to avoid conflict with the WiFi
+     * coprocessor (esp_hosted) which occupies SDMMC_HOST_SLOT_1. */
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num     = CONFIG_SD_CMD_GPIO,  /* CMD  → MOSI */
+        .miso_io_num     = CONFIG_SD_D0_GPIO,   /* D0   → MISO */
+        .sclk_io_num     = CONFIG_SD_CLK_GPIO,  /* CLK  → SCLK */
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
+        .max_transfer_sz = 4096,
+    };
+    esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
+    if (ret != ESP_OK) {
+        /* Bus initialisation failed; no bus was actually created so there
+         * is nothing to free — spi_bus_free() must NOT be called here. */
+        ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    /* Bus width: 1-bit or 4-bit depending on Kconfig */
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.clk   = CONFIG_SD_CLK_GPIO;
-    slot_config.cmd   = CONFIG_SD_CMD_GPIO;
-    slot_config.d0    = CONFIG_SD_D0_GPIO;
-#ifdef CONFIG_SD_4BIT_MODE
-    slot_config.width = 4;
-    slot_config.d1    = CONFIG_SD_D1_GPIO;
-    slot_config.d2    = CONFIG_SD_D2_GPIO;
-    slot_config.d3    = CONFIG_SD_D3_GPIO;
-    ESP_LOGI(TAG, "SD bus width: 4-bit (D1=%d D2=%d D3=%d)",
-             CONFIG_SD_D1_GPIO, CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
-#else
-    slot_config.width = 1;
-    ESP_LOGI(TAG, "SD bus width: 1-bit");
-#endif
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = CONFIG_SD_CS_GPIO;
+    slot_config.host_id = s_spi_host;
 
-#if CONFIG_SD_CD_GPIO >= 0
-    slot_config.cd = CONFIG_SD_CD_GPIO;
-    ESP_LOGI(TAG, "SD card detect GPIO: %d", CONFIG_SD_CD_GPIO);
-#else
-    slot_config.cd = SDMMC_SLOT_NO_CD;
-#endif
-    slot_config.wp = SDMMC_SLOT_NO_WP;
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = (int)s_spi_host;
 
     /* Mount configuration */
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -133,12 +133,13 @@ esp_err_t sd_card_init(void)
         .allocation_unit_size   = 16 * 1024,
     };
 
-    esp_err_t ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT,
-                                             &host,
-                                             &slot_config,
-                                             &mount_config,
-                                             &s_card);
+    ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
+                                  &host,
+                                  &slot_config,
+                                  &mount_config,
+                                  &s_card);
     if (ret != ESP_OK) {
+        spi_bus_free(s_spi_host);
         if (ret == ESP_FAIL) {
             ESP_LOGE(TAG, "Failed to mount FAT filesystem – card present?");
         } else {
@@ -153,6 +154,7 @@ esp_err_t sd_card_init(void)
     /* Create mandatory subdirectories */
     ensure_dir(SD_LOGS_DIR);
     ensure_dir(SD_CONFIG_DIR);
+    ensure_dir(SD_WWW_DIR);
 
     ESP_LOGI(TAG, "SD card mounted at " SD_MOUNT_POINT " (name=%s speed=%"PRIu32" kHz)",
              s_card->cid.name,
@@ -168,6 +170,7 @@ void sd_card_deinit(void)
         return;
     }
     esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
+    spi_bus_free(s_spi_host);
     s_card    = NULL;
     s_mounted = false;
     ESP_LOGI(TAG, "SD card unmounted");

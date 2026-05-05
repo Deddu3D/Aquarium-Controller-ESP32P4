@@ -2,9 +2,17 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager
- * Mounts a FAT-formatted microSD card via the SDMMC host peripheral and
+ * Mounts a FAT-formatted microSD card via the SPI peripheral and
  * exposes helpers for configuration backup/restore.  All log and data
  * files written by other modules live under the /sdcard mount point.
+ *
+ * SPI mode is used instead of SDMMC because the esp_hosted WiFi
+ * coprocessor SDIO transport already occupies SDMMC_HOST_SLOT_1 on
+ * ESP32-P4.  The same physical GPIO pins are wired to SPI2_HOST:
+ *   SPI CLK  = GPIO 43  (SDMMC1_CLK pad)
+ *   SPI MOSI = GPIO 44  (SDMMC1_CMD pad)
+ *   SPI MISO = GPIO 39  (SDMMC1_D0 pad)
+ *   SPI CS   = GPIO 38  (SDMMC1_D3 pad)
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -12,6 +20,7 @@
  * Directory layout on the SD card:
  *   /sdcard/logs/       – daily CSV data logs and diagnostic logs
  *   /sdcard/config/     – configuration backup files (JSON)
+ *   /sdcard/www/        – web dashboard files served over HTTP
  *   /sdcard/firmware.bin – optional firmware image for local OTA
  */
 
@@ -31,9 +40,13 @@ extern "C" {
 /** Subdirectory paths */
 #define SD_LOGS_DIR      SD_MOUNT_POINT "/logs"
 #define SD_CONFIG_DIR    SD_MOUNT_POINT "/config"
+#define SD_WWW_DIR       SD_MOUNT_POINT "/www"
 
 /** Default path for configuration backup file. */
 #define SD_CONFIG_FILE   SD_CONFIG_DIR "/aquarium_config.json"
+
+/** Path to the web dashboard HTML file served over HTTP. */
+#define SD_WWW_INDEX     SD_WWW_DIR "/index.html"
 
 /** Default path for local OTA firmware image. */
 #define SD_FIRMWARE_FILE SD_MOUNT_POINT "/firmware.bin"
@@ -52,9 +65,9 @@ typedef struct {
 /**
  * @brief Initialise the SD card subsystem.
  *
- * Configures the SDMMC host (slot 1), mounts the FAT filesystem at
- * /sdcard and creates the logs/ and config/ subdirectories if they
- * do not exist.
+ * Initialises the SPI2 bus, configures the SDSPI device and mounts
+ * the FAT filesystem at /sdcard.  Creates the logs/ and config/
+ * subdirectories if they do not exist.
  *
  * This function is intentionally non-fatal: if no card is present or
  * mount fails it returns an error but the rest of the system continues

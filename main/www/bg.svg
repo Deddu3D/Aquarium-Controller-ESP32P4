@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Deep-water vertical gradient -->
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#061422"/>
+      <stop offset="40%"  stop-color="#040e1a"/>
+      <stop offset="100%" stop-color="#020810"/>
+    </linearGradient>
+    <!-- Sand bottom gradient -->
+    <linearGradient id="sand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#0b1e34"/>
+      <stop offset="100%" stop-color="#060f1e"/>
+    </linearGradient>
+    <!-- Surface light bloom from top -->
+    <radialGradient id="bloom" cx="50%" cy="0%" r="55%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#1fa3ff" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#1fa3ff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Corner vignette -->
+    <radialGradient id="vig" cx="50%" cy="50%" r="70%" gradientUnits="objectBoundingBox">
+      <stop offset="40%"  stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#010609" stop-opacity="0.78"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ── Water ─────────────────────────────────────────────────────── -->
+  <rect width="1920" height="1080" fill="url(#water)"/>
+  <!-- Surface light bloom -->
+  <rect width="1920" height="1080" fill="url(#bloom)"/>
+
+  <!-- ── Volumetric light rays ─────────────────────────────────────── -->
+  <!-- Narrow cone polygons fanning down from surface -->
+  <polygon points="620,0 680,0 490,820 430,820"   fill="rgba(31,163,255,0.045)"/>
+  <polygon points="780,0 830,0 655,820 605,820"   fill="rgba(31,163,255,0.065)"/>
+  <polygon points="940,0 980,0 820,820 780,820"   fill="rgba(31,163,255,0.055)"/>
+  <polygon points="1090,0 1125,0 985,820 950,820" fill="rgba(31,163,255,0.048)"/>
+  <polygon points="1240,0 1275,0 1155,820 1120,820" fill="rgba(31,163,255,0.06)"/>
+  <polygon points="1410,0 1448,0 1345,820 1307,820" fill="rgba(200,232,255,0.04)"/>
+  <polygon points="480,0 510,0 305,820 275,820"    fill="rgba(200,232,255,0.035)"/>
+  <!-- Secondary wider hazy rays -->
+  <polygon points="700,0 900,0 720,1000 520,1000"  fill="rgba(31,163,255,0.018)"/>
+  <polygon points="1100,0 1300,0 1240,1000 1040,1000" fill="rgba(31,163,255,0.018)"/>
+
+  <!-- ── Sand / gravel bottom ──────────────────────────────────────── -->
+  <ellipse cx="960" cy="1140" rx="1220" ry="210" fill="url(#sand)"/>
+
+  <!-- Scattered gravel pebbles on the sand line -->
+  <circle cx="95"   cy="1010" r="5"   fill="rgba(18,46,68,0.85)"/>
+  <circle cx="200"  cy="1022" r="3.5" fill="rgba(18,46,68,0.75)"/>
+  <circle cx="330"  cy="1012" r="5.5" fill="rgba(14,38,58,0.80)"/>
+  <circle cx="510"  cy="1024" r="4"   fill="rgba(18,46,68,0.70)"/>
+  <circle cx="660"  cy="1016" r="5"   fill="rgba(14,38,58,0.75)"/>
+  <circle cx="800"  cy="1020" r="3"   fill="rgba(18,46,68,0.65)"/>
+  <circle cx="940"  cy="1018" r="6"   fill="rgba(14,38,58,0.80)"/>
+  <circle cx="1080" cy="1022" r="4"   fill="rgba(18,46,68,0.70)"/>
+  <circle cx="1230" cy="1015" r="5"   fill="rgba(14,38,58,0.75)"/>
+  <circle cx="1400" cy="1021" r="3.5" fill="rgba(18,46,68,0.65)"/>
+  <circle cx="1570" cy="1017" r="5.5" fill="rgba(14,38,58,0.80)"/>
+  <circle cx="1730" cy="1023" r="4"   fill="rgba(18,46,68,0.70)"/>
+  <circle cx="1870" cy="1016" r="5"   fill="rgba(14,38,58,0.75)"/>
+
+  <!-- ── Background rocks ──────────────────────────────────────────── -->
+  <!-- Left cluster -->
+  <ellipse cx="180" cy="1002" rx="98"  ry="56" fill="#0a1b2a"/>
+  <ellipse cx="235" cy="976"  rx="68"  ry="44" fill="#0c2234"/>
+  <ellipse cx="148" cy="993"  rx="46"  ry="32" fill="#0e2640"/>
+
+  <!-- Centre cluster -->
+  <ellipse cx="960" cy="1008" rx="135" ry="68" fill="#0a1b2a"/>
+  <ellipse cx="1025" cy="978" rx="84"  ry="50" fill="#0c2234"/>
+  <ellipse cx="882" cy="988"  rx="58"  ry="40" fill="#0e2640"/>
+
+  <!-- Right cluster -->
+  <ellipse cx="1748" cy="1002" rx="104" ry="60" fill="#0a1b2a"/>
+  <ellipse cx="1810" cy="975" rx="72"  ry="46" fill="#0c2234"/>
+  <ellipse cx="1686" cy="990" rx="52"  ry="36" fill="#0e2640"/>
+
+  <!-- ── Seagrass plants ────────────────────────────────────────────── -->
+  <!-- Each blade is a simple Bezier curve from the bottom, slightly curved -->
+
+  <!-- Far-left cluster -->
+  <path d="M55,1055 C50,1025 46,993 56,965 C61,986 59,1015 55,1055"  fill="#184c2a"/>
+  <path d="M67,1055 C63,1018 58,985 70,955 C75,977 73,1008 67,1055"  fill="#1c5832"/>
+  <path d="M79,1055 C76,1025 73,995 83,970 C87,990 85,1016 79,1055"  fill="#184c2a"/>
+  <path d="M41,1055 C37,1030 33,1006 42,984 C46,1002 44,1024 41,1055" fill="#154426"/>
+  <path d="M93,1055 C90,1020 85,990 96,963 C101,983 99,1012 93,1055" fill="#1c5832"/>
+
+  <!-- Left-centre cluster -->
+  <path d="M268,1062 C264,1034 260,1006 270,980 C275,1000 273,1025 268,1062" fill="#184c2a"/>
+  <path d="M280,1062 C277,1030 272,998 283,972 C288,992 286,1018 280,1062"  fill="#1c5832"/>
+  <path d="M254,1062 C250,1037 246,1010 256,988 C260,1006 258,1028 254,1062" fill="#154426"/>
+
+  <!-- Centre-left cluster -->
+  <path d="M470,1056 C466,1025 461,993 472,966 C477,987 475,1016 470,1056" fill="#1c5832"/>
+  <path d="M482,1056 C479,1022 474,990 486,962 C491,982 489,1012 482,1056" fill="#184c2a"/>
+  <path d="M494,1056 C491,1028 488,998 498,976 C502,995 500,1018 494,1056" fill="#1c5832"/>
+  <path d="M456,1056 C452,1030 449,1004 458,982 C462,1000 460,1022 456,1056" fill="#154426"/>
+
+  <!-- Centre-right cluster -->
+  <path d="M1428,1052 C1424,1020 1420,988 1430,962 C1435,983 1433,1012 1428,1052" fill="#184c2a"/>
+  <path d="M1440,1052 C1437,1017 1432,985 1444,958 C1449,979 1447,1010 1440,1052" fill="#1c5832"/>
+  <path d="M1452,1052 C1449,1024 1446,994 1456,972 C1460,991 1458,1015 1452,1052" fill="#184c2a"/>
+
+  <!-- Right cluster -->
+  <path d="M1648,1052 C1644,1020 1639,988 1650,962 C1655,983 1653,1012 1648,1052" fill="#184c2a"/>
+  <path d="M1660,1052 C1657,1017 1652,985 1664,958 C1669,979 1667,1010 1660,1052" fill="#1c5832"/>
+  <path d="M1672,1052 C1669,1024 1666,994 1676,972 C1680,991 1678,1015 1672,1052" fill="#184c2a"/>
+  <path d="M1684,1052 C1681,1026 1678,1000 1688,978 C1692,997 1690,1020 1684,1052" fill="#154426"/>
+
+  <!-- Far-right cluster -->
+  <path d="M1858,1056 C1854,1024 1849,992 1860,965 C1865,986 1863,1016 1858,1056" fill="#1c5832"/>
+  <path d="M1870,1056 C1867,1022 1862,990 1874,962 C1879,982 1877,1012 1870,1056" fill="#184c2a"/>
+  <path d="M1882,1056 C1879,1028 1876,998 1886,976 C1890,995 1888,1018 1882,1056" fill="#1c5832"/>
+
+  <!-- ── Coral formations ────────────────────────────────────────────── -->
+  <!-- Blue coral, left side -->
+  <g opacity="0.52">
+    <line x1="402" y1="963" x2="402" y2="942" stroke="#1fa3ff" stroke-width="2.2"/>
+    <line x1="402" y1="963" x2="391" y2="948" stroke="#1fa3ff" stroke-width="2"/>
+    <line x1="402" y1="963" x2="415" y2="950" stroke="#1fa3ff" stroke-width="2"/>
+    <circle cx="402" cy="940"  r="4.5" fill="#1fa3ff"/>
+    <circle cx="391" cy="946"  r="3.5" fill="#1fa3ff"/>
+    <circle cx="415" cy="948"  r="4"   fill="#1fa3ff"/>
+    <line x1="412" y1="963" x2="412" y2="947" stroke="#1fa3ff" stroke-width="1.8" opacity="0.7"/>
+    <circle cx="412" cy="945" r="3"  fill="#1fa3ff" opacity="0.7"/>
+    <line x1="392" y1="963" x2="384" y2="955" stroke="#1fa3ff" stroke-width="1.5" opacity="0.6"/>
+    <circle cx="383" cy="953" r="2.5" fill="#1fa3ff" opacity="0.6"/>
+  </g>
+
+  <!-- Yellow coral, right side -->
+  <g opacity="0.48">
+    <line x1="1498" y1="970" x2="1498" y2="947" stroke="#f1c40f" stroke-width="2.2"/>
+    <line x1="1498" y1="970" x2="1487" y2="955" stroke="#f1c40f" stroke-width="2"/>
+    <line x1="1498" y1="970" x2="1511" y2="957" stroke="#f1c40f" stroke-width="2"/>
+    <circle cx="1498" cy="945"  r="4.5" fill="#f1c40f"/>
+    <circle cx="1487" cy="953"  r="3.5" fill="#f1c40f"/>
+    <circle cx="1511" cy="955"  r="4"   fill="#f1c40f"/>
+    <line x1="1510" y1="970" x2="1510" y2="954" stroke="#f1c40f" stroke-width="1.8" opacity="0.7"/>
+    <circle cx="1510" cy="952" r="3"  fill="#f1c40f" opacity="0.7"/>
+  </g>
+
+  <!-- Orange coral, centre -->
+  <g opacity="0.40">
+    <line x1="858" y1="975" x2="858" y2="956" stroke="#f39c12" stroke-width="2"/>
+    <line x1="858" y1="975" x2="848" y2="961" stroke="#f39c12" stroke-width="1.8"/>
+    <line x1="858" y1="975" x2="869" y2="963" stroke="#f39c12" stroke-width="1.8"/>
+    <circle cx="858" cy="954" r="3.5" fill="#f39c12"/>
+    <circle cx="848" cy="959" r="3"   fill="#f39c12"/>
+    <circle cx="869" cy="961" r="3.2" fill="#f39c12"/>
+  </g>
+
+  <!-- Green coral, centre-right -->
+  <g opacity="0.38">
+    <line x1="1060" y1="978" x2="1060" y2="960" stroke="#2ecc71" stroke-width="2"/>
+    <line x1="1060" y1="978" x2="1050" y2="964" stroke="#2ecc71" stroke-width="1.8"/>
+    <line x1="1060" y1="978" x2="1072" y2="966" stroke="#2ecc71" stroke-width="1.8"/>
+    <circle cx="1060" cy="958" r="3.5" fill="#2ecc71"/>
+    <circle cx="1050" cy="962" r="3"   fill="#2ecc71"/>
+    <circle cx="1072" cy="964" r="3.2" fill="#2ecc71"/>
+  </g>
+
+  <!-- ── Fish silhouettes ───────────────────────────────────────────── -->
+  <!-- Larger blue fish, mid-water left -->
+  <g transform="translate(580,370)" opacity="0.28">
+    <path d="M0,0 C18,-14 48,-14 60,0 C48,14 18,14 0,0Z" fill="#1fa3ff"/>
+    <path d="M0,0 L-22,-11 L-22,11Z" fill="rgba(31,163,255,0.6)"/>
+    <circle cx="46" cy="-2" r="3" fill="rgba(255,255,255,0.75)"/>
+    <!-- fin line -->
+    <line x1="20" y1="-14" x2="35" y2="-4" stroke="rgba(31,163,255,0.4)" stroke-width="1.5"/>
+  </g>
+
+  <!-- Smaller yellow-orange fish, mid-water right -->
+  <g transform="translate(1310,580)" opacity="0.22">
+    <path d="M0,0 C13,-10 34,-10 42,0 C34,10 13,10 0,0Z" fill="#f39c12"/>
+    <path d="M0,0 L-16,-8 L-16,8Z" fill="rgba(243,156,18,0.6)"/>
+    <circle cx="33" cy="-2" r="2.2" fill="rgba(255,255,255,0.70)"/>
+  </g>
+
+  <!-- Tiny background school of fish (left mid-depth) -->
+  <g opacity="0.16" fill="#a8d4ff">
+    <ellipse cx="310" cy="510" rx="7" ry="3"/>
+    <ellipse cx="326" cy="504" rx="6" ry="2.5"/>
+    <ellipse cx="340" cy="512" rx="6" ry="2.5"/>
+    <ellipse cx="322" cy="520" rx="7" ry="3"/>
+    <ellipse cx="350" cy="505" rx="5" ry="2"/>
+  </g>
+
+  <!-- Tiny background school, right mid-depth -->
+  <g opacity="0.13" fill="#ffe0a0">
+    <ellipse cx="1580" cy="430" rx="6" ry="2.5"/>
+    <ellipse cx="1594" cy="424" rx="5.5" ry="2.5"/>
+    <ellipse cx="1607" cy="432" rx="6" ry="3"/>
+    <ellipse cx="1591" cy="441" rx="6" ry="2.5"/>
+  </g>
+
+  <!-- ── Static bubble outlines (depth) ────────────────────────────── -->
+  <circle cx="140" cy="820" r="5"   fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1.2"/>
+  <circle cx="290" cy="880" r="7"   fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="1.4"/>
+  <circle cx="450" cy="850" r="4"   fill="none" stroke="rgba(31,163,255,0.30)"  stroke-width="1"/>
+  <circle cx="740" cy="870" r="5.5" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1.2"/>
+  <circle cx="1050" cy="830" r="6"  fill="none" stroke="rgba(31,163,255,0.25)"  stroke-width="1.3"/>
+  <circle cx="1320" cy="875" r="4.5" fill="none" stroke="rgba(255,255,255,0.20)" stroke-width="1"/>
+  <circle cx="1580" cy="855" r="5.5" fill="none" stroke="rgba(31,163,255,0.28)" stroke-width="1.2"/>
+  <circle cx="1780" cy="840" r="4"  fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>
+
+  <!-- Smaller scattered bubbles higher up -->
+  <circle cx="200" cy="640" r="3.5" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="0.9"/>
+  <circle cx="600" cy="600" r="4"   fill="none" stroke="rgba(31,163,255,0.20)"  stroke-width="1"/>
+  <circle cx="900" cy="650" r="3"   fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="0.8"/>
+  <circle cx="1400" cy="620" r="3.5" fill="none" stroke="rgba(31,163,255,0.18)" stroke-width="0.9"/>
+  <circle cx="1700" cy="660" r="4"  fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+
+  <!-- ── Corner vignette (depth effect) ────────────────────────────── -->
+  <rect width="1920" height="1080" fill="url(#vig)"/>
+</svg>
