@@ -1,7 +1,18 @@
 # Partition Table – Aquarium Controller (ESP32-P4)
 # Waveshare ESP32-P4-WiFi6 – 16 MB usable flash
 #
+# Layout (all offsets hex):
+#   0x000000 – 0x008FFF  bootloader (ESP-IDF reserved)
+#   0x009000 – 0x00EFFF  NVS (24 KB)
+#   0x00F000 – 0x00FFFF  PHY init data (4 KB)
+#   0x010000 – 0x011FFF  OTA data (8 KB)  – tracks which OTA slot to boot
+#   0x012000 – 0x01FFFF  (unused, 56 KB gap to align ota_0 to 64-KB boundary)
+#   0x020000 – 0x61FFFF  ota_0 (6 MB)
+#   0x620000 – 0xC1FFFF  ota_1 (6 MB)
+#
 # Name,       Type,  SubType,  Offset,    Size,      Flags
 nvs,          data,  nvs,      0x9000,    0x6000,
 phy_init,     data,  phy,      0xf000,    0x1000,
-factory,      app,   factory,  0x10000,   0x300000,
+otadata,      data,  ota,      0x10000,   0x2000,
+ota_0,        app,   ota_0,    0x20000,   0x600000,
+ota_1,        app,   ota_1,    0x620000,  0x600000,
