@@ -31,10 +31,12 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
+#include "driver/gpio.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_master.h"
 #include "sdmmc_cmd.h"
@@ -101,6 +103,28 @@ esp_err_t sd_card_init(void)
              CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
              CONFIG_SD_D0_GPIO, CONFIG_SD_CS_GPIO);
 
+    /* In SPI mode the SD card requires pull-ups on all data lines so the
+     * MISO line reads high when the card is not driving it (idle state).
+     * Without pull-ups CMD0 never gets a valid response → ESP_ERR_TIMEOUT.
+     * Configure internal pull-ups before touching the SPI peripheral. */
+    gpio_set_pull_mode(CONFIG_SD_CLK_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(CONFIG_SD_CMD_GPIO, GPIO_PULLUP_ONLY);  /* MOSI */
+    gpio_set_pull_mode(CONFIG_SD_D0_GPIO,  GPIO_PULLUP_ONLY);  /* MISO */
+    gpio_set_pull_mode(CONFIG_SD_CS_GPIO,  GPIO_PULLUP_ONLY);  /* CS   */
+
+    /* Drive CS high explicitly before the bus is initialised so the card
+     * sees a clean deselect edge and resets into SPI mode on the next
+     * falling edge of CS.  The SPI master driver will take ownership of
+     * this GPIO once spi_bus_initialize() / sdspi_host_init_device() run,
+     * but they preserve the HIGH output level, so there is no glitch. */
+    gpio_set_direction(CONFIG_SD_CS_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_SD_CS_GPIO, 1);
+
+    /* SD cards require ≥74 clock cycles at ≤400 kHz after power-on before
+     * the first command (≈185 µs minimum).  Wait 100 ms to cover slow
+     * card power-rail rise times. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     /* SPI bus – SD card uses SPI2 to avoid conflict with the WiFi
      * coprocessor (esp_hosted) which occupies SDMMC_HOST_SLOT_1. */
     spi_bus_config_t bus_cfg = {
@@ -125,6 +149,9 @@ esp_err_t sd_card_init(void)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = (int)s_spi_host;
+    /* 4 MHz is safe for all SD cards in SPI mode over longer traces;
+     * the default 20 MHz can cause CMD0 timeouts on slower cards. */
+    host.max_freq_khz = 4000;
 
     /* Mount configuration */
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
