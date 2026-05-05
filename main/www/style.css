@@ -68,7 +68,7 @@ body {
     radial-gradient(ellipse at 50% 0%, rgba(31,163,255,0.12) 0%,
                     transparent 65%),
     linear-gradient(180deg, #0a1e30 0%, #061220 60%, #030c16 100%),
-    url('/www/bg.jpg');
+    url('/www/bg.svg');
   background-size: cover, cover, cover, cover;
   background-position: center, center, center, center;
   background-attachment: fixed, fixed, fixed, fixed;
@@ -503,4 +503,48 @@ select.fin { padding-right: 1.5rem; }
   background: linear-gradient(90deg, var(--primary), #7dd3fc);
   border-radius: 4px; transition: width .3s; width: 0%;
   box-shadow: 0 0 6px rgba(31,163,255,0.5);
+}
+
+/* ── SVG icon system ────────────────────────────────────────────────── */
+/*
+ * Icons are inline SVG <symbol> sprites defined at the top of <body>.
+ * Use: <svg class="tab-icon"><use href="#icon-X"/></svg>
+ * All icons inherit `color` via currentColor for stroke/fill.
+ */
+
+/* Tab bar icons */
+.tab-icon {
+  display: inline-block; vertical-align: middle;
+  width: 1.1rem; height: 1.1rem;
+  margin-right: .28rem; margin-bottom: .1rem;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* Card header icons (beside UPPERCASE title) */
+.card-icon {
+  display: inline-block; vertical-align: middle;
+  width: 1rem; height: 1rem;
+  margin-right: .35rem; margin-bottom: .1rem;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* Collapsible card header icons (inside <h2>) */
+.ccard-icon {
+  display: inline-block; vertical-align: middle;
+  width: .95rem; height: .95rem;
+  margin-right: .3rem; margin-bottom: .1rem;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* Icons that need a partial fill (e.g. bolt, fish, sun-circle) */
+svg.tab-icon[data-fill="1"],
+svg.card-icon[data-fill="1"],
+svg.ccard-icon[data-fill="1"] {
+  fill: currentColor;
 }
