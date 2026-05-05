@@ -114,7 +114,7 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
-/* Chunk size for streaming HTML from SD card */
+/* Chunk size for streaming HTML, CSS, JS and other static files from SD card */
 #define HTML_SD_CHUNK_SIZE     2048
 
 /* JSON response buffer sizes */
@@ -236,7 +236,8 @@ static esp_err_t static_file_get_handler(httpd_req_t *req)
     return ESP_FAIL;
 }
 
-
+/**
+ * @brief Serve the main dashboard HTML from the SD card.
  *
  * Reads /sdcard/www/index.html in chunks and streams it to the client.
  * If the SD card is not mounted or the file is not found, a minimal

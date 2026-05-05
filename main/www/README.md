@@ -19,6 +19,7 @@ Copy **this entire `www/` folder** to the root of the SD card:
 ```
 /sdcard/www/index.html
 /sdcard/www/style.css
+/sdcard/www/bg.jpg      ← optional, your aquarium photo
 ```
 
 The controller creates the `/sdcard/www/` directory automatically at
