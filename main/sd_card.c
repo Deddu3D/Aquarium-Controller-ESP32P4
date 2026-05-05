@@ -34,6 +34,7 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
 #include "driver/gpio.h"
@@ -63,6 +64,11 @@ static const char *TAG = "sd_card";
 /** FAT32 sector size in bytes (standard for SD cards). */
 #define SD_FAT_SECTOR_SIZE   512U
 
+/** How many times to attempt mounting before giving up. */
+#define SD_MOUNT_RETRIES     3
+/** Milliseconds to wait between mount retry attempts. */
+#define SD_RETRY_DELAY_MS    500
+
 static sdmmc_card_t      *s_card        = NULL;
 static bool               s_mounted     = false;
 static SemaphoreHandle_t  s_mutex       = NULL;
@@ -77,6 +83,41 @@ static void ensure_dir(const char *path)
     if (stat(path, &st) != 0) {
         mkdir(path, 0775);
     }
+}
+
+/**
+ * @brief Send ≥74 dummy CLK pulses with CS=1, MOSI=1 using raw GPIO.
+ *
+ * SD Physical Layer Specification §7.2.2 requires the host to supply
+ * ≥74 clock cycles with DI=1 and CS=1 after the power-on settling
+ * period to force the card into SPI mode before the first CMD0.
+ * The pulses are generated via direct GPIO toggling (~250 kHz) so no
+ * SPI peripheral is needed at this point.
+ */
+static void send_dummy_clocks(void)
+{
+    esp_err_t err;
+    err = gpio_set_direction(CONFIG_SD_CLK_GPIO, GPIO_MODE_OUTPUT);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "dummy_clocks: CLK direction failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = gpio_set_direction(CONFIG_SD_CMD_GPIO, GPIO_MODE_OUTPUT); /* MOSI */
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "dummy_clocks: MOSI direction failed: %s", esp_err_to_name(err));
+        return;
+    }
+    gpio_set_level(CONFIG_SD_CMD_GPIO, 1);   /* MOSI = 1 */
+    gpio_set_level(CONFIG_SD_CS_GPIO,  1);   /* CS   = 1 (deasserted) */
+    gpio_set_level(CONFIG_SD_CLK_GPIO, 0);   /* CLK  = 0 (idle) */
+
+    for (int i = 0; i < 80; i++) {
+        gpio_set_level(CONFIG_SD_CLK_GPIO, 1);
+        esp_rom_delay_us(2);
+        gpio_set_level(CONFIG_SD_CLK_GPIO, 0);
+        esp_rom_delay_us(2);
+    }
+    /* Leave CLK low so the SPI peripheral takes it from a known idle state. */
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -120,10 +161,14 @@ esp_err_t sd_card_init(void)
     gpio_set_direction(CONFIG_SD_CS_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(CONFIG_SD_CS_GPIO, 1);
 
-    /* SD cards require ≥74 clock cycles at ≤400 kHz after power-on before
-     * the first command (≈185 µs minimum).  Wait 100 ms to cover slow
-     * card power-rail rise times. */
+    /* Wait for the card power rail to stabilise (≥1 ms required by spec;
+     * 100 ms covers even the slowest regulator rise times). */
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* SD spec §7.2.2: send ≥74 CLK pulses with CS=1, MOSI=1 to force the
+     * card out of native SD mode and into SPI mode before CMD0.  Without
+     * these clocks the card never enters SPI mode and CMD0 times out. */
+    send_dummy_clocks();
 
     /* SPI bus – SD card uses SPI2 to avoid conflict with the WiFi
      * coprocessor (esp_hosted) which occupies SDMMC_HOST_SLOT_1. */
@@ -135,6 +180,19 @@ esp_err_t sd_card_init(void)
         .quadhd_io_num   = -1,
         .max_transfer_sz = 4096,
     };
+
+    /* Stronger drive on CLK and MOSI ensures clean edges at SPI frequencies
+     * over the onboard PCB traces (reduces CMD0 / CMD8 noise failures). */
+    esp_err_t drv_ret;
+    drv_ret = gpio_set_drive_capability(CONFIG_SD_CLK_GPIO, GPIO_DRIVE_CAP_3);
+    if (drv_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Could not set CLK drive strength: %s", esp_err_to_name(drv_ret));
+    }
+    drv_ret = gpio_set_drive_capability(CONFIG_SD_CMD_GPIO, GPIO_DRIVE_CAP_3);
+    if (drv_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Could not set MOSI drive strength: %s", esp_err_to_name(drv_ret));
+    }
+
     esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
         /* Bus initialisation failed; no bus was actually created so there
@@ -149,7 +207,7 @@ esp_err_t sd_card_init(void)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = (int)s_spi_host;
-    /* 4 MHz is safe for all SD cards in SPI mode over longer traces;
+    /* 4 MHz is safe for all SD cards in SPI mode over the onboard traces;
      * the default 20 MHz can cause CMD0 timeouts on slower cards. */
     host.max_freq_khz = 4000;
 
@@ -160,11 +218,36 @@ esp_err_t sd_card_init(void)
         .allocation_unit_size   = 16 * 1024,
     };
 
-    ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
-                                  &host,
-                                  &slot_config,
-                                  &mount_config,
-                                  &s_card);
+    /* Retry the mount up to SD_MOUNT_RETRIES times.  Between attempts the
+     * SPI bus is torn down and rebuilt and another dummy-clock burst is
+     * sent so the card gets a clean CMD0 sequence each time. */
+    ret = ESP_FAIL;
+    for (int attempt = 1; attempt <= SD_MOUNT_RETRIES; attempt++) {
+        ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
+                                      &host,
+                                      &slot_config,
+                                      &mount_config,
+                                      &s_card);
+        if (ret == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(TAG, "Mount attempt %d/%d failed (%s)%s",
+                 attempt, SD_MOUNT_RETRIES, esp_err_to_name(ret),
+                 attempt < SD_MOUNT_RETRIES ? " – retrying" : "");
+        if (attempt < SD_MOUNT_RETRIES) {
+            spi_bus_free(s_spi_host);
+            vTaskDelay(pdMS_TO_TICKS(SD_RETRY_DELAY_MS));
+            send_dummy_clocks();
+            esp_err_t bus_ret = spi_bus_initialize(s_spi_host, &bus_cfg,
+                                                   SDSPI_DEFAULT_DMA);
+            if (bus_ret != ESP_OK) {
+                ESP_LOGE(TAG, "SPI bus re-init failed: %s",
+                         esp_err_to_name(bus_ret));
+                return bus_ret;
+            }
+        }
+    }
+
     if (ret != ESP_OK) {
         spi_bus_free(s_spi_host);
         if (ret == ESP_FAIL) {
