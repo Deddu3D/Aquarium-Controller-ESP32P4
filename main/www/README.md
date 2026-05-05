@@ -9,7 +9,8 @@ to the microSD card before the Web UI is accessible.
 |------|-------------|
 | `index.html` | Main dashboard page (HTML + JS) |
 | `style.css`  | Aquarium-themed stylesheet — edit this to change the look |
-| `bg.jpg` *(optional)* | Full-page background photo (e.g. your tank). Drop it here and refresh. |
+| `bg.svg`     | Bundled underwater scene background (SVG, no extra download needed) |
+| `bg.jpg` *(optional)* | Replace `bg.svg` with a real aquarium photo — rename to `bg.svg` or update the `url()` in style.css. |
 | `README.md` | This file |
 
 ## Setup
@@ -19,7 +20,7 @@ Copy **this entire `www/` folder** to the root of the SD card:
 ```
 /sdcard/www/index.html
 /sdcard/www/style.css
-/sdcard/www/bg.jpg      ← optional, your aquarium photo
+/sdcard/www/bg.svg         ← bundled underwater scene (included in repo)
 ```
 
 The controller creates the `/sdcard/www/` directory automatically at
@@ -66,19 +67,18 @@ The stylesheet uses the same colour palette as the physical display
 
 Glassmorphism cards use `backdrop-filter: blur(12px)`.
 
-The background shows animated rising bubbles (pure CSS) plus optional
-underwater light-ray gradients.  Add a `bg.jpg` for a real aquarium
-photo background.
+The background combines animated rising bubbles (pure CSS) with
+the bundled `bg.svg` underwater scene. To replace it with a real
+aquarium photograph, see the section below.
 
-## Adding a custom background image
+## Replacing the background with a real aquarium photo
 
 1. Take a photo of your aquarium (or download one).
-2. Rename it `bg.jpg` and copy to `/sdcard/www/bg.jpg`.
-3. Refresh the browser — the image appears behind the gradient overlays.
+2. Copy it to `/sdcard/www/` as any filename (e.g. `tank.jpg`).
+3. Edit the `url('/www/bg.svg')` line in `style.css` to `url('/www/tank.jpg')`.
+4. Hard-refresh the browser.
 
-The `style.css` references `url('/www/bg.jpg')` as the bottom layer
-of `background-image`.  Other supported formats: `.png`, `.webp`
-(just update the reference in style.css).
+The photo appears behind the CSS gradient and bubble overlay layers.
 
 ## Updating the UI
 

@@ -17,12 +17,13 @@
  *
  * Glassmorphism cards use backdrop-filter: blur.
  * The page body shows an animated underwater background (pure CSS).
- * If /www/bg.jpg is present on the SD card it is used as a background
- * image behind the CSS layers.
+ * bg.svg (bundled) is used as the base background image.
+ * A custom bg.jpg placed on the SD card will override bg.svg if you
+ * prefer a real aquarium photograph instead.
  *
  * Drop any of these files in /sdcard/www/ to extend/override:
- *   bg.jpg    – full-page background photograph (e.g. aquarium photo)
- *   custom.css – user overrides (add a <link> at end of index.html)
+ *   bg.svg    – bundled aquarium scene (served from /www/bg.svg, included in repo)
+ *   bg.jpg    – optional real-photo override; rename to bg.svg or update the CSS url()
  */
 
 /* ── Reset ─────────────────────────────────────────────────────────── */
