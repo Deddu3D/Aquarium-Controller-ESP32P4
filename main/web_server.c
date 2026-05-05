@@ -149,9 +149,9 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  61   /* +1 for the /www/* static file handler */
+#define HTTP_MAX_URI_HANDLERS  61   /* +1 for the /www/ * static file handler */
 
-/* ── Static file server (/www/* → /sdcard/www/*) ─────────────────── */
+/* ── Static file server (/www/ * → /sdcard/www/ *) ───────────────────── */
 
 /**
  * @brief Return the MIME type string for a file path based on its extension.
@@ -178,7 +178,7 @@ static const char *get_mime_type(const char *path)
 }
 
 /**
- * @brief Serve any static file under /sdcard/www/ for GET /www/* requests.
+ * @brief Serve any static file under /sdcard/www/ for GET /www/ * requests.
  *
  * The URI /www/style.css maps to /sdcard/www/style.css, etc.
  * Files are streamed in 2 KB chunks with Cache-Control: max-age=3600.
@@ -2299,7 +2299,7 @@ esp_err_t web_server_start(void)
     ssl_config.httpd.stack_size       = HTTP_STACK_SIZE;
     ssl_config.httpd.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     ssl_config.httpd.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/* can serve SD card files */
+    /* Enable wildcard URI matching so /www/ * can serve SD card files */
     ssl_config.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
     ssl_config.servercert     = server_cert_pem_start;
@@ -2319,7 +2319,7 @@ esp_err_t web_server_start(void)
     config.stack_size       = HTTP_STACK_SIZE;
     config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     config.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/* can serve SD card files */
+    /* Enable wildcard URI matching so /www/ * can serve SD card files */
     config.uri_match_fn     = httpd_uri_match_wildcard;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
