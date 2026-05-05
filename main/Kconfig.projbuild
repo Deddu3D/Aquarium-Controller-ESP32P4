@@ -278,81 +278,52 @@ endmenu
 menu "Aquarium SD Card Settings"
 
     config SD_CARD_ENABLED
-        bool "Enable SD card (SDMMC1)"
+        bool "Enable SD card (SPI mode)"
         default y
         help
-            Mount the onboard microSD card slot via the SDMMC1 host peripheral.
+            Mount the onboard microSD card slot via the SPI peripheral.
             When enabled, data logging, config backup/restore and local OTA are
             available.  Disable only if no SD card is physically present and you
             want to save the mount attempt time at boot.
 
+            SPI mode is used instead of SDMMC because the esp_hosted WiFi
+            coprocessor already occupies SDMMC_HOST_SLOT_1 on ESP32-P4.
+
     if SD_CARD_ENABLED
 
     config SD_CLK_GPIO
-        int "SDMMC1 CLK GPIO"
+        int "SPI CLK GPIO (SD card)"
         default 43
         range 0 56
         help
-            GPIO number for the SDMMC1 clock signal.
+            GPIO number for the SPI clock signal to the SD card.
             On the Waveshare ESP32-P4-WiFi6 board the onboard TF slot
-            is connected to SDMMC1_CLK on GPIO 43.
+            connects this pin to the SDMMC1_CLK pad (GPIO 43).
 
     config SD_CMD_GPIO
-        int "SDMMC1 CMD GPIO"
+        int "SPI MOSI GPIO (SD card)"
         default 44
         range 0 56
         help
-            GPIO number for the SDMMC1 command signal (GPIO 44 on Waveshare
-            ESP32-P4-WiFi6).
+            GPIO number for the SPI MOSI signal (master-out slave-in).
+            Corresponds to SDMMC1_CMD (GPIO 44) on Waveshare ESP32-P4-WiFi6.
 
     config SD_D0_GPIO
-        int "SDMMC1 D0 GPIO"
+        int "SPI MISO GPIO (SD card)"
         default 39
         range 0 56
         help
-            GPIO number for the SDMMC1 data 0 signal (GPIO 39 on Waveshare
-            ESP32-P4-WiFi6).
+            GPIO number for the SPI MISO signal (master-in slave-out).
+            Corresponds to SDMMC1_D0 (GPIO 39) on Waveshare ESP32-P4-WiFi6.
 
-    config SD_4BIT_MODE
-        bool "Enable 4-bit SDMMC bus"
-        default n
-        help
-            Use all four data lines (D0-D3) for higher transfer speeds.
-            Leave disabled for 1-bit mode (D0 only), which is compatible
-            with all SD cards and requires fewer GPIOs.
-
-    if SD_4BIT_MODE
-
-    config SD_D1_GPIO
-        int "SDMMC1 D1 GPIO"
-        default 40
-        range 0 56
-        help
-            GPIO number for the SDMMC1 data 1 signal (4-bit mode only).
-
-    config SD_D2_GPIO
-        int "SDMMC1 D2 GPIO"
-        default 41
-        range 0 56
-        help
-            GPIO number for the SDMMC1 data 2 signal (4-bit mode only).
-
-    config SD_D3_GPIO
-        int "SDMMC1 D3 GPIO"
+    config SD_CS_GPIO
+        int "SPI CS GPIO (SD card)"
         default 38
         range 0 56
         help
-            GPIO number for the SDMMC1 data 3 signal (4-bit mode only).
-
-    endif # SD_4BIT_MODE
-
-    config SD_CD_GPIO
-        int "SDMMC1 Card Detect GPIO (-1 = none)"
-        default -1
-        range -1 56
-        help
-            GPIO number for the card-detect switch.  Set to -1 if no CD
-            pin is wired (the Waveshare board has no separate CD pin).
+            GPIO number for the SPI chip-select signal.
+            Corresponds to SDMMC1_D3 (GPIO 38) on Waveshare ESP32-P4-WiFi6,
+            which is also the standard SD card CS pin in SPI mode.
 
     endif # SD_CARD_ENABLED
 
