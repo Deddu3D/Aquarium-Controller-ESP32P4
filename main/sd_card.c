@@ -96,8 +96,17 @@ static void ensure_dir(const char *path)
  */
 static void send_dummy_clocks(void)
 {
-    gpio_set_direction(CONFIG_SD_CLK_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_direction(CONFIG_SD_CMD_GPIO, GPIO_MODE_OUTPUT); /* MOSI */
+    esp_err_t err;
+    err = gpio_set_direction(CONFIG_SD_CLK_GPIO, GPIO_MODE_OUTPUT);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "dummy_clocks: CLK direction failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = gpio_set_direction(CONFIG_SD_CMD_GPIO, GPIO_MODE_OUTPUT); /* MOSI */
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "dummy_clocks: MOSI direction failed: %s", esp_err_to_name(err));
+        return;
+    }
     gpio_set_level(CONFIG_SD_CMD_GPIO, 1);   /* MOSI = 1 */
     gpio_set_level(CONFIG_SD_CS_GPIO,  1);   /* CS   = 1 (deasserted) */
     gpio_set_level(CONFIG_SD_CLK_GPIO, 0);   /* CLK  = 0 (idle) */
@@ -174,8 +183,15 @@ esp_err_t sd_card_init(void)
 
     /* Stronger drive on CLK and MOSI ensures clean edges at SPI frequencies
      * over the onboard PCB traces (reduces CMD0 / CMD8 noise failures). */
-    gpio_set_drive_capability(CONFIG_SD_CLK_GPIO, GPIO_DRIVE_CAP_3);
-    gpio_set_drive_capability(CONFIG_SD_CMD_GPIO, GPIO_DRIVE_CAP_3);
+    esp_err_t drv_ret;
+    drv_ret = gpio_set_drive_capability(CONFIG_SD_CLK_GPIO, GPIO_DRIVE_CAP_3);
+    if (drv_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Could not set CLK drive strength: %s", esp_err_to_name(drv_ret));
+    }
+    drv_ret = gpio_set_drive_capability(CONFIG_SD_CMD_GPIO, GPIO_DRIVE_CAP_3);
+    if (drv_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Could not set MOSI drive strength: %s", esp_err_to_name(drv_ret));
+    }
 
     esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
