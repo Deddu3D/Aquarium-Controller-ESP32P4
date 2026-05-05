@@ -149,10 +149,94 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  60
+#define HTTP_MAX_URI_HANDLERS  61   /* +1 for the /www/* static file handler */
+
+/* ── Static file server (/www/* → /sdcard/www/*) ─────────────────── */
 
 /**
- * @brief Serve the main dashboard HTML from the SD card.
+ * @brief Return the MIME type string for a file path based on its extension.
+ */
+static const char *get_mime_type(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+    if (!ext) return "application/octet-stream";
+    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0)
+        return "text/html; charset=utf-8";
+    if (strcmp(ext, ".css")  == 0) return "text/css";
+    if (strcmp(ext, ".js")   == 0) return "application/javascript";
+    if (strcmp(ext, ".json") == 0) return "application/json";
+    if (strcmp(ext, ".png")  == 0) return "image/png";
+    if (strcmp(ext, ".jpg")  == 0 || strcmp(ext, ".jpeg") == 0)
+        return "image/jpeg";
+    if (strcmp(ext, ".gif")  == 0) return "image/gif";
+    if (strcmp(ext, ".svg")  == 0) return "image/svg+xml";
+    if (strcmp(ext, ".ico")  == 0) return "image/x-icon";
+    if (strcmp(ext, ".woff") == 0) return "font/woff";
+    if (strcmp(ext, ".woff2")== 0) return "font/woff2";
+    if (strcmp(ext, ".ttf")  == 0) return "font/ttf";
+    return "application/octet-stream";
+}
+
+/**
+ * @brief Serve any static file under /sdcard/www/ for GET /www/* requests.
+ *
+ * The URI /www/style.css maps to /sdcard/www/style.css, etc.
+ * Files are streamed in 2 KB chunks with Cache-Control: max-age=3600.
+ * Allows the web UI to reference separate CSS, JS, image and font files
+ * that live alongside index.html on the SD card.
+ */
+static esp_err_t static_file_get_handler(httpd_req_t *req)
+{
+    const char *uri = req->uri;   /* e.g. "/www/style.css" */
+
+    /* Build SD card path: /sdcard + uri → /sdcard/www/style.css */
+    char sd_path[128];
+    int n = snprintf(sd_path, sizeof(sd_path), "%s%s", SD_MOUNT_POINT, uri);
+    if (n <= 0 || (size_t)n >= sizeof(sd_path)) {
+        httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "Path too long");
+        return ESP_FAIL;
+    }
+
+    /* Reject path traversal attempts */
+    if (strstr(sd_path, "..") != NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid path");
+        return ESP_FAIL;
+    }
+
+#ifdef CONFIG_SD_CARD_ENABLED
+    if (sd_card_is_mounted()) {
+        FILE *f = fopen(sd_path, "r");
+        if (f != NULL) {
+            httpd_resp_set_type(req, get_mime_type(sd_path));
+            httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+
+            char *chunk = malloc(HTML_SD_CHUNK_SIZE);
+            if (chunk == NULL) {
+                fclose(f);
+                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                    "Out of memory");
+                return ESP_FAIL;
+            }
+            size_t bytes;
+            while ((bytes = fread(chunk, 1, HTML_SD_CHUNK_SIZE, f)) > 0) {
+                if (httpd_resp_send_chunk(req, chunk, (ssize_t)bytes) != ESP_OK) {
+                    break;
+                }
+            }
+            fclose(f);
+            free(chunk);
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_OK;
+        }
+        ESP_LOGD(TAG, "Static file not found: %s", sd_path);
+    }
+#endif
+
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+    return ESP_FAIL;
+}
+
+
  *
  * Reads /sdcard/www/index.html in chunks and streams it to the client.
  * If the SD card is not mounted or the file is not found, a minimal
@@ -1949,6 +2033,14 @@ static const httpd_uri_t uri_api_ota_sd = {
     .user_ctx = NULL,
 };
 
+/* Wildcard handler: serve any static file from /sdcard/www/ */
+static const httpd_uri_t uri_www_static = {
+    .uri      = "/www/*",
+    .method   = HTTP_GET,
+    .handler  = static_file_get_handler,
+    .user_ctx = NULL,
+};
+
 /* ── SD Card REST API handlers ───────────────────────────────────── */
 
 static esp_err_t api_sdcard_status_handler(httpd_req_t *req)
@@ -2206,6 +2298,8 @@ esp_err_t web_server_start(void)
     ssl_config.httpd.stack_size       = HTTP_STACK_SIZE;
     ssl_config.httpd.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     ssl_config.httpd.lru_purge_enable = true;
+    /* Enable wildcard URI matching so /www/* can serve SD card files */
+    ssl_config.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
     ssl_config.servercert     = server_cert_pem_start;
     ssl_config.servercert_len = (size_t)(server_cert_pem_end - server_cert_pem_start);
@@ -2224,6 +2318,8 @@ esp_err_t web_server_start(void)
     config.stack_size       = HTTP_STACK_SIZE;
     config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     config.lru_purge_enable = true;
+    /* Enable wildcard URI matching so /www/* can serve SD card files */
+    config.uri_match_fn     = httpd_uri_match_wildcard;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
     esp_err_t ret = httpd_start(&s_server, &config);
@@ -2276,6 +2372,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_sdcard_config_export);
     httpd_register_uri_handler(s_server, &uri_api_sdcard_config_import);
     httpd_register_uri_handler(s_server, &uri_api_ota_sd);
+    /* Wildcard handler registered last so exact-match API routes take priority */
+    httpd_register_uri_handler(s_server, &uri_www_static);
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");
