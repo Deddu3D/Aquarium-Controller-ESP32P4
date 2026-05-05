@@ -113,6 +113,8 @@ esp_err_t sd_card_init(void)
     };
     esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
+        /* Bus initialisation failed; no bus was actually created so there
+         * is nothing to free — spi_bus_free() must NOT be called here. */
         ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
         return ret;
     }

@@ -118,7 +118,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define HTML_SD_CHUNK_SIZE     2048
 
 /* JSON response buffer sizes */
-#define JSON_STATUS_BUF_SIZE   512   /* enlarged: now includes ntp_ok + partition */
+#define JSON_STATUS_BUF_SIZE   512   /* enlarged from 384: now includes ntp_ok + partition */
 #define JSON_LEDS_BUF_SIZE     256
 #define JSON_SCHED_BUF_SIZE    768
 #define JSON_TEMP_BUF_SIZE     128
@@ -170,7 +170,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
             if (chunk == NULL) {
                 fclose(f);
                 httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Out of memory");
+                                    "Failed to allocate buffer for streaming Web UI");
                 return ESP_FAIL;
             }
             size_t n;

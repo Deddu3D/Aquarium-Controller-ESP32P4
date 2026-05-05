@@ -287,7 +287,10 @@ menu "Aquarium SD Card Settings"
             want to save the mount attempt time at boot.
 
             SPI mode is used instead of SDMMC because the esp_hosted WiFi
-            coprocessor already occupies SDMMC_HOST_SLOT_1 on ESP32-P4.
+            coprocessor SDIO transport claims SDMMC_HOST_SLOT_1 (the only
+            GPIO-matrix-routable slot on ESP32-P4) at startup via GPIOs
+            14-19.  A second driver cannot register the same slot, which
+            causes the "no available sd host controller" error at boot.
 
     if SD_CARD_ENABLED
 
