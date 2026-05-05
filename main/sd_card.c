@@ -152,6 +152,7 @@ esp_err_t sd_card_init(void)
     /* Create mandatory subdirectories */
     ensure_dir(SD_LOGS_DIR);
     ensure_dir(SD_CONFIG_DIR);
+    ensure_dir(SD_WWW_DIR);
 
     ESP_LOGI(TAG, "SD card mounted at " SD_MOUNT_POINT " (name=%s speed=%"PRIu32" kHz)",
              s_card->cid.name,

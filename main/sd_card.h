@@ -20,6 +20,7 @@
  * Directory layout on the SD card:
  *   /sdcard/logs/       – daily CSV data logs and diagnostic logs
  *   /sdcard/config/     – configuration backup files (JSON)
+ *   /sdcard/www/        – web dashboard files served over HTTP
  *   /sdcard/firmware.bin – optional firmware image for local OTA
  */
 
@@ -39,9 +40,13 @@ extern "C" {
 /** Subdirectory paths */
 #define SD_LOGS_DIR      SD_MOUNT_POINT "/logs"
 #define SD_CONFIG_DIR    SD_MOUNT_POINT "/config"
+#define SD_WWW_DIR       SD_MOUNT_POINT "/www"
 
 /** Default path for configuration backup file. */
 #define SD_CONFIG_FILE   SD_CONFIG_DIR "/aquarium_config.json"
+
+/** Path to the web dashboard HTML file served over HTTP. */
+#define SD_WWW_INDEX     SD_WWW_DIR "/index.html"
 
 /** Default path for local OTA firmware image. */
 #define SD_FIRMWARE_FILE SD_MOUNT_POINT "/firmware.bin"
