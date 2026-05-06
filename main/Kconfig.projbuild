@@ -282,7 +282,7 @@ menu "Aquarium SD Card Settings"
         default y
         help
             Mount the onboard microSD card slot via the SDMMC peripheral
-            (SDMMC_HOST_SLOT_1, 1-bit mode, GPIO matrix).
+            (SDMMC_HOST_SLOT_1, 4-bit mode, GPIO matrix).
             When enabled, data logging, config backup/restore and local OTA are
             available.  Disable only if no SD card is physically present and you
             want to save the mount attempt time at boot.
@@ -318,15 +318,29 @@ menu "Aquarium SD Card Settings"
             GPIO number for the SDMMC data line D0.
             Corresponds to SDMMC1_D0 (GPIO 39) on Waveshare ESP32-P4-WiFi6.
 
-    config SD_D3_GPIO
-        int "SDMMC D3 GPIO (SD card, card-detect pull-up)"
-        default 38
+    config SD_D1_GPIO
+        int "SDMMC D1 GPIO (SD card)"
+        default 40
         range 0 56
         help
-            GPIO number for the SDMMC D3 line.  In 1-bit mode this pin is
-            not used for data but must be held high (internal pull-up enabled
-            by the driver) for the card to leave native SD mode.
-            Corresponds to SDMMC1_D3 (GPIO 38) on Waveshare ESP32-P4-WiFi6.
+            GPIO number for the SDMMC data line D1.
+            Corresponds to SDMMC1_D1 (GPIO 40) on Waveshare ESP32-P4-WiFi6.
+
+    config SD_D2_GPIO
+        int "SDMMC D2 GPIO (SD card)"
+        default 41
+        range 0 56
+        help
+            GPIO number for the SDMMC data line D2.
+            Corresponds to SDMMC1_D2 (GPIO 41) on Waveshare ESP32-P4-WiFi6.
+
+    config SD_D3_GPIO
+        int "SDMMC D3 GPIO (SD card)"
+        default 42
+        range 0 56
+        help
+            GPIO number for the SDMMC data line D3.
+            Corresponds to SDMMC1_D3 (GPIO 42) on Waveshare ESP32-P4-WiFi6.
 
     endif # SD_CARD_ENABLED
 

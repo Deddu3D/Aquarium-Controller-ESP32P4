@@ -99,24 +99,26 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, 1-bit, CLK=%d CMD=%d D0=%d D3=%d)",
+    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, 4-bit, CLK=%d CMD=%d D0=%d D1=%d D2=%d D3=%d)",
              CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
-             CONFIG_SD_D0_GPIO, CONFIG_SD_D3_GPIO);
+             CONFIG_SD_D0_GPIO, CONFIG_SD_D1_GPIO,
+             CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
 
     /* SDMMC_HOST_SLOT_1 uses the GPIO matrix – pin assignment below.
      * SDMMC_HOST_SLOT_0 is occupied by the esp_hosted WiFi SDIO (GPIO 14-19). */
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot         = SDMMC_HOST_SLOT_1;
-    /* Start at a conservative frequency; the driver will renegotiate higher
-     * speeds (up to 40 MHz) after card identification succeeds. */
-    host.max_freq_khz = SDMMC_FREQ_DEFAULT;  /* 20 MHz */
+    /* Use high-speed mode (40 MHz) as supported by the ESP32-P4-WIFI6 board. */
+    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  /* 40 MHz */
 
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 1;                          /* 1-bit mode */
+    slot_config.width = 4;                          /* 4-bit mode */
     slot_config.clk   = CONFIG_SD_CLK_GPIO;         /* GPIO 43 */
     slot_config.cmd   = CONFIG_SD_CMD_GPIO;         /* GPIO 44 */
     slot_config.d0    = CONFIG_SD_D0_GPIO;          /* GPIO 39 */
-    slot_config.d3    = CONFIG_SD_D3_GPIO;          /* GPIO 38 – pull-up for card-detect */
+    slot_config.d1    = CONFIG_SD_D1_GPIO;          /* GPIO 40 */
+    slot_config.d2    = CONFIG_SD_D2_GPIO;          /* GPIO 41 */
+    slot_config.d3    = CONFIG_SD_D3_GPIO;          /* GPIO 42 */
     /* Enable the ESP32-P4 on-chip pull-ups on all SD lines so the bus idles
      * high when the card is not driving it (prevents spurious CMD0 timeouts). */
     slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
