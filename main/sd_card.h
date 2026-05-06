@@ -2,17 +2,19 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager
- * Mounts a FAT-formatted microSD card via the SPI peripheral and
- * exposes helpers for configuration backup/restore.  All log and data
- * files written by other modules live under the /sdcard mount point.
+ * Mounts a FAT-formatted microSD card via the SDMMC peripheral (slot 1,
+ * 1-bit mode, GPIO matrix) and exposes helpers for configuration
+ * backup/restore.  All log and data files written by other modules live
+ * under the /sdcard mount point.
  *
- * SPI mode is used instead of SDMMC because the esp_hosted WiFi
- * coprocessor SDIO transport already occupies SDMMC_HOST_SLOT_1 on
- * ESP32-P4.  The same physical GPIO pins are wired to SPI2_HOST:
- *   SPI CLK  = GPIO 43  (SDMMC1_CLK pad)
- *   SPI MOSI = GPIO 44  (SDMMC1_CMD pad)
- *   SPI MISO = GPIO 39  (SDMMC1_D0 pad)
- *   SPI CS   = GPIO 38  (SDMMC1_D3 pad)
+ * SDMMC_HOST_SLOT_1 (GPIO-matrix-routable) is used for the SD card.
+ * SDMMC_HOST_SLOT_0 (fixed IOMUX pads) is already occupied by the
+ * esp_hosted WiFi coprocessor SDIO transport (GPIO 14-19).
+ * Pin mapping for the onboard TF slot:
+ *   SDMMC1_CLK = GPIO 43
+ *   SDMMC1_CMD = GPIO 44
+ *   SDMMC1_D0  = GPIO 39
+ *   SDMMC1_D3  = GPIO 38  (pull-up / card-detect)
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
