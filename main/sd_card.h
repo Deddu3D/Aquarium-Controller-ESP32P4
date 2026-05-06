@@ -3,7 +3,7 @@
  *
  * Aquarium Controller - SD Card Manager
  * Mounts a FAT-formatted microSD card via the SDMMC peripheral (slot 1,
- * 1-bit mode, GPIO matrix) and exposes helpers for configuration
+ * 4-bit mode, GPIO matrix) and exposes helpers for configuration
  * backup/restore.  All log and data files written by other modules live
  * under the /sdcard mount point.
  *
@@ -14,7 +14,9 @@
  *   SDMMC1_CLK = GPIO 43
  *   SDMMC1_CMD = GPIO 44
  *   SDMMC1_D0  = GPIO 39
- *   SDMMC1_D3  = GPIO 38  (pull-up / card-detect)
+ *   SDMMC1_D1  = GPIO 40
+ *   SDMMC1_D2  = GPIO 41
+ *   SDMMC1_D3  = GPIO 42
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -67,7 +69,7 @@ typedef struct {
 /**
  * @brief Initialise the SD card subsystem.
  *
- * Initialises the SPI2 bus, configures the SDSPI device and mounts
+ * Initialises the SDMMC1 host, configures the slot in 4-bit mode and mounts
  * the FAT filesystem at /sdcard.  Creates the logs/ and config/
  * subdirectories if they do not exist.
  *
