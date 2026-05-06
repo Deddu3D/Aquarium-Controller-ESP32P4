@@ -278,55 +278,55 @@ endmenu
 menu "Aquarium SD Card Settings"
 
     config SD_CARD_ENABLED
-        bool "Enable SD card (SPI mode)"
+        bool "Enable SD card (SDMMC mode)"
         default y
         help
-            Mount the onboard microSD card slot via the SPI peripheral.
+            Mount the onboard microSD card slot via the SDMMC peripheral
+            (SDMMC_HOST_SLOT_1, 1-bit mode, GPIO matrix).
             When enabled, data logging, config backup/restore and local OTA are
             available.  Disable only if no SD card is physically present and you
             want to save the mount attempt time at boot.
 
-            SPI mode is used instead of SDMMC because the esp_hosted WiFi
-            coprocessor SDIO transport claims SDMMC_HOST_SLOT_1 (the only
-            GPIO-matrix-routable slot on ESP32-P4) at startup via GPIOs
-            14-19.  A second driver cannot register the same slot, which
-            causes the "no available sd host controller" error at boot.
+            SDMMC_HOST_SLOT_0 is occupied by the esp_hosted WiFi coprocessor
+            SDIO transport (fixed IOMUX pads GPIO 14-19).  SDMMC_HOST_SLOT_1
+            uses the GPIO matrix and is free for the SD card.
 
     if SD_CARD_ENABLED
 
     config SD_CLK_GPIO
-        int "SPI CLK GPIO (SD card)"
+        int "SDMMC CLK GPIO (SD card)"
         default 43
         range 0 56
         help
-            GPIO number for the SPI clock signal to the SD card.
+            GPIO number for the SDMMC clock signal to the SD card.
             On the Waveshare ESP32-P4-WiFi6 board the onboard TF slot
             connects this pin to the SDMMC1_CLK pad (GPIO 43).
 
     config SD_CMD_GPIO
-        int "SPI MOSI GPIO (SD card)"
+        int "SDMMC CMD GPIO (SD card)"
         default 44
         range 0 56
         help
-            GPIO number for the SPI MOSI signal (master-out slave-in).
+            GPIO number for the SDMMC CMD signal.
             Corresponds to SDMMC1_CMD (GPIO 44) on Waveshare ESP32-P4-WiFi6.
 
     config SD_D0_GPIO
-        int "SPI MISO GPIO (SD card)"
+        int "SDMMC D0 GPIO (SD card)"
         default 39
         range 0 56
         help
-            GPIO number for the SPI MISO signal (master-in slave-out).
+            GPIO number for the SDMMC data line D0.
             Corresponds to SDMMC1_D0 (GPIO 39) on Waveshare ESP32-P4-WiFi6.
 
-    config SD_CS_GPIO
-        int "SPI CS GPIO (SD card)"
+    config SD_D3_GPIO
+        int "SDMMC D3 GPIO (SD card, card-detect pull-up)"
         default 38
         range 0 56
         help
-            GPIO number for the SPI chip-select signal.
-            Corresponds to SDMMC1_D3 (GPIO 38) on Waveshare ESP32-P4-WiFi6,
-            which is also the standard SD card CS pin in SPI mode.
+            GPIO number for the SDMMC D3 line.  In 1-bit mode this pin is
+            not used for data but must be held high (internal pull-up enabled
+            by the driver) for the card to leave native SD mode.
+            Corresponds to SDMMC1_D3 (GPIO 38) on Waveshare ESP32-P4-WiFi6.
 
     endif # SD_CARD_ENABLED
 

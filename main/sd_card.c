@@ -2,23 +2,21 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager implementation
- * Mounts a FAT32 microSD card via the SPI peripheral (SPI2_HOST) and
- * provides configuration backup / restore via JSON.
+ * Mounts a FAT32 microSD card via the SDMMC peripheral (SDMMC_HOST_SLOT_1,
+ * 1-bit mode) and provides configuration backup / restore via JSON.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
  *
- * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SPI mode):
- *   SPI_CLK   = GPIO 43   (SDMMC1_CLK, configurable via Kconfig)
- *   SPI_MOSI  = GPIO 44   (SDMMC1_CMD)
- *   SPI_MISO  = GPIO 39   (SDMMC1_D0)
- *   SPI_CS    = GPIO 38   (SDMMC1_D3, configurable via Kconfig)
+ * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SDMMC 1-bit):
+ *   SDMMC1_CLK = GPIO 43   (configurable via Kconfig)
+ *   SDMMC1_CMD = GPIO 44
+ *   SDMMC1_D0  = GPIO 39
+ *   SDMMC1_D3  = GPIO 38   (card-detect pull-up, configurable via Kconfig)
  *
- * Note: SDMMC_HOST_SLOT_1 (the GPIO-matrix-routable slot) is already
- * claimed by the esp_hosted WiFi coprocessor SDIO transport (GPIOs
- * 14-19).  Attempting to re-use it for the SD card causes the
- * "no available sd host controller" boot error.  SPI mode (SPI2_HOST)
- * is a separate peripheral and has no such conflict.
+ * Note: SDMMC_HOST_SLOT_0 uses fixed IOMUX pads (GPIO 14-19) and is already
+ * claimed by the esp_hosted WiFi coprocessor SDIO transport.
+ * SDMMC_HOST_SLOT_1 is GPIO-matrix-routable and is free for the SD card.
  */
 
 #include <stdio.h>
@@ -34,12 +32,9 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
-#include "esp_rom_sys.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
-#include "driver/gpio.h"
-#include "driver/sdspi_host.h"
-#include "driver/spi_master.h"
+#include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
 #include "cJSON.h"
 
@@ -72,7 +67,6 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t      *s_card        = NULL;
 static bool               s_mounted     = false;
 static SemaphoreHandle_t  s_mutex       = NULL;
-static spi_host_device_t  s_spi_host    = SPI2_HOST;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -83,41 +77,6 @@ static void ensure_dir(const char *path)
     if (stat(path, &st) != 0) {
         mkdir(path, 0775);
     }
-}
-
-/**
- * @brief Send ≥74 dummy CLK pulses with CS=1, MOSI=1 using raw GPIO.
- *
- * SD Physical Layer Specification §7.2.2 requires the host to supply
- * ≥74 clock cycles with DI=1 and CS=1 after the power-on settling
- * period to force the card into SPI mode before the first CMD0.
- * The pulses are generated via direct GPIO toggling (~250 kHz) so no
- * SPI peripheral is needed at this point.
- */
-static void send_dummy_clocks(void)
-{
-    esp_err_t err;
-    err = gpio_set_direction(CONFIG_SD_CLK_GPIO, GPIO_MODE_OUTPUT);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "dummy_clocks: CLK direction failed: %s", esp_err_to_name(err));
-        return;
-    }
-    err = gpio_set_direction(CONFIG_SD_CMD_GPIO, GPIO_MODE_OUTPUT); /* MOSI */
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "dummy_clocks: MOSI direction failed: %s", esp_err_to_name(err));
-        return;
-    }
-    gpio_set_level(CONFIG_SD_CMD_GPIO, 1);   /* MOSI = 1 */
-    gpio_set_level(CONFIG_SD_CS_GPIO,  1);   /* CS   = 1 (deasserted) */
-    gpio_set_level(CONFIG_SD_CLK_GPIO, 0);   /* CLK  = 0 (idle) */
-
-    for (int i = 0; i < 80; i++) {
-        gpio_set_level(CONFIG_SD_CLK_GPIO, 1);
-        esp_rom_delay_us(2);
-        gpio_set_level(CONFIG_SD_CLK_GPIO, 0);
-        esp_rom_delay_us(2);
-    }
-    /* Leave CLK low so the SPI peripheral takes it from a known idle state. */
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -140,90 +99,37 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SPI, CLK=%d MOSI=%d MISO=%d CS=%d)",
+    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, 1-bit, CLK=%d CMD=%d D0=%d D3=%d)",
              CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
-             CONFIG_SD_D0_GPIO, CONFIG_SD_CS_GPIO);
+             CONFIG_SD_D0_GPIO, CONFIG_SD_D3_GPIO);
 
-    /* In SPI mode the SD card requires pull-ups on all data lines so the
-     * MISO line reads high when the card is not driving it (idle state).
-     * Without pull-ups CMD0 never gets a valid response → ESP_ERR_TIMEOUT.
-     * Configure internal pull-ups before touching the SPI peripheral. */
-    gpio_set_pull_mode(CONFIG_SD_CLK_GPIO, GPIO_PULLUP_ONLY);
-    gpio_set_pull_mode(CONFIG_SD_CMD_GPIO, GPIO_PULLUP_ONLY);  /* MOSI */
-    gpio_set_pull_mode(CONFIG_SD_D0_GPIO,  GPIO_PULLUP_ONLY);  /* MISO */
-    gpio_set_pull_mode(CONFIG_SD_CS_GPIO,  GPIO_PULLUP_ONLY);  /* CS   */
+    /* SDMMC_HOST_SLOT_1 uses the GPIO matrix – pin assignment below.
+     * SDMMC_HOST_SLOT_0 is occupied by the esp_hosted WiFi SDIO (GPIO 14-19). */
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.slot         = SDMMC_HOST_SLOT_1;
+    /* Start at a conservative frequency; the driver will renegotiate higher
+     * speeds (up to 40 MHz) after card identification succeeds. */
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;  /* 20 MHz */
 
-    /* Drive CS high explicitly before the bus is initialised so the card
-     * sees a clean deselect edge and resets into SPI mode on the next
-     * falling edge of CS.  The SPI master driver will take ownership of
-     * this GPIO once spi_bus_initialize() / sdspi_host_init_device() run,
-     * but they preserve the HIGH output level, so there is no glitch. */
-    gpio_set_direction(CONFIG_SD_CS_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(CONFIG_SD_CS_GPIO, 1);
+    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot_config.width = 1;                          /* 1-bit mode */
+    slot_config.clk   = CONFIG_SD_CLK_GPIO;         /* GPIO 43 */
+    slot_config.cmd   = CONFIG_SD_CMD_GPIO;         /* GPIO 44 */
+    slot_config.d0    = CONFIG_SD_D0_GPIO;          /* GPIO 39 */
+    slot_config.d3    = CONFIG_SD_D3_GPIO;          /* GPIO 38 – pull-up for card-detect */
+    /* Enable the ESP32-P4 on-chip pull-ups on all SD lines so the bus idles
+     * high when the card is not driving it (prevents spurious CMD0 timeouts). */
+    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
-    /* Wait for the card power rail to stabilise (≥1 ms required by spec;
-     * 100 ms covers even the slowest regulator rise times). */
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    /* SD spec §7.2.2: send ≥74 CLK pulses with CS=1, MOSI=1 to force the
-     * card out of native SD mode and into SPI mode before CMD0.  Without
-     * these clocks the card never enters SPI mode and CMD0 times out. */
-    send_dummy_clocks();
-
-    /* SPI bus – SD card uses SPI2 to avoid conflict with the WiFi
-     * coprocessor (esp_hosted) which occupies SDMMC_HOST_SLOT_1. */
-    spi_bus_config_t bus_cfg = {
-        .mosi_io_num     = CONFIG_SD_CMD_GPIO,  /* CMD  → MOSI */
-        .miso_io_num     = CONFIG_SD_D0_GPIO,   /* D0   → MISO */
-        .sclk_io_num     = CONFIG_SD_CLK_GPIO,  /* CLK  → SCLK */
-        .quadwp_io_num   = -1,
-        .quadhd_io_num   = -1,
-        .max_transfer_sz = 4096,
-    };
-
-    /* Stronger drive on CLK and MOSI ensures clean edges at SPI frequencies
-     * over the onboard PCB traces (reduces CMD0 / CMD8 noise failures). */
-    esp_err_t drv_ret;
-    drv_ret = gpio_set_drive_capability(CONFIG_SD_CLK_GPIO, GPIO_DRIVE_CAP_3);
-    if (drv_ret != ESP_OK) {
-        ESP_LOGW(TAG, "Could not set CLK drive strength: %s", esp_err_to_name(drv_ret));
-    }
-    drv_ret = gpio_set_drive_capability(CONFIG_SD_CMD_GPIO, GPIO_DRIVE_CAP_3);
-    if (drv_ret != ESP_OK) {
-        ESP_LOGW(TAG, "Could not set MOSI drive strength: %s", esp_err_to_name(drv_ret));
-    }
-
-    esp_err_t ret = spi_bus_initialize(s_spi_host, &bus_cfg, SDSPI_DEFAULT_DMA);
-    if (ret != ESP_OK) {
-        /* Bus initialisation failed; no bus was actually created so there
-         * is nothing to free — spi_bus_free() must NOT be called here. */
-        ESP_LOGE(TAG, "SPI bus init failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot_config.gpio_cs = CONFIG_SD_CS_GPIO;
-    slot_config.host_id = s_spi_host;
-
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = (int)s_spi_host;
-    /* 4 MHz is safe for all SD cards in SPI mode over the onboard traces;
-     * the default 20 MHz can cause CMD0 timeouts on slower cards. */
-    host.max_freq_khz = 4000;
-
-    /* Mount configuration */
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
         .max_files              = 8,
         .allocation_unit_size   = 16 * 1024,
     };
 
-    /* Retry the mount up to SD_MOUNT_RETRIES times.  Between attempts the
-     * SPI bus is torn down and rebuilt and another dummy-clock burst is
-     * sent so the card gets a clean CMD0 sequence each time. */
-    ret = ESP_FAIL;
+    esp_err_t ret = ESP_FAIL;
     for (int attempt = 1; attempt <= SD_MOUNT_RETRIES; attempt++) {
-        ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
+        ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT,
                                       &host,
                                       &slot_config,
                                       &mount_config,
@@ -235,21 +141,11 @@ esp_err_t sd_card_init(void)
                  attempt, SD_MOUNT_RETRIES, esp_err_to_name(ret),
                  attempt < SD_MOUNT_RETRIES ? " – retrying" : "");
         if (attempt < SD_MOUNT_RETRIES) {
-            spi_bus_free(s_spi_host);
             vTaskDelay(pdMS_TO_TICKS(SD_RETRY_DELAY_MS));
-            send_dummy_clocks();
-            esp_err_t bus_ret = spi_bus_initialize(s_spi_host, &bus_cfg,
-                                                   SDSPI_DEFAULT_DMA);
-            if (bus_ret != ESP_OK) {
-                ESP_LOGE(TAG, "SPI bus re-init failed: %s",
-                         esp_err_to_name(bus_ret));
-                return bus_ret;
-            }
         }
     }
 
     if (ret != ESP_OK) {
-        spi_bus_free(s_spi_host);
         if (ret == ESP_FAIL) {
             ESP_LOGE(TAG, "Failed to mount FAT filesystem – card present?");
         } else {
@@ -280,7 +176,6 @@ void sd_card_deinit(void)
         return;
     }
     esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
-    spi_bus_free(s_spi_host);
     s_card    = NULL;
     s_mounted = false;
     ESP_LOGI(TAG, "SD card unmounted");
