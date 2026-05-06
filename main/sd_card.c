@@ -2,21 +2,22 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager implementation
- * Mounts a FAT32 microSD card via the SDMMC peripheral (SDMMC_HOST_SLOT_1,
- * 1-bit mode) and provides configuration backup / restore via JSON.
+ * Mounts a FAT32 microSD card via the SPI2 (HSPI) peripheral and provides
+ * configuration backup / restore via JSON.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
  *
- * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SDMMC 1-bit):
- *   SDMMC1_CLK = GPIO 43   (configurable via Kconfig)
- *   SDMMC1_CMD = GPIO 44
- *   SDMMC1_D0  = GPIO 39
- *   SDMMC1_D3  = GPIO 38   (card-detect pull-up, configurable via Kconfig)
+ * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SPI mode):
+ *   SPI2_CLK  (SCLK) = GPIO 43   (configurable via Kconfig)
+ *   SPI2_MOSI (CMD)  = GPIO 44
+ *   SPI2_MISO (D0)   = GPIO 39
+ *   SPI2_CS   (D3)   = GPIO 38
  *
- * Note: SDMMC_HOST_SLOT_0 uses fixed IOMUX pads (GPIO 14-19) and is already
- * claimed by the esp_hosted WiFi coprocessor SDIO transport.
- * SDMMC_HOST_SLOT_1 is GPIO-matrix-routable and is free for the SD card.
+ * Note: Both SDMMC host controllers on ESP32-P4 are claimed by the esp_hosted
+ * WiFi coprocessor SDIO transport (SDMMC_HOST_SLOT_1, GPIO 14-19) and its
+ * internal reservation, so SDMMC mode is unavailable for the SD card.
+ * SPI2 is free and fully supported by the ESP-IDF sdspi driver.
  */
 
 #include <stdio.h>
@@ -34,7 +35,8 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
-#include "driver/sdmmc_host.h"
+#include "driver/spi_master.h"
+#include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "cJSON.h"
 
@@ -64,9 +66,10 @@ static const char *TAG = "sd_card";
 /** Milliseconds to wait between mount retry attempts. */
 #define SD_RETRY_DELAY_MS    500
 
-static sdmmc_card_t      *s_card        = NULL;
-static bool               s_mounted     = false;
-static SemaphoreHandle_t  s_mutex       = NULL;
+static sdmmc_card_t      *s_card           = NULL;
+static bool               s_mounted        = false;
+static SemaphoreHandle_t  s_mutex          = NULL;
+static bool               s_spi_bus_inited = false;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -99,29 +102,33 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, 4-bit, CLK=%d CMD=%d D0=%d D1=%d D2=%d D3=%d)",
+    ESP_LOGI(TAG, "Initialising SD card (SPI2, CLK=%d MOSI=%d MISO=%d CS=%d)",
              CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
-             CONFIG_SD_D0_GPIO, CONFIG_SD_D1_GPIO,
-             CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
+             CONFIG_SD_D0_GPIO, CONFIG_SD_D3_GPIO);
 
-    /* SDMMC_HOST_SLOT_1 uses the GPIO matrix – pin assignment below.
-     * SDMMC_HOST_SLOT_0 is occupied by the esp_hosted WiFi SDIO (GPIO 14-19). */
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot         = SDMMC_HOST_SLOT_1;
-    /* Use high-speed mode (40 MHz) as supported by the ESP32-P4-WIFI6 board. */
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;  /* 40 MHz */
+    /* Initialise SPI2 bus.  All SDMMC controllers on ESP32-P4 are occupied by
+     * the esp_hosted WiFi SDIO transport; SPI2 is free and works with the
+     * onboard TF slot in SD-SPI mode. */
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num     = CONFIG_SD_CMD_GPIO,  /* GPIO 44 */
+        .miso_io_num     = CONFIG_SD_D0_GPIO,   /* GPIO 39 */
+        .sclk_io_num     = CONFIG_SD_CLK_GPIO,  /* GPIO 43 */
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
+        .max_transfer_sz = 4000,
+    };
+    esp_err_t bus_err = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    if (bus_err != ESP_OK) {
+        ESP_LOGE(TAG, "SPI2 bus init failed: %s", esp_err_to_name(bus_err));
+        return bus_err;
+    }
+    s_spi_bus_inited = true;
 
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_config.width = 4;                          /* 4-bit mode */
-    slot_config.clk   = CONFIG_SD_CLK_GPIO;         /* GPIO 43 */
-    slot_config.cmd   = CONFIG_SD_CMD_GPIO;         /* GPIO 44 */
-    slot_config.d0    = CONFIG_SD_D0_GPIO;          /* GPIO 39 */
-    slot_config.d1    = CONFIG_SD_D1_GPIO;          /* GPIO 40 */
-    slot_config.d2    = CONFIG_SD_D2_GPIO;          /* GPIO 41 */
-    slot_config.d3    = CONFIG_SD_D3_GPIO;          /* GPIO 42 */
-    /* Enable the ESP32-P4 on-chip pull-ups on all SD lines so the bus idles
-     * high when the card is not driving it (prevents spurious CMD0 timeouts). */
-    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = CONFIG_SD_D3_GPIO;  /* GPIO 38 – chip-select */
+    slot_config.host_id = SPI2_HOST;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
@@ -131,7 +138,7 @@ esp_err_t sd_card_init(void)
 
     esp_err_t ret = ESP_FAIL;
     for (int attempt = 1; attempt <= SD_MOUNT_RETRIES; attempt++) {
-        ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT,
+        ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
                                       &host,
                                       &slot_config,
                                       &mount_config,
@@ -152,6 +159,11 @@ esp_err_t sd_card_init(void)
             ESP_LOGE(TAG, "Failed to mount FAT filesystem – card present?");
         } else {
             ESP_LOGE(TAG, "SD mount failed: %s", esp_err_to_name(ret));
+        }
+        /* Release the SPI bus if mount ultimately failed */
+        if (s_spi_bus_inited) {
+            spi_bus_free(SPI2_HOST);
+            s_spi_bus_inited = false;
         }
         return ret;
     }
@@ -180,6 +192,10 @@ void sd_card_deinit(void)
     esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
     s_card    = NULL;
     s_mounted = false;
+    if (s_spi_bus_inited) {
+        spi_bus_free(SPI2_HOST);
+        s_spi_bus_inited = false;
+    }
     ESP_LOGI(TAG, "SD card unmounted");
 }
 
