@@ -293,6 +293,35 @@ menu "Aquarium SD Card Settings"
 
     if SD_CARD_ENABLED
 
+    choice SD_CARD_BUS_WIDTH
+        prompt "SD/MMC bus width"
+        default SD_CARD_BUS_WIDTH_4
+        help
+            Select the SDMMC bus width used to talk to the onboard TF slot.
+            4-bit mode is faster; 1-bit mode can help diagnose signal or
+            pull-up issues.
+
+        config SD_CARD_BUS_WIDTH_4
+            bool "4 lines (D0 - D3)"
+
+        config SD_CARD_BUS_WIDTH_1
+            bool "1 line (D0)"
+    endchoice
+
+    choice SD_CARD_SPEED_MODE
+        prompt "SD/MMC speed mode"
+        default SD_CARD_SPEED_HS
+        help
+            Default speed is the safest option. High speed matches the current
+            project behaviour and provides better throughput on a stable bus.
+
+        config SD_CARD_SPEED_DEFAULT
+            bool "Default Speed (20 MHz)"
+
+        config SD_CARD_SPEED_HS
+            bool "High Speed (40 MHz)"
+    endchoice
+
     config SD_CLK_GPIO
         int "SDMMC1 CLK GPIO"
         default 43
@@ -318,6 +347,8 @@ menu "Aquarium SD Card Settings"
             GPIO number for the SDMMC D0 data line.
             Corresponds to GPIO 39 on the Waveshare ESP32-P4-WiFi6.
 
+    if SD_CARD_BUS_WIDTH_4
+
     config SD_D1_GPIO
         int "SDMMC1 D1 GPIO"
         default 40
@@ -341,6 +372,34 @@ menu "Aquarium SD Card Settings"
         help
             GPIO number for the SDMMC D3 data line.
             Corresponds to GPIO 42 on the Waveshare ESP32-P4-WiFi6.
+
+    endif # SD_CARD_BUS_WIDTH_4
+
+    config SD_CARD_POWER_RESET_GPIO
+        int "Card power reset GPIO (0 to disable)"
+        default 0
+        range 0 56
+        depends on SOC_SDMMC_IO_POWER_EXTERNAL
+        help
+            Optional GPIO that toggles power/reset for the TF slot before mount.
+            Leave at 0 when the slot is always powered or the schematic does not
+            expose a dedicated reset line.
+
+    config SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
+        bool "SD power supply comes from internal LDO IO"
+        default y
+        depends on SOC_SDMMC_IO_POWER_EXTERNAL
+        help
+            Required on ESP32-P4 boards where the TF slot power is sourced from
+            the chip's internal SD LDO when using the default SDMMC pins.
+
+    config SD_CARD_PWR_CTRL_LDO_IO_ID
+        int "Internal SD LDO ID"
+        default 4 if IDF_TARGET_ESP32P4
+        default 0
+        depends on SOC_SDMMC_IO_POWER_EXTERNAL && SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
+        help
+            Internal LDO channel used to power the SD card interface.
 
     endif # SD_CARD_ENABLED
 

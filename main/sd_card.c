@@ -35,9 +35,14 @@
 #include "esp_log.h"
 #include "esp_vfs_fat.h"
 #include "ff.h"
+#include "driver/gpio.h"
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
 #include "cJSON.h"
+
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+#include "sd_pwr_ctrl_by_on_chip_ldo.h"
+#endif
 
 #include "sd_card.h"
 
@@ -68,6 +73,9 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t      *s_card           = NULL;
 static bool               s_mounted        = false;
 static SemaphoreHandle_t  s_mutex          = NULL;
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+static sd_pwr_ctrl_handle_t s_pwr_ctrl_handle = NULL;
+#endif
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -79,6 +87,69 @@ static void ensure_dir(const char *path)
         mkdir(path, 0775);
     }
 }
+
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+static esp_err_t sd_power_ctrl_init(sdmmc_host_t *host)
+{
+#if CONFIG_SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
+    if (s_pwr_ctrl_handle == NULL) {
+        sd_pwr_ctrl_ldo_config_t ldo_config = {
+            .ldo_chan_id = CONFIG_SD_CARD_PWR_CTRL_LDO_IO_ID,
+        };
+        esp_err_t ret = sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &s_pwr_ctrl_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create SD LDO power control (%s)", esp_err_to_name(ret));
+            return ret;
+        }
+    }
+    host->pwr_ctrl_handle = s_pwr_ctrl_handle;
+#else
+    (void) host;
+#endif
+    return ESP_OK;
+}
+
+static void sd_power_ctrl_deinit(void)
+{
+#if CONFIG_SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
+    if (s_pwr_ctrl_handle != NULL) {
+        esp_err_t ret = sd_pwr_ctrl_del_on_chip_ldo(s_pwr_ctrl_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to release SD LDO power control (%s)", esp_err_to_name(ret));
+        }
+        s_pwr_ctrl_handle = NULL;
+    }
+#endif
+}
+#endif
+
+#if defined(CONFIG_SD_CARD_POWER_RESET_GPIO) && (CONFIG_SD_CARD_POWER_RESET_GPIO > 0)
+static esp_err_t sd_card_reset_power(void)
+{
+    gpio_config_t io_conf = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = (1ULL << CONFIG_SD_CARD_POWER_RESET_GPIO),
+    };
+    esp_err_t ret = gpio_config(&io_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure SD power reset GPIO (%s)", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = gpio_set_level(CONFIG_SD_CARD_POWER_RESET_GPIO, 1);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    ret = gpio_set_level(CONFIG_SD_CARD_POWER_RESET_GPIO, 0);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+    return ESP_OK;
+}
+#endif
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
@@ -100,23 +171,54 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d D1=%d D2=%d D3=%d)",
-             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
-             CONFIG_SD_D0_GPIO, CONFIG_SD_D1_GPIO,
-             CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
+    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d, width=%d-bit)",
+             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO,
+#if CONFIG_SD_CARD_BUS_WIDTH_4
+             4
+#else
+             1
+#endif
+    );
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = SDMMC_HOST_SLOT_1;
+#if CONFIG_SD_CARD_SPEED_DEFAULT
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+#else
     host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+#endif
+
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+    esp_err_t ret = sd_power_ctrl_init(&host);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+#else
+    esp_err_t ret = ESP_OK;
+#endif
+
+#if defined(CONFIG_SD_CARD_POWER_RESET_GPIO) && (CONFIG_SD_CARD_POWER_RESET_GPIO > 0)
+    ret = sd_card_reset_power();
+    if (ret != ESP_OK) {
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+        sd_power_ctrl_deinit();
+#endif
+        return ret;
+    }
+#endif
 
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+#if CONFIG_SD_CARD_BUS_WIDTH_4
     slot_config.width = 4;
-    slot_config.clk = CONFIG_SD_CLK_GPIO;
-    slot_config.cmd = CONFIG_SD_CMD_GPIO;
-    slot_config.d0  = CONFIG_SD_D0_GPIO;
     slot_config.d1  = CONFIG_SD_D1_GPIO;
     slot_config.d2  = CONFIG_SD_D2_GPIO;
     slot_config.d3  = CONFIG_SD_D3_GPIO;
+#else
+    slot_config.width = 1;
+#endif
+    slot_config.clk = CONFIG_SD_CLK_GPIO;
+    slot_config.cmd = CONFIG_SD_CMD_GPIO;
+    slot_config.d0  = CONFIG_SD_D0_GPIO;
     slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
@@ -125,7 +227,7 @@ esp_err_t sd_card_init(void)
         .allocation_unit_size   = 16 * 1024,
     };
 
-    esp_err_t ret = ESP_FAIL;
+    ret = ESP_FAIL;
     for (int attempt = 1; attempt <= SD_MOUNT_RETRIES; attempt++) {
         ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT,
                                       &host,
@@ -149,6 +251,9 @@ esp_err_t sd_card_init(void)
         } else {
             ESP_LOGE(TAG, "SD mount failed: %s", esp_err_to_name(ret));
         }
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+        sd_power_ctrl_deinit();
+#endif
         return ret;
     }
 
@@ -176,6 +281,9 @@ void sd_card_deinit(void)
     esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
     s_card    = NULL;
     s_mounted = false;
+#if SOC_SDMMC_IO_POWER_EXTERNAL
+    sd_power_ctrl_deinit();
+#endif
     ESP_LOGI(TAG, "SD card unmounted");
 }
 
