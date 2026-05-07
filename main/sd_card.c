@@ -172,14 +172,14 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d, width=%d-bit)",
-             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO,
 #if CONFIG_SD_CARD_BUS_WIDTH_4
-             4
+    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d D1=%d D2=%d D3=%d, width=4-bit)",
+             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO,
+             CONFIG_SD_D1_GPIO, CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
 #else
-             1
+    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d, width=1-bit)",
+             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO);
 #endif
-    );
 
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = SDMMC_HOST_SLOT_1;
