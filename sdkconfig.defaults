@@ -133,17 +133,19 @@ CONFIG_LED_SCENE_SUNRISE_DURATION_MIN=30
 CONFIG_LED_SCENE_SUNSET_DURATION_MIN=30
 CONFIG_LED_SCENE_MOONLIGHT_BRIGHTNESS=15
 
-# ── SD Card defaults (Waveshare ESP32-P4-WiFi6 onboard TF slot, SPI2 mode) ──
-# Both SDMMC host controllers on ESP32-P4 are occupied by the esp_hosted WiFi
-# coprocessor SDIO transport, so the SD card uses SPI2 (HSPI) instead.
-# Pin mapping for SPI2 SD-SPI on the onboard TF slot:
-#   SPI2_CLK  (SCLK) = GPIO 43
-#   SPI2_MOSI (CMD)  = GPIO 44
-#   SPI2_MISO (D0)   = GPIO 39
-#   SPI2_CS   (D3)   = GPIO 38
+# ── SD Card defaults (Waveshare ESP32-P4-WiFi6 onboard TF slot, SDMMC1 mode) ──
+# SDMMC slot 0 (GPIO 14-19) is used by esp_hosted WiFi coprocessor SDIO.
+# Onboard TF slot is routed to SDMMC slot 1 with these pins:
+#   SDMMC1_CLK = GPIO 43
+#   SDMMC1_CMD = GPIO 44
+#   SDMMC1_D0  = GPIO 39
+#   SDMMC1_D1  = GPIO 40
+#   SDMMC1_D2  = GPIO 41
+#   SDMMC1_D3  = GPIO 42
 CONFIG_SD_CARD_ENABLED=y
 CONFIG_SD_CLK_GPIO=43
 CONFIG_SD_CMD_GPIO=44
 CONFIG_SD_D0_GPIO=39
-CONFIG_SD_D3_GPIO=38
-
+CONFIG_SD_D1_GPIO=40
+CONFIG_SD_D2_GPIO=41
+CONFIG_SD_D3_GPIO=42
