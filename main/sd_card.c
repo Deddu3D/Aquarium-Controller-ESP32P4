@@ -123,6 +123,7 @@ static void sd_power_ctrl_deinit(void)
 }
 #endif
 
+/* Kconfig uses GPIO 0 as "disabled" for the optional SD power-reset line. */
 #if defined(CONFIG_SD_CARD_POWER_RESET_GPIO) && (CONFIG_SD_CARD_POWER_RESET_GPIO > 0)
 static esp_err_t sd_card_reset_power(void)
 {

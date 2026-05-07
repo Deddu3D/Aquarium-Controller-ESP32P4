@@ -400,6 +400,8 @@ menu "Aquarium SD Card Settings"
         depends on SOC_SDMMC_IO_POWER_EXTERNAL && SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
         help
             Internal LDO channel used to power the SD card interface.
+            ESP-IDF's ESP32-P4 SDMMC example uses LDO ID 4 for the default
+            SD pins on this target.
 
     endif # SD_CARD_ENABLED
 
