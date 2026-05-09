@@ -301,9 +301,11 @@ esp_err_t duckdns_update_now(void)
     return do_update(cfg.domain, cfg.token);
 }
 
-const char *duckdns_get_last_status(void)
+void duckdns_get_last_status(char *buf, size_t buf_len)
 {
-    /* Returning the static buffer is safe for read; callers must not
-     * free it or write to it. */
-    return s_last_status;
+    if (buf == NULL || buf_len == 0) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    strncpy(buf, s_last_status, buf_len - 1);
+    buf[buf_len - 1] = '\0';
+    xSemaphoreGive(s_mutex);
 }
