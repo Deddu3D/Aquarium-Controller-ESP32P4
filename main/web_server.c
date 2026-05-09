@@ -327,7 +327,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* Keep a generous limit for the current API set and future endpoint growth. */
 #define HTTP_MAX_URI_HANDLERS  45
 
-/* ── Embedded Web UI server (/ and /www/*) ───────────────────────────── */
+/* ── Embedded Web UI server (/ and /www/wildcard) ───────────────────────── */
 
 static esp_err_t send_embedded_file(httpd_req_t *req,
                                     const uint8_t *start,
@@ -1914,6 +1914,8 @@ static const httpd_uri_t uri_root = {
     .handler  = root_get_handler,
     .user_ctx = NULL,
 };
+
+static const httpd_uri_t uri_api_status = {
     .uri      = "/api/status",
     .method   = HTTP_GET,
     .handler  = api_status_get_handler,
@@ -2158,7 +2160,7 @@ static const httpd_uri_t uri_api_daily_cycle_post = {
     .user_ctx = NULL,
 };
 
-/* Wildcard handler: serve embedded static files under /www/* */
+/* Wildcard handler: serve embedded static files under /www/wildcard */
 static const httpd_uri_t uri_www_static = {
     .uri      = "/www/*",
     .method   = HTTP_GET,
@@ -2208,7 +2210,7 @@ esp_err_t web_server_start(void)
     ssl_config.httpd.stack_size       = HTTP_STACK_SIZE;
     ssl_config.httpd.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     ssl_config.httpd.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/* can serve embedded assets */
+    /* Enable wildcard URI matching so /www/wildcard can serve embedded assets */
     ssl_config.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
     ssl_config.servercert     = server_cert_pem_start;
@@ -2228,7 +2230,7 @@ esp_err_t web_server_start(void)
     config.stack_size       = HTTP_STACK_SIZE;
     config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     config.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/* can serve embedded assets */
+    /* Enable wildcard URI matching so /www/wildcard can serve embedded assets */
     config.uri_match_fn     = httpd_uri_match_wildcard;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
