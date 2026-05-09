@@ -28,8 +28,7 @@ typedef enum {
     OTA_STATUS_ERROR,          /**< Update failed                  */
 } ota_status_t;
 
-/** Maximum length of the OTA error message string.
- *  Sized to hold "Cannot open " (13) + OTA_SD_PATH_MAX (128) + NUL. */
+/** Maximum length of the OTA error message string. */
 #define OTA_ERROR_MSG_MAX 192
 
 /**
@@ -61,21 +60,6 @@ ota_progress_t ota_update_get_progress(void);
  * @brief Return true if an OTA update is currently in progress.
  */
 bool ota_update_in_progress(void);
-
-/**
- * @brief Start a local OTA firmware update from a file on the SD card.
- *
- * Reads the firmware binary from @p path (e.g. SD_FIRMWARE_FILE) and
- * writes it directly to the next OTA partition.  Runs in a background
- * FreeRTOS task and reboots automatically on success.  Non-blocking.
- *
- * Requires the SD card to be mounted before calling.
- *
- * @param path  Absolute path to the firmware binary on the SD card
- *              (e.g. "/sdcard/firmware.bin").
- * @return ESP_OK if the update task was launched successfully.
- */
-esp_err_t ota_update_start_from_sd(const char *path);
 
 #ifdef __cplusplus
 }

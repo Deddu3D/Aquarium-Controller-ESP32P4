@@ -148,7 +148,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
 /* Keep a generous limit for the current API set and future endpoint growth. */
-#define HTTP_MAX_URI_HANDLERS  61
+#define HTTP_MAX_URI_HANDLERS  40
 
 /* ── Embedded Web UI server (/ and /www/*) ───────────────────────────── */
 
@@ -1876,64 +1876,6 @@ static const httpd_uri_t uri_api_daily_cycle_post = {
     .user_ctx = NULL,
 };
 
-/* Forward declarations for SD card and SD-OTA handlers defined later */
-static esp_err_t api_sdcard_status_handler(httpd_req_t *req);
-static esp_err_t api_sdcard_ls_handler(httpd_req_t *req);
-static esp_err_t api_sdcard_download_handler(httpd_req_t *req);
-static esp_err_t api_sdcard_delete_handler(httpd_req_t *req);
-static esp_err_t api_sdcard_config_export_handler(httpd_req_t *req);
-static esp_err_t api_sdcard_config_import_handler(httpd_req_t *req);
-static esp_err_t api_ota_sd_post_handler(httpd_req_t *req);
-
-static const httpd_uri_t uri_api_sdcard_status = {
-    .uri      = "/api/sdcard",
-    .method   = HTTP_GET,
-    .handler  = api_sdcard_status_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_sdcard_ls = {
-    .uri      = "/api/sdcard/ls",
-    .method   = HTTP_GET,
-    .handler  = api_sdcard_ls_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_sdcard_download = {
-    .uri      = "/api/sdcard/download",
-    .method   = HTTP_GET,
-    .handler  = api_sdcard_download_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_sdcard_delete = {
-    .uri      = "/api/sdcard/delete",
-    .method   = HTTP_DELETE,
-    .handler  = api_sdcard_delete_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_sdcard_config_export = {
-    .uri      = "/api/sdcard/config/export",
-    .method   = HTTP_POST,
-    .handler  = api_sdcard_config_export_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_sdcard_config_import = {
-    .uri      = "/api/sdcard/config/import",
-    .method   = HTTP_POST,
-    .handler  = api_sdcard_config_import_handler,
-    .user_ctx = NULL,
-};
-
-static const httpd_uri_t uri_api_ota_sd = {
-    .uri      = "/api/ota/sd",
-    .method   = HTTP_POST,
-    .handler  = api_ota_sd_post_handler,
-    .user_ctx = NULL,
-};
-
 /* Wildcard handler: serve embedded static files under /www/* */
 static const httpd_uri_t uri_www_static = {
     .uri      = "/www/*",
@@ -1941,53 +1883,6 @@ static const httpd_uri_t uri_www_static = {
     .handler  = static_file_get_handler,
     .user_ctx = NULL,
 };
-
-/* ── SD Card REST API handlers ───────────────────────────────────── */
-
-static esp_err_t api_sdcard_status_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req,
-        "{\"mounted\":false,\"card_name\":\"\",\"total_bytes\":0,"
-        "\"free_bytes\":0,\"card_speed_khz\":0}");
-}
-
-static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req,
-        "{\"ok\":false,\"error\":\"SD card feature disabled\",\"entries\":[]}");
-}
-
-static esp_err_t api_sdcard_download_handler(httpd_req_t *req)
-{
-    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "SD card feature disabled");
-    return ESP_FAIL;
-}
-
-static esp_err_t api_sdcard_delete_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
-}
-
-static esp_err_t api_sdcard_config_export_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
-}
-
-static esp_err_t api_sdcard_config_import_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
-}
-
-static esp_err_t api_ota_sd_post_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"OTA from SD disabled\"}");
-}
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
@@ -2079,13 +1974,6 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scene_post);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_status);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_ls);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_download);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_delete);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_config_export);
-    httpd_register_uri_handler(s_server, &uri_api_sdcard_config_import);
-    httpd_register_uri_handler(s_server, &uri_api_ota_sd);
     /* Wildcard handler registered last so exact-match API routes take priority */
     httpd_register_uri_handler(s_server, &uri_www_static);
 
