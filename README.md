@@ -431,7 +431,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 - **Aquarium Feeding Mode Settings**
 - **Aquarium LED Scene Settings**
 - **Aquarium Daily Cycle Settings**
-- **SD Card Settings** (`CONFIG_SD_CARD_ENABLED`, pin CLK/CMD/D0)
+- **SD Card Settings** (`CONFIG_SD_CARD_ENABLED`, bus width/speed, pin CLK/CMD/D0..D3, internal LDO SD)
 - **Display Settings** (`CONFIG_DISPLAY_ENABLED`, `CONFIG_TOUCH_I2C_SCL/SDA`)
 - **Aquarium Telegram Settings**
 - **Aquarium DuckDNS Settings**

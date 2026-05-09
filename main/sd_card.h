@@ -3,7 +3,7 @@
  *
  * Aquarium Controller - SD Card Manager
  * Mounts a FAT-formatted microSD card via the SDMMC peripheral (slot 1,
- * 4-bit mode, GPIO matrix) and exposes helpers for configuration
+ * GPIO matrix, configurable 1-bit/4-bit mode) and exposes helpers for configuration
  * backup/restore.  All log and data files written by other modules live
  * under the /sdcard mount point.
  *
@@ -69,7 +69,7 @@ typedef struct {
 /**
  * @brief Initialise the SD card subsystem.
  *
- * Initialises the SDMMC1 host, configures the slot in 4-bit mode and mounts
+ * Initialises the SDMMC1 host, configures the slot based on Kconfig and mounts
  * the FAT filesystem at /sdcard.  Creates the logs/ and config/
  * subdirectories if they do not exist.
  *
