@@ -12,6 +12,11 @@ idf_component_register(
              onewire_bus ds18b20 esp_http_client esp-tls app_update esp_app_format
              esp_lcd esp_lcd_touch
     PRIV_REQUIRES esp_lcd_hx8394
-    EMBED_TXTFILES "telegram_root_cert.pem" "server.crt" "server.key"
-                   "www/index.html" "www/style.css" "www/bg.svg"
+    EMBED_TXTFILES
+        "telegram_root_cert.pem"
+        "server.crt"
+        "server.key"
+        "www/index.html"
+        "www/style.css"
+        "www/bg.svg"
 )
