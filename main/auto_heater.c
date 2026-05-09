@@ -24,6 +24,10 @@
 #include "telegram_notify.h"
 #include "event_log.h"
 
+#ifndef RELAY_COUNT
+#define RELAY_COUNT 4
+#endif
+
 static const char *TAG = "heater";
 
 /* ── NVS keys ────────────────────────────────────────────────────── */

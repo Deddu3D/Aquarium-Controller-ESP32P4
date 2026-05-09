@@ -91,10 +91,12 @@ CONFIG_RELAY_ACTIVE_LOW=y
 # ── FreeRTOS hardening ────────────────────────────────────────────
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
 
-# ── HTTPS / TLS (required for Telegram Bot API) ──────────────────
+# ── HTTPS / TLS (required for Telegram Bot API and HTTPS server) ──
 CONFIG_ESP_TLS_USING_MBEDTLS=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# Enable HTTPS web server by default
+CONFIG_AQUARIUM_HTTPS_ENABLE=y
 
 # ── Touch Display (Waveshare 4-DSI-TOUCH-A, 720×720, HX8394 + GT911) ──
 CONFIG_DISPLAY_ENABLED=y

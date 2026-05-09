@@ -5,6 +5,7 @@ idf_component_register(
          "auto_heater.c" "feeding_mode.c"
          "co2_controller.c" "timezone_manager.c" "sun_position.c"
          "daily_cycle.c"
+         "event_log.c"
          "display_ui.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_https_server
@@ -19,4 +20,6 @@ idf_component_register(
         "www/index.html"
         "www/style.css"
         "www/bg.svg"
+        "www/manifest.json"
+        "www/sw.js"
 )
