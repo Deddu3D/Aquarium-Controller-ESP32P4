@@ -315,5 +315,3 @@ menu "Aquarium LED Scene Settings"
             dim (< 30) to simulate natural moonlight without disturbing fish.
 
 endmenu
-
-endmenu
