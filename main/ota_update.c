@@ -40,6 +40,10 @@ static ota_progress_t    s_progress    = { .status = OTA_STATUS_IDLE };
 static bool              s_in_progress = false;
 static char              s_url[OTA_URL_MAX];
 
+/* State for direct-upload OTA (ota_update_begin/write/finish) */
+static const esp_partition_t *s_upload_partition = NULL;
+static esp_ota_handle_t       s_upload_handle    = 0;
+
 /* ── OTA task ────────────────────────────────────────────────────── */
 
 static void ota_task(void *arg)
@@ -313,4 +317,132 @@ bool ota_update_in_progress(void)
     bool in_prog = s_in_progress;
     xSemaphoreGive(s_mutex);
     return in_prog;
+}
+
+/* ── Direct-upload OTA API ───────────────────────────────────────── */
+
+/**
+ * @brief Ensure the module mutex exists (lazy init, idempotent).
+ */
+static esp_err_t ota_mutex_init(void)
+{
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t ota_update_begin(void)
+{
+    esp_err_t err = ota_mutex_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_in_progress) {
+        xSemaphoreGive(s_mutex);
+        ESP_LOGW(TAG, "OTA already in progress");
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_in_progress           = true;
+    s_progress.status       = OTA_STATUS_FLASHING;
+    s_progress.progress_pct = 0;
+    s_progress.error_msg[0] = '\0';
+    xSemaphoreGive(s_mutex);
+
+    s_upload_partition = esp_ota_get_next_update_partition(NULL);
+    if (s_upload_partition == NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "No OTA partition found");
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "No OTA partition available");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA upload: writing to partition '%s' at 0x%"PRIx32,
+             s_upload_partition->label, s_upload_partition->address);
+
+    err = esp_ota_begin(s_upload_partition, OTA_WITH_SEQUENTIAL_WRITES,
+                        &s_upload_handle);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "OTA begin: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t ota_update_write(const void *buf, size_t len)
+{
+    return esp_ota_write(s_upload_handle, buf, len);
+}
+
+esp_err_t ota_update_finish(void)
+{
+    esp_err_t err = esp_ota_end(s_upload_handle);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "OTA end: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_ota_set_boot_partition(s_upload_partition);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Set boot partition: %s", esp_err_to_name(err));
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "Set boot partition failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_progress.status       = OTA_STATUS_DONE;
+    s_progress.progress_pct = 100;
+    s_in_progress           = false;
+    xSemaphoreGive(s_mutex);
+
+    ESP_LOGI(TAG, "OTA upload successful – rebooting in 3 s …");
+    return ESP_OK;
+}
+
+void ota_update_abort_upload(void)
+{
+    esp_ota_abort(s_upload_handle);
+    if (s_mutex) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_progress.status = OTA_STATUS_ERROR;
+        snprintf(s_progress.error_msg, sizeof(s_progress.error_msg),
+                 "Upload aborted");
+        s_in_progress = false;
+        xSemaphoreGive(s_mutex);
+    }
+}
+
+void ota_update_set_progress(int pct)
+{
+    if (s_mutex == NULL) {
+        return;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_progress.progress_pct = pct;
+    xSemaphoreGive(s_mutex);
 }

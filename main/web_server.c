@@ -1515,6 +1515,97 @@ static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+/* ── OTA upload handler (POST /api/ota/upload) ───────────────────── */
+
+#define OTA_UPLOAD_BUF_SIZE 4096
+
+static void ota_upload_restart_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
+}
+
+static esp_err_t api_ota_upload_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+
+    size_t total = req->content_len;
+    if (total == 0) {
+        ESP_LOGE(TAG, "OTA upload: missing Content-Length");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Content-Length required");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "OTA upload: %zu bytes incoming", total);
+
+    esp_err_t err = ota_update_begin();
+    if (err != ESP_OK) {
+        char resp[128];
+        int len = snprintf(resp, sizeof(resp),
+            "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, resp, len);
+    }
+
+    char *buf = malloc(OTA_UPLOAD_BUF_SIZE);
+    if (!buf) {
+        ota_update_abort_upload();
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    size_t received = 0;
+    bool ok = true;
+
+    while (received < total) {
+        size_t to_read = (total - received) < OTA_UPLOAD_BUF_SIZE
+                         ? (total - received) : OTA_UPLOAD_BUF_SIZE;
+        int r = httpd_req_recv(req, buf, to_read);
+        if (r <= 0) {
+            ESP_LOGE(TAG, "OTA upload: recv error %d after %zu bytes", r, received);
+            ok = false;
+            break;
+        }
+        err = ota_update_write(buf, (size_t)r);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA upload: write failed: %s", esp_err_to_name(err));
+            ok = false;
+            break;
+        }
+        received += (size_t)r;
+        int pct = (int)((int64_t)received * 100 / (int64_t)total);
+        ota_update_set_progress(pct > 100 ? 100 : pct);
+    }
+
+    free(buf);
+
+    if (!ok) {
+        ota_update_abort_upload();
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req,
+            "{\"ok\":false,\"error\":\"upload_failed\"}", -1);
+    }
+
+    err = ota_update_finish();
+    if (err != ESP_OK) {
+        char resp[128];
+        int len = snprintf(resp, sizeof(resp),
+            "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, resp, len);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", -1);
+
+    /* Spawn a tiny task that reboots after 3 s, giving the browser
+     * time to receive the response before the device disappears. */
+    xTaskCreate(ota_upload_restart_task, "ota_rst", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
 /* ── CO2 controller GET endpoint (/api/co2  GET) ─────────────────── */
 
 static esp_err_t api_co2_get_handler(httpd_req_t *req)
@@ -2077,6 +2168,13 @@ static const httpd_uri_t uri_api_ota_status = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_ota_upload = {
+    .uri      = "/api/ota/upload",
+    .method   = HTTP_POST,
+    .handler  = api_ota_upload_post_handler,
+    .user_ctx = NULL,
+};
+
 static const httpd_uri_t uri_api_heater_get = {
     .uri      = "/api/heater",
     .method   = HTTP_GET,
@@ -2213,6 +2311,9 @@ esp_err_t web_server_start(void)
     ssl_config.httpd.lru_purge_enable = true;
     /* Enable wildcard URI matching so /www/wildcard can serve embedded assets */
     ssl_config.httpd.uri_match_fn     = httpd_uri_match_wildcard;
+    /* Allow enough time for large OTA binary uploads over WiFi */
+    ssl_config.httpd.recv_wait_timeout = 30;
+    ssl_config.httpd.send_wait_timeout = 30;
 
     ssl_config.servercert     = server_cert_pem_start;
     ssl_config.servercert_len = (size_t)(server_cert_pem_end - server_cert_pem_start);
@@ -2233,6 +2334,9 @@ esp_err_t web_server_start(void)
     config.lru_purge_enable = true;
     /* Enable wildcard URI matching so /www/wildcard can serve embedded assets */
     config.uri_match_fn     = httpd_uri_match_wildcard;
+    /* Allow enough time for large OTA binary uploads over WiFi */
+    config.recv_wait_timeout = 30;
+    config.send_wait_timeout = 30;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
     esp_err_t ret = httpd_start(&s_server, &config);
@@ -2266,6 +2370,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_ddns_update);
     httpd_register_uri_handler(s_server, &uri_api_ota_post);
     httpd_register_uri_handler(s_server, &uri_api_ota_status);
+    httpd_register_uri_handler(s_server, &uri_api_ota_upload);
     httpd_register_uri_handler(s_server, &uri_api_heater_get);
     httpd_register_uri_handler(s_server, &uri_api_heater_post);
     httpd_register_uri_handler(s_server, &uri_api_co2_get);
