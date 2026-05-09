@@ -24,6 +24,7 @@
 #include "nvs_flash.h"
 #include "esp_netif_sntp.h"
 #include "esp_task_wdt.h"
+#include "esp_ota_ops.h"
 
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -268,7 +269,18 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to start display init task – continuing without display");
     }
 
-    /* ── 12. Main application loop ─────────────────────────────────── */
+    /* ── 12. Confirm OTA firmware as valid (enables auto-rollback) ── */
+    {
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        esp_ota_img_states_t state;
+        if (esp_ota_get_state_partition(running, &state) == ESP_OK &&
+            state == ESP_OTA_IMG_PENDING_VERIFY) {
+            esp_ota_mark_app_valid_cancel_rollback();
+            ESP_LOGI(TAG, "OTA: firmware validated – rollback cancelled");
+        }
+    }
+
+    /* ── 13. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
         /* ── Lazy web-server start after captive-portal reconnect ── */
