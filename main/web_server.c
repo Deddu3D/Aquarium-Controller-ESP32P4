@@ -21,6 +21,8 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -46,6 +48,181 @@ static const char *TAG = "web_srv";
 #ifndef CONFIG_LED_RAMP_DURATION_SEC
 #define CONFIG_LED_RAMP_DURATION_SEC 30
 #endif
+
+/* ── HTTP Basic Auth ─────────────────────────────────────────────── */
+
+#ifdef CONFIG_WEB_AUTH_ENABLE
+
+#ifndef CONFIG_WEB_AUTH_USERNAME
+#define CONFIG_WEB_AUTH_USERNAME "admin"
+#endif
+#ifndef CONFIG_WEB_AUTH_PASSWORD
+#define CONFIG_WEB_AUTH_PASSWORD "aquarium"
+#endif
+
+#define AUTH_NVS_NAMESPACE "web_auth"
+#define AUTH_NVS_KEY_USER  "username"
+#define AUTH_NVS_KEY_PASS  "password"
+
+/* Loaded once at server start; updated on POST /api/auth */
+static char s_auth_user[64];
+static char s_auth_pass[128];
+
+/**
+ * @brief Load credentials from NVS (falls back to Kconfig defaults).
+ */
+static void auth_load_credentials(void)
+{
+    strncpy(s_auth_user, CONFIG_WEB_AUTH_USERNAME, sizeof(s_auth_user) - 1);
+    s_auth_user[sizeof(s_auth_user) - 1] = '\0';
+    strncpy(s_auth_pass, CONFIG_WEB_AUTH_PASSWORD, sizeof(s_auth_pass) - 1);
+    s_auth_pass[sizeof(s_auth_pass) - 1] = '\0';
+
+    nvs_handle_t h;
+    if (nvs_open(AUTH_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return;
+    size_t len = sizeof(s_auth_user);
+    nvs_get_str(h, AUTH_NVS_KEY_USER, s_auth_user, &len);
+    len = sizeof(s_auth_pass);
+    nvs_get_str(h, AUTH_NVS_KEY_PASS, s_auth_pass, &len);
+    nvs_close(h);
+}
+
+/**
+ * @brief Persist credentials to NVS.
+ */
+static esp_err_t auth_save_credentials(const char *user, const char *pass)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(AUTH_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    nvs_set_str(h, AUTH_NVS_KEY_USER, user);
+    nvs_set_str(h, AUTH_NVS_KEY_PASS, pass);
+    nvs_commit(h);
+    nvs_close(h);
+    return ESP_OK;
+}
+
+/*
+ * Minimal Base64 decoder (RFC 4648, no line-wrapping).
+ * Returns number of decoded bytes on success, -1 on error.
+ */
+static int base64_decode(const char *in, size_t in_len,
+                         char *out, size_t out_size)
+{
+    static const signed char tbl[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    };
+    size_t j = 0;
+    for (size_t i = 0; i < in_len; i += 4) {
+        if (j + 3 >= out_size) return -1;
+        signed char v0 = (i   < in_len) ? tbl[(unsigned char)in[i]]   : 0;
+        signed char v1 = (i+1 < in_len) ? tbl[(unsigned char)in[i+1]] : 0;
+        signed char v2 = (i+2 < in_len) ? tbl[(unsigned char)in[i+2]] : 0;
+        signed char v3 = (i+3 < in_len) ? tbl[(unsigned char)in[i+3]] : 0;
+        if (v0 < 0 || v1 < 0) return -1;
+        out[j++] = (char)((v0 << 2) | (v1 >> 4));
+        if (i+2 < in_len && in[i+2] != '=') {
+            if (v2 < 0) return -1;
+            out[j++] = (char)((v1 << 4) | (v2 >> 2));
+        }
+        if (i+3 < in_len && in[i+3] != '=') {
+            if (v3 < 0) return -1;
+            out[j++] = (char)((v2 << 6) | v3);
+        }
+    }
+    if (j < out_size) out[j] = '\0';
+    return (int)j;
+}
+
+/**
+ * @brief Verify HTTP Basic Auth header.
+ *
+ * Sends a 401 response with WWW-Authenticate if credentials are missing
+ * or wrong.
+ *
+ * @return ESP_OK if authentication passed, ESP_FAIL otherwise.
+ */
+static esp_err_t check_auth(httpd_req_t *req)
+{
+    char auth_hdr[192] = {0};
+    if (httpd_req_get_hdr_value_str(req, "Authorization",
+                                    auth_hdr, sizeof(auth_hdr)) != ESP_OK) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_hdr(req, "WWW-Authenticate",
+                           "Basic realm=\"Aquarium Controller\"");
+        httpd_resp_send(req, "Authentication required", -1);
+        return ESP_FAIL;
+    }
+
+    /* Expect "Basic <base64>" */
+    if (strncmp(auth_hdr, "Basic ", 6) != 0) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_hdr(req, "WWW-Authenticate",
+                           "Basic realm=\"Aquarium Controller\"");
+        httpd_resp_send(req, "Authentication required", -1);
+        return ESP_FAIL;
+    }
+
+    char decoded[192];
+    int dlen = base64_decode(auth_hdr + 6, strlen(auth_hdr + 6),
+                             decoded, sizeof(decoded));
+    if (dlen <= 0) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_hdr(req, "WWW-Authenticate",
+                           "Basic realm=\"Aquarium Controller\"");
+        httpd_resp_send(req, "Authentication required", -1);
+        return ESP_FAIL;
+    }
+
+    /* decoded = "user:password" */
+    char *colon = strchr(decoded, ':');
+    if (colon == NULL) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_hdr(req, "WWW-Authenticate",
+                           "Basic realm=\"Aquarium Controller\"");
+        httpd_resp_send(req, "Authentication required", -1);
+        return ESP_FAIL;
+    }
+    *colon = '\0';
+    const char *req_user = decoded;
+    const char *req_pass = colon + 1;
+
+    if (strcmp(req_user, s_auth_user) != 0 ||
+        strcmp(req_pass, s_auth_pass) != 0) {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_hdr(req, "WWW-Authenticate",
+                           "Basic realm=\"Aquarium Controller\"");
+        httpd_resp_send(req, "Invalid credentials", -1);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+#define AUTH_CHECK(req) \
+    do { if (check_auth(req) != ESP_OK) return ESP_FAIL; } while (0)
+
+#else  /* CONFIG_WEB_AUTH_ENABLE not set */
+
+static void auth_load_credentials(void) {}
+#define AUTH_CHECK(req) ((void)0)
+
+#endif /* CONFIG_WEB_AUTH_ENABLE */
 
 static httpd_handle_t s_server = NULL;
 /* Embedded Web UI files generated by CMake EMBED_TXTFILES.
@@ -129,7 +306,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_CO2_BUF_SIZE      256
 #define JSON_TZ_BUF_SIZE       128
 #define JSON_FEEDING_BUF_SIZE  192
-#define JSON_SCENE_BUF_SIZE    256
+#define JSON_SCENE_BUF_SIZE    320
 #define JSON_DAILY_BUF_SIZE    256
 
 /* HTTP request body receive sizes */
@@ -148,7 +325,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
 /* Keep a generous limit for the current API set and future endpoint growth. */
-#define HTTP_MAX_URI_HANDLERS  40
+#define HTTP_MAX_URI_HANDLERS  45
 
 /* ── Embedded Web UI server (/ and /www/*) ───────────────────────────── */
 
@@ -181,6 +358,7 @@ static esp_err_t send_embedded_file(httpd_req_t *req,
  */
 static esp_err_t static_file_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     if (strcmp(req->uri, "/www/style.css") == 0) {
         return send_embedded_file(req, www_style_css_start, www_style_css_end, "text/css", true);
     }
@@ -196,6 +374,7 @@ static esp_err_t static_file_get_handler(httpd_req_t *req)
  */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     return send_embedded_file(req, www_index_html_start, www_index_html_end,
                               "text/html; charset=utf-8", false);
 }
@@ -204,6 +383,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
 static esp_err_t api_status_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     wifi_status_t ws;
     get_wifi_status(&ws);
 
@@ -256,6 +436,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
  */
 static esp_err_t api_health_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     bool wifi_ok = wifi_manager_is_connected();
 
     float temp_c = 0.0f;
@@ -297,6 +478,7 @@ static esp_err_t api_health_get_handler(httpd_req_t *req)
 
 static esp_err_t api_leds_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     uint8_t r, g, b;
     led_controller_get_color(&r, &g, &b);
 
@@ -392,6 +574,7 @@ static uint16_t clamp_u16(double v, double max)
 
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_LED_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -440,6 +623,7 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
 
 static esp_err_t api_led_schedule_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     led_schedule_config_t cfg = led_schedule_get_config();
 
     char buf[JSON_SCHED_BUF_SIZE];
@@ -475,6 +659,7 @@ static esp_err_t api_led_schedule_get_handler(httpd_req_t *req)
 
 static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_SCHED_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -544,6 +729,7 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
 
 static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     /* Heap-allocate: 5 presets × ~420 bytes each + wrapper ≈ 2500 bytes */
     const size_t buf_size = 4096;
     char *buf = malloc(buf_size);
@@ -616,6 +802,7 @@ static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
 
 static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_PRESETS_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -710,6 +897,7 @@ static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
 
 static esp_err_t api_temperature_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     float temp_c = 0.0f;
     bool valid = temperature_sensor_get(&temp_c);
 
@@ -727,6 +915,7 @@ static esp_err_t api_temperature_get_handler(httpd_req_t *req)
 
 static esp_err_t api_temp_history_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     /* Heap-allocate the sample buffer (~3.5 KB) */
     temp_sample_t *samples = malloc(
         TEMP_HISTORY_MAX_SAMPLES * sizeof(temp_sample_t));
@@ -770,6 +959,7 @@ static esp_err_t api_temp_history_get_handler(httpd_req_t *req)
 
 static esp_err_t api_temp_csv_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     temp_sample_t *samples = malloc(
         TEMP_HISTORY_MAX_SAMPLES * sizeof(temp_sample_t));
     if (samples == NULL) {
@@ -805,6 +995,7 @@ static esp_err_t api_temp_csv_get_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     telegram_config_t cfg = telegram_notify_get_config();
 
     char escaped_chatid[128];
@@ -859,6 +1050,7 @@ static esp_err_t api_telegram_get_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char *buf = malloc(POST_BODY_TG_SIZE);
     if (buf == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
@@ -937,6 +1129,7 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_test_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     esp_err_t err = telegram_notify_send(
         "\xf0\x9f\x90\x9f <b>Aquarium Controller</b>\n\n"
         "Test message received successfully!\n"
@@ -962,6 +1155,7 @@ static esp_err_t api_telegram_test_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_wc_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     telegram_notify_reset_water_change();
 
     char buf[64];
@@ -977,6 +1171,7 @@ static esp_err_t api_telegram_wc_handler(httpd_req_t *req)
 
 static esp_err_t api_telegram_fert_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     telegram_notify_reset_fertilizer();
 
     char buf[64];
@@ -992,6 +1187,7 @@ static esp_err_t api_telegram_fert_handler(httpd_req_t *req)
 
 static esp_err_t api_relays_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     relay_state_t relays[RELAY_COUNT];
     relay_controller_get_all(relays);
 
@@ -1041,6 +1237,7 @@ static esp_err_t api_relays_get_handler(httpd_req_t *req)
 
 static esp_err_t api_relays_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_RELAY_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1107,6 +1304,7 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
 
 static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     duckdns_config_t cfg = duckdns_get_config();
 
     char escaped_domain[128];
@@ -1136,6 +1334,7 @@ static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
 
 static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_DDNS_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1172,6 +1371,7 @@ static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
 
 static esp_err_t api_duckdns_update_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     esp_err_t err = duckdns_update_now();
 
     char raw_status[64];
@@ -1193,6 +1393,7 @@ static esp_err_t api_duckdns_update_handler(httpd_req_t *req)
 
 static esp_err_t api_heater_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     auto_heater_config_t cfg = auto_heater_get_config();
 
     char buf[256];
@@ -1214,6 +1415,7 @@ static esp_err_t api_heater_get_handler(httpd_req_t *req)
 
 static esp_err_t api_heater_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_RELAY_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1248,6 +1450,7 @@ static esp_err_t api_heater_post_handler(httpd_req_t *req)
  */
 static esp_err_t api_ota_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_DDNS_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1286,6 +1489,7 @@ static esp_err_t api_ota_post_handler(httpd_req_t *req)
  */
 static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     ota_progress_t p = ota_update_get_progress();
 
     static const char *const status_names[] = {
@@ -1314,6 +1518,7 @@ static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
 
 static esp_err_t api_co2_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     co2_config_t cfg = co2_controller_get_config();
 
     char buf[JSON_CO2_BUF_SIZE];
@@ -1335,6 +1540,7 @@ static esp_err_t api_co2_get_handler(httpd_req_t *req)
 
 static esp_err_t api_co2_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_CO2_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1365,6 +1571,7 @@ static esp_err_t api_co2_post_handler(httpd_req_t *req)
 
 static esp_err_t api_timezone_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char tz[TZ_STRING_MAX];
     timezone_manager_get(tz, sizeof(tz));
 
@@ -1382,6 +1589,7 @@ static esp_err_t api_timezone_get_handler(httpd_req_t *req)
 
 static esp_err_t api_timezone_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_TZ_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1410,6 +1618,7 @@ static esp_err_t api_timezone_post_handler(httpd_req_t *req)
 
 static esp_err_t api_feeding_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     feeding_config_t cfg = feeding_mode_get_config();
     bool active      = feeding_mode_is_active();
     int  remaining_s = feeding_mode_get_remaining_s();
@@ -1443,6 +1652,7 @@ static esp_err_t api_feeding_get_handler(httpd_req_t *req)
 
 static esp_err_t api_feeding_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_FEEDING_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1483,8 +1693,10 @@ static esp_err_t api_feeding_post_handler(httpd_req_t *req)
 
 static esp_err_t api_scene_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     led_scenes_config_t cfg = led_scenes_get_config();
     led_scene_t active = led_scenes_get_active();
+    float moon_frac = led_scenes_get_moon_phase();
 
     char buf[JSON_SCENE_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
@@ -1496,7 +1708,8 @@ static esp_err_t api_scene_get_handler(httpd_req_t *req)
         "\"moonlight_r\":%d,\"moonlight_g\":%d,\"moonlight_b\":%d,"
         "\"storm_intensity\":%d,"
         "\"clouds_depth\":%d,"
-        "\"clouds_period_s\":%d}",
+        "\"clouds_period_s\":%d,"
+        "\"moon_phase\":%.3f}",
         (int)active,
         cfg.sunrise_duration_min,
         cfg.sunrise_max_brightness,
@@ -1505,7 +1718,8 @@ static esp_err_t api_scene_get_handler(httpd_req_t *req)
         cfg.moonlight_r, cfg.moonlight_g, cfg.moonlight_b,
         cfg.storm_intensity,
         cfg.clouds_depth,
-        cfg.clouds_period_s);
+        cfg.clouds_period_s,
+        (double)moon_frac);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1520,6 +1734,7 @@ static esp_err_t api_scene_get_handler(httpd_req_t *req)
 
 static esp_err_t api_scene_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_SCENE_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1568,6 +1783,7 @@ static esp_err_t api_scene_post_handler(httpd_req_t *req)
 
 static esp_err_t api_daily_cycle_get_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     daily_cycle_config_t cfg = daily_cycle_get_config();
     daily_cycle_phase_t  phase = daily_cycle_get_phase();
     int sunrise_min = daily_cycle_get_sunrise_min();
@@ -1600,6 +1816,7 @@ static esp_err_t api_daily_cycle_get_handler(httpd_req_t *req)
 
 static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
 {
+    AUTH_CHECK(req);
     char buf[POST_BODY_DAILY_SIZE];
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -1626,14 +1843,77 @@ static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
     return api_daily_cycle_get_handler(req);
 }
 
+/* ── Factory reset endpoint (/api/factory_reset  POST) ──────────── */
+/**
+ * @brief Erase all NVS namespaces and reboot the device.
+ *
+ * This returns the device to factory defaults (WiFi credentials,
+ * relay names, LED schedule, Telegram config, etc. are all wiped).
+ * The client will not receive a response because the device reboots
+ * immediately after the erase.
+ */
+static esp_err_t api_factory_reset_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    ESP_LOGW(TAG, "Factory reset requested – erasing NVS and rebooting");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true,\"rebooting\":true}", -1);
+    /* Small delay so the HTTP response can be flushed before reboot */
+    vTaskDelay(pdMS_TO_TICKS(500));
+    nvs_flash_erase();
+    esp_restart();
+    return ESP_OK;
+}
+
+#ifdef CONFIG_WEB_AUTH_ENABLE
+/* ── Auth change endpoint (/api/auth  POST) ─────────────────────── */
+/**
+ * @brief Change the HTTP Basic Auth credentials at runtime.
+ *
+ * Body: {"username":"<new>","password":"<new>"}
+ * New credentials are stored in NVS and take effect immediately.
+ */
+static esp_err_t api_auth_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    char new_user[64] = {0};
+    char new_pass[128] = {0};
+    json_get_str(buf, "\"username\"", new_user, sizeof(new_user));
+    json_get_str(buf, "\"password\"", new_pass, sizeof(new_pass));
+
+    if (new_user[0] == '\0' || new_pass[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Both 'username' and 'password' are required");
+        return ESP_FAIL;
+    }
+
+    strncpy(s_auth_user, new_user, sizeof(s_auth_user) - 1);
+    s_auth_user[sizeof(s_auth_user) - 1] = '\0';
+    strncpy(s_auth_pass, new_pass, sizeof(s_auth_pass) - 1);
+    s_auth_pass[sizeof(s_auth_pass) - 1] = '\0';
+
+    auth_save_credentials(s_auth_user, s_auth_pass);
+    ESP_LOGI(TAG, "Web auth credentials updated for user '%s'", s_auth_user);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+#endif /* CONFIG_WEB_AUTH_ENABLE */
+
 static const httpd_uri_t uri_root = {
     .uri      = "/",
     .method   = HTTP_GET,
     .handler  = root_get_handler,
     .user_ctx = NULL,
 };
-
-static const httpd_uri_t uri_api_status = {
     .uri      = "/api/status",
     .method   = HTTP_GET,
     .handler  = api_status_get_handler,
@@ -1886,6 +2166,22 @@ static const httpd_uri_t uri_www_static = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_factory_reset = {
+    .uri      = "/api/factory_reset",
+    .method   = HTTP_POST,
+    .handler  = api_factory_reset_handler,
+    .user_ctx = NULL,
+};
+
+#ifdef CONFIG_WEB_AUTH_ENABLE
+static const httpd_uri_t uri_api_auth_post = {
+    .uri      = "/api/auth",
+    .method   = HTTP_POST,
+    .handler  = api_auth_post_handler,
+    .user_ctx = NULL,
+};
+#endif
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -1902,6 +2198,9 @@ esp_err_t web_server_start(void)
         ESP_LOGW(TAG, "Server already running");
         return ESP_OK;
     }
+
+    /* Load HTTP Basic Auth credentials (NVS → Kconfig fallback) */
+    auth_load_credentials();
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     /* ── HTTPS mode ─────────────────────────────────────────────── */
@@ -1976,6 +2275,10 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_scene_post);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
+    httpd_register_uri_handler(s_server, &uri_api_factory_reset);
+#ifdef CONFIG_WEB_AUTH_ENABLE
+    httpd_register_uri_handler(s_server, &uri_api_auth_post);
+#endif
     /* Wildcard handler registered last so exact-match API routes take priority */
     httpd_register_uri_handler(s_server, &uri_www_static);
 
@@ -1984,6 +2287,11 @@ esp_err_t web_server_start(void)
     ESP_LOGI(TAG, "Note: self-signed cert will trigger a browser security warning");
 #else
     ESP_LOGI(TAG, "HTTP server started – open http://<device-ip>/ in a browser");
+#endif
+#ifdef CONFIG_WEB_AUTH_ENABLE
+    ESP_LOGI(TAG, "HTTP Basic Auth enabled – username: %s", s_auth_user);
+#else
+    ESP_LOGW(TAG, "HTTP Basic Auth DISABLED – set CONFIG_WEB_AUTH_ENABLE=y for security");
 #endif
     return ESP_OK;
 }

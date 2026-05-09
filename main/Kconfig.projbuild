@@ -16,6 +16,36 @@ menu "Aquarium WiFi Settings"
 
 endmenu
 
+menu "Aquarium Web Authentication"
+
+    config WEB_AUTH_ENABLE
+        bool "Enable HTTP Basic Authentication for the web interface"
+        default y
+        help
+            Protects the REST API and Web UI with an HTTP Basic Auth
+            username / password check.  Highly recommended when DuckDNS
+            or any port-forwarding is active.  The password can be changed
+            at runtime via /api/auth (POST) and is stored in NVS.
+
+    config WEB_AUTH_USERNAME
+        string "Default web UI username"
+        default "admin"
+        depends on WEB_AUTH_ENABLE
+        help
+            HTTP Basic Auth username applied at first boot (before any
+            runtime override is saved in NVS).
+
+    config WEB_AUTH_PASSWORD
+        string "Default web UI password"
+        default "aquarium"
+        depends on WEB_AUTH_ENABLE
+        help
+            HTTP Basic Auth password applied at first boot (before any
+            runtime override is saved in NVS).  Change this to a strong
+            password, especially if the device is exposed to the internet.
+
+endmenu
+
 menu "Aquarium Timezone Settings"
 
     config AQUARIUM_DEFAULT_TZ
@@ -183,6 +213,17 @@ menu "Aquarium Display Settings"
             GPIO used to enable/disable the panel backlight.  Set to -1 if
             the backlight is wired permanently on or controlled by the panel
             itself (most Waveshare 4-DSI-TOUCH-A configurations).
+
+    config DISPLAY_BACKLIGHT_TIMEOUT_MIN
+        int "Backlight inactivity timeout (minutes, 0 = never)"
+        default 5
+        range 0 60
+        depends on DISPLAY_ENABLED
+        help
+            Number of minutes without a touch event after which the backlight
+            is switched off automatically.  A touch will restore it.
+            Requires DISPLAY_BACKLIGHT_GPIO to be set to a valid GPIO number.
+            Set to 0 to disable the auto-off feature entirely.
 
 endmenu
 

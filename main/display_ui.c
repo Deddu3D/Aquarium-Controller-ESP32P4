@@ -338,6 +338,44 @@ static void lvgl_flush_cb(lv_display_t *disp,
     lv_display_flush_ready(disp);
 }
 
+/* ── Backlight auto-off ────────────────────────────────────────────── */
+#if CONFIG_DISPLAY_BACKLIGHT_GPIO >= 0 && CONFIG_DISPLAY_BACKLIGHT_TIMEOUT_MIN > 0
+
+static volatile int64_t s_last_touch_us = 0;   /* µs from esp_timer_get_time() */
+static volatile bool    s_backlight_on  = true;
+
+static void backlight_set(bool on)
+{
+    if (s_backlight_on == on) return;
+    s_backlight_on = on;
+    gpio_set_level(CONFIG_DISPLAY_BACKLIGHT_GPIO, on ? 1 : 0);
+    ESP_LOGI(TAG, "Backlight %s (inactivity timeout)", on ? "ON" : "OFF");
+}
+
+/** Called from the LVGL task every cycle; checks inactivity timeout. */
+static void backlight_tick(void)
+{
+    int64_t now = esp_timer_get_time();
+    int64_t timeout_us = (int64_t)CONFIG_DISPLAY_BACKLIGHT_TIMEOUT_MIN * 60 * 1000000LL;
+    if (s_backlight_on && (now - s_last_touch_us) > timeout_us) {
+        backlight_set(false);
+    }
+}
+
+/** Called whenever a touch is detected; resets the inactivity timer. */
+static void backlight_touch_wakeup(void)
+{
+    s_last_touch_us = esp_timer_get_time();
+    backlight_set(true);
+}
+
+#else  /* backlight auto-off disabled */
+
+static inline void backlight_tick(void)       {}
+static inline void backlight_touch_wakeup(void) {}
+
+#endif /* backlight auto-off */
+
 static void lvgl_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     esp_lcd_touch_point_data_t points[1];
@@ -348,6 +386,7 @@ static void lvgl_touch_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->point.x = (int32_t)points[0].x;
         data->point.y = (int32_t)points[0].y;
         data->state   = LV_INDEV_STATE_PRESSED;
+        backlight_touch_wakeup();
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
@@ -365,6 +404,7 @@ static void lvgl_task(void *arg)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         uint32_t next_ms = lv_timer_handler();
         xSemaphoreGive(s_mutex);
+        backlight_tick();
         vTaskDelay(pdMS_TO_TICKS(next_ms > 0 && next_ms < 100 ? next_ms : 10));
     }
 }
@@ -1950,7 +1990,14 @@ esp_err_t display_ui_init(void)
                             LVGL_TASK_STACK, NULL,
                             LVGL_TASK_PRIO, NULL, 1);
 
+    /* Initialise backlight inactivity timer so it starts from now */
+    backlight_touch_wakeup();
+
     ESP_LOGI(TAG, "Display UI ready – 720×720 MIPI-DSI, new IoT dashboard");
+#if CONFIG_DISPLAY_BACKLIGHT_GPIO >= 0 && CONFIG_DISPLAY_BACKLIGHT_TIMEOUT_MIN > 0
+    ESP_LOGI(TAG, "Backlight auto-off enabled: %d min inactivity timeout (GPIO %d)",
+             CONFIG_DISPLAY_BACKLIGHT_TIMEOUT_MIN, CONFIG_DISPLAY_BACKLIGHT_GPIO);
+#endif
     return ESP_OK;
 }
 

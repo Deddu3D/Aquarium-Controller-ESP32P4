@@ -10,6 +10,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,6 +24,37 @@
 #include "led_controller.h"
 
 static const char *TAG = "led_scenes";
+
+/* ── Moon-phase helper ───────────────────────────────────────────── */
+/**
+ * @brief Return the current lunar-phase illumination fraction [0.0, 1.0].
+ *
+ * 0.0 = new moon (no light)
+ * 1.0 = full moon (full brightness)
+ *
+ * Algorithm: Conway / Meeus simplified.  Accuracy ±1 day, sufficient for
+ * aquarium mood lighting.  No external dependencies.
+ */
+static float moon_phase_fraction(void)
+{
+    time_t now = time(NULL);
+    /* Fallback: if clock not synced return a constant half-moon */
+    struct tm ti;
+    localtime_r(&now, &ti);
+    if (ti.tm_year < (2024 - 1900)) return 0.5f;
+
+    /* Days since J2000.0 epoch (2000-01-01 12:00 UTC) */
+    double jd = (double)now / 86400.0 + 2440587.5 - 2451545.0;
+
+    /* Synodic month ≈ 29.53059 days */
+    double phase_frac = fmod(jd / 29.53059, 1.0);
+    if (phase_frac < 0.0) phase_frac += 1.0;
+
+    /* Convert to illumination: 0.0 at new moon, 1.0 at full (day 14.77) */
+    double illumination = (1.0 - cos(2.0 * 3.14159265358979 * phase_frac)) / 2.0;
+
+    return (float)illumination;
+}
 
 /* ── Scene task parameters ───────────────────────────────────────── */
 
@@ -226,18 +258,26 @@ static void scene_task(void *arg)
         if (duration_ticks < 1) duration_ticks = 1;
         t_step = 1.0f / (float)duration_ticks;
         break;
-    case LED_SCENE_MOONLIGHT:
+    case LED_SCENE_MOONLIGHT: {
+        /* Modulate brightness by current lunar phase (0 = new, 1 = full) */
+        float moon_frac = moon_phase_fraction();
+        /* Ensure at least 10 % brightness so something is always visible */
+        float moon_scale = 0.10f + 0.90f * moon_frac;
+        uint8_t moon_br = (uint8_t)(cfg.moonlight_brightness * moon_scale);
+        if (moon_br < 1) moon_br = 1;
+
         /* Static – just set once then idle */
         led_controller_cancel_fade();
         led_controller_set_color(cfg.moonlight_r,
                                  cfg.moonlight_g,
                                  cfg.moonlight_b);
-        led_controller_set_brightness(cfg.moonlight_brightness);
+        led_controller_set_brightness(moon_br);
         if (!led_controller_is_on()) led_controller_on();
-        ESP_LOGI(TAG, "Moonlight active (br=%d RGB=%d,%d,%d)",
-                 cfg.moonlight_brightness,
+        ESP_LOGI(TAG, "Moonlight active (br=%d/cfg=%d moon_frac=%.2f RGB=%d,%d,%d)",
+                 moon_br, cfg.moonlight_brightness, (double)moon_frac,
                  cfg.moonlight_r, cfg.moonlight_g, cfg.moonlight_b);
         break;
+    }
     case LED_SCENE_CLOUDS: {
         /* Record current brightness as the base */
         base_br = led_controller_get_brightness();
@@ -484,4 +524,9 @@ led_scene_t led_scenes_get_active(void)
 bool led_scenes_is_running(void)
 {
     return led_scenes_get_active() != LED_SCENE_NONE;
+}
+
+float led_scenes_get_moon_phase(void)
+{
+    return moon_phase_fraction();
 }
