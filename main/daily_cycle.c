@@ -208,7 +208,8 @@ daily_cycle_config_t daily_cycle_get_config(void)
 {
     daily_cycle_config_t copy;
     if (s_mutex == NULL) {
-        return s_config;   /* init not yet called */
+        memset(&copy, 0, sizeof(copy));
+        return copy;   /* not yet initialised */
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     copy = s_config;
