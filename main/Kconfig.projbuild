@@ -231,7 +231,7 @@ menu "Aquarium HTTPS Settings"
 
     config AQUARIUM_HTTPS_ENABLE
         bool "Enable HTTPS for the web server"
-        default y
+        default n
         help
             When enabled, the web server uses TLS (HTTPS) instead of plain HTTP.
             server.crt and server.key are embedded from the main/ directory.
@@ -239,6 +239,8 @@ menu "Aquarium HTTPS Settings"
             security warning which must be accepted once (click "Advanced" →
             "Proceed to …").
             Protects Telegram credentials and WiFi passwords from LAN sniffing.
+            NOTE: TLS handshakes are CPU-intensive on embedded targets – disabling
+            HTTPS (default) gives a much faster web UI for local-network use.
 
 endmenu
 
