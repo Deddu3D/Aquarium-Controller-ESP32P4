@@ -232,7 +232,7 @@ void auto_heater_tick(void)
             snprintf(msg, sizeof(msg),
                      "\xe2\x9a\xa0\xef\xb8\x8f <b>ALLARME RISCALDATORE RUNAWAY</b>\n"
                      "Relay %d acceso da %d minuti\n"
-                     "Temperatura: %.1f\xc2\xb0C (soglia: %.1f\xc2\xb0C)\n"
+                     "Temperatura: %.1f\xc2\xb0" "C (soglia: %.1f\xc2\xb0" "C)\n"
                      "Riscaldatore automatico DISABILITATO.",
                      cfg.relay_index + 1, on_minutes,
                      (double)temp_c, (double)high_threshold);
