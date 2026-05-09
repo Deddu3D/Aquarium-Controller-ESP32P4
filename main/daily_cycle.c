@@ -93,14 +93,18 @@ static esp_err_t nvs_save(void)
  *        local midnight) given the sun times and scene durations.
  *
  * Phase boundaries:
- *   Night      : [0,            sunrise)
- *   Sunrise    : [sunrise,      sunrise + sr_dur)
- *   Morning    : [sunrise+dur,  solar_noon - 60)   – skipped on short days
- *   Noon       : [solar_noon-60, solar_noon + 60)
- *   Afternoon  : [solar_noon+60, sunset)
- *   Sunset     : [sunset,        sunset + ss_dur)
- *   Evening    : [sunset+dur,    sunset + dur + 60)
- *   Night      : [sunset+dur+60, 1440)
+ *   Night      : [0,                sunrise)
+ *   Sunrise    : [sunrise,          sunrise + sr_dur)
+ *   Morning    : [sunrise+sr_dur,   solar_noon - 60)   – skipped on short days
+ *   Noon       : [solar_noon-60,    solar_noon + 60)
+ *   Afternoon  : [solar_noon+60,    sunset - ss_dur)   – skipped if sunset scene
+ *                                                        overlaps noon window
+ *   Sunset     : [sunset - ss_dur,  sunset]            – scene ends at actual sunset
+ *   Night      : (sunset,           1440)
+ *
+ * The sunset scene is started ss_dur minutes BEFORE the astronomical sunset so
+ * that it finishes exactly when the sun reaches the horizon.  LEDs turn off
+ * immediately after that minute (no separate evening twilight phase).
  */
 static daily_cycle_phase_t compute_phase(int cur,
                                          int sr, int ss,
@@ -109,15 +113,18 @@ static daily_cycle_phase_t compute_phase(int cur,
     int noon     = (sr + ss) / 2;
     int morn_end = noon - 60;   /* end of morning = 1 h before solar noon */
     int noon_end = noon + 60;   /* end of noon    = 1 h after  solar noon */
+    int ss_start = ss - ss_dur; /* sunset scene begins ss_dur min before actual sunset */
 
     if (cur < sr)                                               return DAILY_PHASE_NIGHT;
     if (cur < sr + sr_dur)                                      return DAILY_PHASE_SUNRISE;
     /* Show MORNING only if there is a gap between sunrise end and noon window */
     if (morn_end > sr + sr_dur && cur < morn_end)               return DAILY_PHASE_MORNING;
     if (cur < noon_end)                                         return DAILY_PHASE_NOON;
-    if (cur < ss)                                               return DAILY_PHASE_AFTERNOON;
-    if (cur < ss + ss_dur)                                      return DAILY_PHASE_SUNSET;
-    if (cur < ss + ss_dur + 60)                                 return DAILY_PHASE_EVENING;
+    /* Show AFTERNOON only if sunset scene doesn't overlap the noon window */
+    if (ss_start > noon_end && cur < ss_start)                  return DAILY_PHASE_AFTERNOON;
+    /* Sunset scene: closed interval [ss_start, ss] – LEDs on at ss, off at ss+1 */
+    if (cur <= ss)                                              return DAILY_PHASE_SUNSET;
+    /* After actual sunset → night immediately (LEDs off) */
     return DAILY_PHASE_NIGHT;
 }
 
