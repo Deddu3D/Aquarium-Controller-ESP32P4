@@ -2,21 +2,18 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager
- * Mounts a FAT-formatted microSD card via the SDMMC peripheral (slot 1,
- * GPIO matrix, configurable 1-bit/4-bit mode) and exposes helpers for configuration
- * backup/restore.  All log and data files written by other modules live
- * under the /sdcard mount point.
+ * Mounts a FAT-formatted microSD card via the SPI2 peripheral (SD-SPI mode)
+ * and exposes helpers for configuration backup/restore.  All log and data
+ * files written by other modules live under the /sdcard mount point.
  *
- * SDMMC_HOST_SLOT_1 (GPIO-matrix-routable) is used for the SD card.
- * SDMMC_HOST_SLOT_0 (fixed IOMUX pads) is already occupied by the
- * esp_hosted WiFi coprocessor SDIO transport (GPIO 14-19).
- * Pin mapping for the onboard TF slot:
- *   SDMMC1_CLK = GPIO 43
- *   SDMMC1_CMD = GPIO 44
- *   SDMMC1_D0  = GPIO 39
- *   SDMMC1_D1  = GPIO 40
- *   SDMMC1_D2  = GPIO 41
- *   SDMMC1_D3  = GPIO 42
+ * SPI2 mode is used because the ESP-IDF v6.0 "SD_HOST" controller pool is
+ * fully consumed by the esp_hosted WiFi coprocessor SDIO transport, making
+ * SDMMC mode unavailable for the onboard TF slot.
+ * Pin mapping for the onboard TF slot (SPI mode):
+ *   SPI2_SCLK (CLK) = GPIO 43
+ *   SPI2_MOSI (CMD) = GPIO 44
+ *   SPI2_MISO (D0)  = GPIO 39
+ *   SPI2_CS   (D3)  = GPIO 42
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -69,8 +66,8 @@ typedef struct {
 /**
  * @brief Initialise the SD card subsystem.
  *
- * Initialises the SDMMC1 host, configures the slot based on Kconfig and mounts
- * the FAT filesystem at /sdcard.  Creates the logs/ and config/
+ * Initialises the SPI2 bus, configures the SD-SPI device based on Kconfig
+ * and mounts the FAT filesystem at /sdcard.  Creates the logs/ and config/
  * subdirectories if they do not exist.
  *
  * This function is intentionally non-fatal: if no card is present or
@@ -80,7 +77,7 @@ typedef struct {
  * @return
  *   - ESP_OK        on success.
  *   - ESP_ERR_NOT_FOUND  if CONFIG_SD_CARD_ENABLED is false (skipped).
- *   - Other error codes from the SDMMC / FAT layer on hardware failure.
+ *   - Other error codes from the SPI / FAT layer on hardware failure.
  */
 esp_err_t sd_card_init(void);
 
