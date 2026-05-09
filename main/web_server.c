@@ -109,7 +109,7 @@ static esp_err_t auth_save_credentials(const char *user, const char *pass)
 static int base64_decode(const char *in, size_t in_len,
                          char *out, size_t out_size)
 {
-    static const char tbl[256] = {
+    static const signed char tbl[256] = {
         -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
         -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
         -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
@@ -130,10 +130,10 @@ static int base64_decode(const char *in, size_t in_len,
     size_t j = 0;
     for (size_t i = 0; i < in_len; i += 4) {
         if (j + 3 >= out_size) return -1;
-        char v0 = (i   < in_len) ? tbl[(unsigned char)in[i]]   : 0;
-        char v1 = (i+1 < in_len) ? tbl[(unsigned char)in[i+1]] : 0;
-        char v2 = (i+2 < in_len) ? tbl[(unsigned char)in[i+2]] : 0;
-        char v3 = (i+3 < in_len) ? tbl[(unsigned char)in[i+3]] : 0;
+        signed char v0 = (i   < in_len) ? tbl[(unsigned char)in[i]]   : 0;
+        signed char v1 = (i+1 < in_len) ? tbl[(unsigned char)in[i+1]] : 0;
+        signed char v2 = (i+2 < in_len) ? tbl[(unsigned char)in[i+2]] : 0;
+        signed char v3 = (i+3 < in_len) ? tbl[(unsigned char)in[i+3]] : 0;
         if (v0 < 0 || v1 < 0) return -1;
         out[j++] = (char)((v0 << 2) | (v1 >> 4));
         if (i+2 < in_len && in[i+2] != '=') {
