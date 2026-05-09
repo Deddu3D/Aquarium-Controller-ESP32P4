@@ -26,10 +26,11 @@ static const char *TAG = "daily_cycle";
 
 /* ── NVS keys ────────────────────────────────────────────────────── */
 
-#define NVS_NS           "daily_cycle"
-#define NVS_KEY_ENABLED  "enabled"
-#define NVS_KEY_LAT      "lat"   /* stored as int32_t scaled by 10000 */
-#define NVS_KEY_LON      "lon"   /* stored as int32_t scaled by 10000 */
+#define NVS_NS              "daily_cycle"
+#define NVS_KEY_ENABLED     "enabled"
+#define NVS_KEY_LAT         "lat"         /* stored as int32_t scaled by 10000 */
+#define NVS_KEY_LON         "lon"         /* stored as int32_t scaled by 10000 */
+#define NVS_KEY_MOONLIGHT   "moon_dur"    /* moonlight duration in minutes     */
 
 /* ── Kconfig defaults ────────────────────────────────────────────── */
 
@@ -39,14 +40,18 @@ static const char *TAG = "daily_cycle";
 #ifndef CONFIG_DAILY_CYCLE_LONGITUDE_E4
 #define CONFIG_DAILY_CYCLE_LONGITUDE_E4   91900   /*  9.19 E - Milan, Italy */
 #endif
+#ifndef CONFIG_DAILY_CYCLE_MOONLIGHT_DURATION_MIN
+#define CONFIG_DAILY_CYCLE_MOONLIGHT_DURATION_MIN  60
+#endif
 
 /* ── Private state ───────────────────────────────────────────────── */
 
 static SemaphoreHandle_t   s_mutex   = NULL;
 static daily_cycle_config_t s_config = {
-    .enabled   = false,
-    .latitude  = (float)CONFIG_DAILY_CYCLE_LATITUDE_E4  / 10000.0f,
-    .longitude = (float)CONFIG_DAILY_CYCLE_LONGITUDE_E4 / 10000.0f,
+    .enabled                = false,
+    .latitude               = (float)CONFIG_DAILY_CYCLE_LATITUDE_E4  / 10000.0f,
+    .longitude              = (float)CONFIG_DAILY_CYCLE_LONGITUDE_E4 / 10000.0f,
+    .moonlight_duration_min = CONFIG_DAILY_CYCLE_MOONLIGHT_DURATION_MIN,
 };
 
 /* Sentinel value that guarantees the first tick re-evaluates the phase */
@@ -65,9 +70,10 @@ static void nvs_load(void)
 
     uint8_t u8;
     int32_t i32;
-    if (nvs_get_u8 (h, NVS_KEY_ENABLED, &u8)  == ESP_OK) s_config.enabled   = (bool)u8;
-    if (nvs_get_i32(h, NVS_KEY_LAT,     &i32) == ESP_OK) s_config.latitude   = (float)i32 / 10000.0f;
-    if (nvs_get_i32(h, NVS_KEY_LON,     &i32) == ESP_OK) s_config.longitude  = (float)i32 / 10000.0f;
+    if (nvs_get_u8 (h, NVS_KEY_ENABLED,   &u8)  == ESP_OK) s_config.enabled                = (bool)u8;
+    if (nvs_get_i32(h, NVS_KEY_LAT,       &i32) == ESP_OK) s_config.latitude                = (float)i32 / 10000.0f;
+    if (nvs_get_i32(h, NVS_KEY_LON,       &i32) == ESP_OK) s_config.longitude               = (float)i32 / 10000.0f;
+    if (nvs_get_i32(h, NVS_KEY_MOONLIGHT, &i32) == ESP_OK) s_config.moonlight_duration_min  = (int)i32;
 
     nvs_close(h);
 }
@@ -78,9 +84,10 @@ static esp_err_t nvs_save(void)
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
 
-    nvs_set_u8 (h, NVS_KEY_ENABLED, (uint8_t)s_config.enabled);
-    nvs_set_i32(h, NVS_KEY_LAT,     (int32_t)(s_config.latitude  * 10000.0f));
-    nvs_set_i32(h, NVS_KEY_LON,     (int32_t)(s_config.longitude * 10000.0f));
+    nvs_set_u8 (h, NVS_KEY_ENABLED,   (uint8_t)s_config.enabled);
+    nvs_set_i32(h, NVS_KEY_LAT,       (int32_t)(s_config.latitude  * 10000.0f));
+    nvs_set_i32(h, NVS_KEY_LON,       (int32_t)(s_config.longitude * 10000.0f));
+    nvs_set_i32(h, NVS_KEY_MOONLIGHT, (int32_t)s_config.moonlight_duration_min);
     nvs_commit(h);
     nvs_close(h);
     return ESP_OK;
@@ -100,20 +107,23 @@ static esp_err_t nvs_save(void)
  *   Afternoon  : [solar_noon+60,    sunset - ss_dur)   – skipped if sunset scene
  *                                                        overlaps noon window
  *   Sunset     : [sunset - ss_dur,  sunset]            – scene ends at actual sunset
- *   Night      : (sunset,           1440)
+ *   Evening    : [sunset+1,         sunset + moon_dur) – moonlight phase
+ *   Night      : (sunset+moon_dur,  1440)
  *
  * The sunset scene is started ss_dur minutes BEFORE the astronomical sunset so
- * that it finishes exactly when the sun reaches the horizon.  LEDs turn off
- * immediately after that minute (no separate evening twilight phase).
+ * that it finishes exactly when the sun reaches the horizon.  After that, a
+ * dim moonlight effect runs for moon_dur minutes before LEDs turn off.
  */
 static daily_cycle_phase_t compute_phase(int cur,
                                          int sr, int ss,
-                                         int sr_dur, int ss_dur)
+                                         int sr_dur, int ss_dur,
+                                         int moon_dur)
 {
     int noon     = (sr + ss) / 2;
     int morn_end = noon - 60;   /* end of morning = 1 h before solar noon */
     int noon_end = noon + 60;   /* end of noon    = 1 h after  solar noon */
     int ss_start = ss - ss_dur; /* sunset scene begins ss_dur min before actual sunset */
+    int moon_end = ss + moon_dur; /* moonlight ends moon_dur min after actual sunset */
 
     if (cur < sr)                                               return DAILY_PHASE_NIGHT;
     if (cur < sr + sr_dur)                                      return DAILY_PHASE_SUNRISE;
@@ -124,7 +134,9 @@ static daily_cycle_phase_t compute_phase(int cur,
     if (ss_start > noon_end && cur < ss_start)                  return DAILY_PHASE_AFTERNOON;
     /* Sunset scene: closed interval [ss_start, ss] – LEDs on at ss, off at ss+1 */
     if (cur <= ss)                                              return DAILY_PHASE_SUNSET;
-    /* After actual sunset → night immediately (LEDs off) */
+    /* Moonlight / evening phase immediately after sunset */
+    if (moon_dur > 0 && cur < moon_end)                         return DAILY_PHASE_EVENING;
+    /* After moonlight → night (LEDs off) */
     return DAILY_PHASE_NIGHT;
 }
 
@@ -182,12 +194,10 @@ static void apply_phase(daily_cycle_phase_t phase)
         break;
 
     case DAILY_PHASE_EVENING:
-        /* Very dim warm orange – natural twilight glow */
-        led_scenes_stop();
-        led_controller_cancel_fade();
-        led_controller_set_color(180, 60, 10);
-        led_controller_set_brightness(30);
-        if (!led_controller_is_on()) led_controller_on();
+        /* Moonlight – dim blue/violet night light for nocturnal fish */
+        if (!led_scenes_is_running()) {
+            led_scenes_start(LED_SCENE_MOONLIGHT);
+        }
         break;
 
     default:
@@ -206,8 +216,9 @@ esp_err_t daily_cycle_init(void)
     }
 
     nvs_load();
-    ESP_LOGI(TAG, "Daily cycle initialised (enabled=%d lat=%.4f lon=%.4f)",
-             (int)s_config.enabled, s_config.latitude, s_config.longitude);
+    ESP_LOGI(TAG, "Daily cycle initialised (enabled=%d lat=%.4f lon=%.4f moonlight=%dmin)",
+             (int)s_config.enabled, s_config.latitude, s_config.longitude,
+             s_config.moonlight_duration_min);
     return ESP_OK;
 }
 
@@ -230,7 +241,6 @@ esp_err_t daily_cycle_set_config(const daily_cycle_config_t *cfg)
     if (cfg->latitude  < -90.0f  || cfg->latitude  > 90.0f)  return ESP_ERR_INVALID_ARG;
     if (cfg->longitude < -180.0f || cfg->longitude > 180.0f) return ESP_ERR_INVALID_ARG;
     if (s_mutex == NULL) return ESP_ERR_INVALID_STATE;
-
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool was_enabled = s_config.enabled;
     s_config = *cfg;
@@ -324,7 +334,8 @@ void daily_cycle_tick(void)
         sun_snap.sunrise_min,
         sun_snap.sunset_min,
         (int)scene_cfg.sunrise_duration_min,
-        (int)scene_cfg.sunset_duration_min);
+        (int)scene_cfg.sunset_duration_min,
+        cfg.moonlight_duration_min);
 
     /* ── 4. Apply phase on change ────────────────────────────────── */
     if (phase != prev_phase) {
@@ -332,7 +343,9 @@ void daily_cycle_tick(void)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_phase = phase;
         xSemaphoreGive(s_mutex);
-    } else if (phase == DAILY_PHASE_SUNRISE || phase == DAILY_PHASE_SUNSET) {
+    } else if (phase == DAILY_PHASE_SUNRISE ||
+               phase == DAILY_PHASE_SUNSET  ||
+               phase == DAILY_PHASE_EVENING) {
         /* Re-start scene if it finished or was stopped externally */
         if (!led_scenes_is_running()) {
             apply_phase(phase);

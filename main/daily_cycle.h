@@ -36,13 +36,13 @@ extern "C" {
 /* ── Phase identifiers ──────────────────────────────────────────── */
 
 typedef enum {
-    DAILY_PHASE_NIGHT     = 0, /**< Before sunrise / after sunset: LEDs off    */
-    DAILY_PHASE_SUNRISE   = 1, /**< Sunrise colour ramp (LED_SCENE_SUNRISE)    */
-    DAILY_PHASE_MORNING   = 2, /**< Post-sunrise warm daylight                 */
-    DAILY_PHASE_NOON      = 3, /**< Midday full-brightness white               */
-    DAILY_PHASE_AFTERNOON = 4, /**< Pre-sunset warm white                      */
-    DAILY_PHASE_SUNSET    = 5, /**< Sunset colour ramp (LED_SCENE_SUNSET)      */
-    DAILY_PHASE_EVENING   = 6, /**< Reserved – not triggered by the daily cycle */
+    DAILY_PHASE_NIGHT     = 0, /**< Before sunrise / after moonlight: LEDs off  */
+    DAILY_PHASE_SUNRISE   = 1, /**< Sunrise colour ramp (LED_SCENE_SUNRISE)     */
+    DAILY_PHASE_MORNING   = 2, /**< Post-sunrise warm daylight                  */
+    DAILY_PHASE_NOON      = 3, /**< Midday full-brightness white                */
+    DAILY_PHASE_AFTERNOON = 4, /**< Pre-sunset warm white                       */
+    DAILY_PHASE_SUNSET    = 5, /**< Sunset colour ramp (LED_SCENE_SUNSET)       */
+    DAILY_PHASE_EVENING   = 6, /**< Moonlight phase after sunset (LED_SCENE_MOONLIGHT) */
 } daily_cycle_phase_t;
 
 /* ── Configuration ──────────────────────────────────────────────── */
@@ -51,9 +51,11 @@ typedef enum {
  * @brief Daily cycle configuration (NVS-persisted).
  */
 typedef struct {
-    bool  enabled;    /**< true = module actively controls the LED strip       */
-    float latitude;   /**< Geographic latitude  in decimal degrees (N+, S-)   */
-    float longitude;  /**< Geographic longitude in decimal degrees (E+, W-)   */
+    bool  enabled;                /**< true = module actively controls the LED strip       */
+    float latitude;               /**< Geographic latitude  in decimal degrees (N+, S-)   */
+    float longitude;              /**< Geographic longitude in decimal degrees (E+, W-)   */
+    int   moonlight_duration_min; /**< Minutes of moonlight (DAILY_PHASE_EVENING) after   */
+                                  /**< astronomical sunset (0 = disabled, default 60)     */
 } daily_cycle_config_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */

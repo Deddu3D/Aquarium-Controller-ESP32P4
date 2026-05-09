@@ -10,6 +10,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,6 +22,8 @@
 #include "ds18b20.h"
 
 #include "temperature_sensor.h"
+#include "telegram_notify.h"
+#include "event_log.h"
 
 static const char *TAG = "ds18b20";
 
@@ -29,6 +32,9 @@ static const char *TAG = "ds18b20";
 
 /* Moving average window size – smooths out sensor noise */
 #define TEMP_AVG_WINDOW  3
+
+/* Consecutive failures before a Telegram alert is sent */
+#define TEMP_FAULT_ALERT_THRESHOLD  5
 
 static ds18b20_device_handle_t s_devices[MAX_DS18B20];
 static int                     s_device_count;
@@ -43,6 +49,10 @@ static bool  s_valid;
 static float s_avg_buf[TEMP_AVG_WINDOW];
 static int   s_avg_idx;
 static int   s_avg_count;
+
+/* Fault alert tracking */
+static int  s_fail_count   = 0;
+static bool s_alert_sent   = false;
 
 /* ── Reading task ────────────────────────────────────────────────── */
 
@@ -59,6 +69,16 @@ static void temperature_task(void *arg)
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_valid = false;
             xSemaphoreGive(s_mutex);
+            s_fail_count++;
+            if (s_fail_count >= TEMP_FAULT_ALERT_THRESHOLD && !s_alert_sent) {
+                s_alert_sent = true;
+                telegram_notify_send(
+                    "\xf0\x9f\x8c\xa1\xef\xb8\x8f <b>SENSORE TEMPERATURA GUASTO</b>\n"
+                    "DS18B20: trigger conversione fallita ripetutamente.\n"
+                    "Controllare il sensore e il cablaggio.");
+                event_log_add(EVT_SENSOR_FAULT,
+                              "DS18B20 conversion trigger failed repeatedly");
+            }
             vTaskDelay(interval);
             continue;
         }
@@ -88,6 +108,11 @@ static void temperature_task(void *arg)
             s_temperature = avg;
             s_valid = true;
             xSemaphoreGive(s_mutex);
+
+            /* Reset fault counters on success */
+            s_fail_count = 0;
+            s_alert_sent = false;
+
             ESP_LOGI(TAG, "Water temperature: %.2f °C (avg of %d)",
                      avg, s_avg_count);
         } else {
@@ -95,6 +120,16 @@ static void temperature_task(void *arg)
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_valid = false;
             xSemaphoreGive(s_mutex);
+            s_fail_count++;
+            if (s_fail_count >= TEMP_FAULT_ALERT_THRESHOLD && !s_alert_sent) {
+                s_alert_sent = true;
+                telegram_notify_send(
+                    "\xf0\x9f\x8c\xa1\xef\xb8\x8f <b>SENSORE TEMPERATURA GUASTO</b>\n"
+                    "DS18B20: lettura fallita ripetutamente.\n"
+                    "Controllare il sensore e il cablaggio.");
+                event_log_add(EVT_SENSOR_FAULT,
+                              "DS18B20 read failed repeatedly");
+            }
         }
 
         vTaskDelay(interval);

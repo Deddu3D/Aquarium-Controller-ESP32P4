@@ -1,0 +1,18 @@
+{
+  "name": "Aquarium Controller",
+  "short_name": "Aquarium",
+  "description": "ESP32-P4 Aquarium Controller – monitor and manage your aquarium",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1e2d",
+  "theme_color": "#1fa3ff",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='24' fill='%230b1e2d'/%3E%3Ctext x='96' y='140' font-size='120' text-anchor='middle'%3E%F0%9F%90%9F%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

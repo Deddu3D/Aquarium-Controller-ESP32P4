@@ -231,12 +231,13 @@ menu "Aquarium HTTPS Settings"
 
     config AQUARIUM_HTTPS_ENABLE
         bool "Enable HTTPS for the web server"
-        default n
+        default y
         help
             When enabled, the web server uses TLS (HTTPS) instead of plain HTTP.
             server.crt and server.key are embedded from the main/ directory.
             A self-signed certificate is pre-generated; the browser will show a
-            security warning which must be accepted once.
+            security warning which must be accepted once (click "Advanced" →
+            "Proceed to …").
             Protects Telegram credentials and WiFi passwords from LAN sniffing.
 
 endmenu
@@ -285,6 +286,45 @@ menu "Aquarium Daily Cycle Settings"
             Used to compute real sunrise / sunset times for the daily lighting
             cycle.  Positive = East, negative = West.
             Examples: Milan 91900, Rome 124942, London -1250, New York -740060
+
+    config DAILY_CYCLE_MOONLIGHT_DURATION_MIN
+        int "Moonlight phase duration after sunset (minutes, 0 = disabled)"
+        default 60
+        range 0 240
+        help
+            Number of minutes after astronomical sunset during which the
+            moonlight scene (LED_SCENE_MOONLIGHT) is active.  After this
+            interval the LEDs are turned off for the night.
+            Set to 0 to disable the moonlight phase entirely.
+
+endmenu
+
+menu "Aquarium Auto-Heater Settings"
+
+    config HEATER_RUNAWAY_TIMEOUT_MIN
+        int "Heater runaway timeout (minutes)"
+        default 60
+        range 10 480
+        help
+            If the heater relay stays ON continuously for longer than this
+            timeout AND the temperature is still above the upper hysteresis
+            threshold (indicating the relay may be stuck), the runaway
+            protection triggers: the relay is forced OFF, the auto-heater
+            module is disabled, and a Telegram alert is sent.
+            Set higher if your tank takes a long time to heat up.
+
+endmenu
+
+menu "Aquarium WebSocket Settings"
+
+    config WS_PUSH_INTERVAL_MS
+        int "WebSocket status push interval (milliseconds)"
+        default 3000
+        range 1000 30000
+        help
+            How often the server pushes a compact JSON status frame to all
+            connected WebSocket clients.  Lower values give a more responsive
+            UI but generate more network traffic.
 
 endmenu
 

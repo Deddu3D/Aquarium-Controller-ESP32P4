@@ -41,6 +41,8 @@
 #include "feeding_mode.h"
 #include "led_scenes.h"
 #include "daily_cycle.h"
+#include "event_log.h"
+#include "cJSON.h"
 
 static const char *TAG = "web_srv";
 
@@ -73,6 +75,9 @@ static char s_auth_pass[128];
  */
 static void auth_load_credentials(void)
 {
+    /* Initialise session token store */
+    session_init();
+
     strncpy(s_auth_user, CONFIG_WEB_AUTH_USERNAME, sizeof(s_auth_user) - 1);
     s_auth_user[sizeof(s_auth_user) - 1] = '\0';
     strncpy(s_auth_pass, CONFIG_WEB_AUTH_PASSWORD, sizeof(s_auth_pass) - 1);
@@ -149,8 +154,150 @@ static int base64_decode(const char *in, size_t in_len,
     return (int)j;
 }
 
+/* Forward declarations for helpers defined later in this file */
+static int json_get_str(const char *json, const char *key, char *out, size_t out_size);
+
+/* ── Session token authentication ──────────────────────────────── */
+/*
+ * Alongside HTTP Basic Auth, the server also accepts a session cookie
+ * issued by POST /api/login.  Cookies are preferred for browser clients
+ * to avoid sending credentials on every request.
+ *
+ * Sessions are kept in RAM only – they are lost on reboot, which is
+ * acceptable for an embedded device.
+ */
+#define SESSION_TOKEN_LEN  32          /* hex chars = 16 bytes entropy */
+#define SESSION_MAX        8           /* max concurrent sessions      */
+#define SESSION_TTL_S      (24 * 3600) /* 24 hour expiry               */
+
+typedef struct {
+    char   token[SESSION_TOKEN_LEN + 1];
+    time_t expires;   /* UNIX timestamp; 0 = slot empty */
+} session_t;
+
+static session_t s_sessions[SESSION_MAX];
+static SemaphoreHandle_t s_session_mutex = NULL;
+
+static void session_init(void)
+{
+    s_session_mutex = xSemaphoreCreateMutex();
+    memset(s_sessions, 0, sizeof(s_sessions));
+}
+
+/** Generate a new session token and return it (caller must hold mutex). */
+static void session_generate_token(char *out)
+{
+    /* Simple but adequate for embedded: XOR esp_random() words */
+    for (int i = 0; i < SESSION_TOKEN_LEN / 8; i++) {
+        uint32_t rnd = esp_random();
+        snprintf(out + i * 8, 9, "%08" PRIx32, rnd);
+    }
+}
+
+/** Create a new session; returns true on success and writes token to out. */
+static bool session_create(char *token_out)
+{
+    if (!s_session_mutex) return false;
+    xSemaphoreTake(s_session_mutex, portMAX_DELAY);
+
+    time_t now = time(NULL);
+    int slot = -1;
+
+    /* Prefer an expired or empty slot */
+    for (int i = 0; i < SESSION_MAX; i++) {
+        if (s_sessions[i].expires == 0 || s_sessions[i].expires < now) {
+            slot = i;
+            break;
+        }
+    }
+    /* If no free slot, evict oldest */
+    if (slot < 0) {
+        time_t oldest = s_sessions[0].expires;
+        slot = 0;
+        for (int i = 1; i < SESSION_MAX; i++) {
+            if (s_sessions[i].expires < oldest) {
+                oldest = s_sessions[i].expires;
+                slot = i;
+            }
+        }
+    }
+
+    session_generate_token(s_sessions[slot].token);
+    s_sessions[slot].expires = now + SESSION_TTL_S;
+    strncpy(token_out, s_sessions[slot].token, SESSION_TOKEN_LEN + 1);
+
+    xSemaphoreGive(s_session_mutex);
+    return true;
+}
+
+/** Return true if `token` matches a valid (non-expired) session. */
+static bool session_validate(const char *token)
+{
+    if (!s_session_mutex || !token || strlen(token) != SESSION_TOKEN_LEN) return false;
+    xSemaphoreTake(s_session_mutex, portMAX_DELAY);
+    time_t now = time(NULL);
+    bool valid = false;
+    for (int i = 0; i < SESSION_MAX; i++) {
+        if (s_sessions[i].expires > now &&
+            strncmp(s_sessions[i].token, token, SESSION_TOKEN_LEN) == 0) {
+            valid = true;
+            break;
+        }
+    }
+    xSemaphoreGive(s_session_mutex);
+    return valid;
+}
+
+/** Invalidate a session by token. */
+static void session_invalidate(const char *token)
+{
+    if (!s_session_mutex || !token) return;
+    xSemaphoreTake(s_session_mutex, portMAX_DELAY);
+    for (int i = 0; i < SESSION_MAX; i++) {
+        if (strncmp(s_sessions[i].token, token, SESSION_TOKEN_LEN) == 0) {
+            s_sessions[i].expires = 0;
+            break;
+        }
+    }
+    xSemaphoreGive(s_session_mutex);
+}
+
 /**
- * @brief Verify HTTP Basic Auth header.
+ * @brief Extract a cookie value from the Cookie header.
+ * @return true if found and copied to out.
+ */
+static bool cookie_get(httpd_req_t *req, const char *name,
+                        char *out, size_t out_size)
+{
+    char cookie_hdr[512] = {0};
+    if (httpd_req_get_hdr_value_str(req, "Cookie", cookie_hdr, sizeof(cookie_hdr)) != ESP_OK) {
+        return false;
+    }
+
+    size_t name_len = strlen(name);
+    char *p = cookie_hdr;
+    while (*p) {
+        /* Skip whitespace */
+        while (*p == ' ' || *p == '\t') p++;
+        /* Check if this cookie matches */
+        if (strncmp(p, name, name_len) == 0 && p[name_len] == '=') {
+            p += name_len + 1;
+            size_t i = 0;
+            while (*p && *p != ';' && i < out_size - 1) {
+                out[i++] = *p++;
+            }
+            out[i] = '\0';
+            return (i > 0);
+        }
+        /* Skip to next cookie */
+        while (*p && *p != ';') p++;
+        if (*p == ';') p++;
+    }
+    return false;
+}
+
+/**
+ * @brief Verify authentication: session cookie OR HTTP Basic Auth.
  *
  * Sends a 401 response with WWW-Authenticate if credentials are missing
  * or wrong.
@@ -159,59 +306,105 @@ static int base64_decode(const char *in, size_t in_len,
  */
 static esp_err_t check_auth(httpd_req_t *req)
 {
+    /* ── 1. Try session cookie ─────────────────────────────────── */
+    char token[SESSION_TOKEN_LEN + 4] = {0};
+    if (cookie_get(req, "session", token, sizeof(token))) {
+        if (session_validate(token)) {
+            return ESP_OK;
+        }
+    }
+
+    /* ── 2. Try HTTP Basic Auth ────────────────────────────────── */
     char auth_hdr[192] = {0};
     if (httpd_req_get_hdr_value_str(req, "Authorization",
                                     auth_hdr, sizeof(auth_hdr)) != ESP_OK) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate",
-                           "Basic realm=\"Aquarium Controller\"");
-        httpd_resp_send(req, "Authentication required", -1);
-        return ESP_FAIL;
+        goto auth_fail;
     }
 
-    /* Expect "Basic <base64>" */
-    if (strncmp(auth_hdr, "Basic ", 6) != 0) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate",
-                           "Basic realm=\"Aquarium Controller\"");
-        httpd_resp_send(req, "Authentication required", -1);
-        return ESP_FAIL;
-    }
+    if (strncmp(auth_hdr, "Basic ", 6) != 0) goto auth_fail;
 
     char decoded[192];
     int dlen = base64_decode(auth_hdr + 6, strlen(auth_hdr + 6),
                              decoded, sizeof(decoded));
-    if (dlen <= 0) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate",
-                           "Basic realm=\"Aquarium Controller\"");
-        httpd_resp_send(req, "Authentication required", -1);
-        return ESP_FAIL;
-    }
+    if (dlen <= 0) goto auth_fail;
 
-    /* decoded = "user:password" */
     char *colon = strchr(decoded, ':');
-    if (colon == NULL) {
-        httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate",
-                           "Basic realm=\"Aquarium Controller\"");
-        httpd_resp_send(req, "Authentication required", -1);
-        return ESP_FAIL;
-    }
+    if (colon == NULL) goto auth_fail;
     *colon = '\0';
     const char *req_user = decoded;
     const char *req_pass = colon + 1;
 
-    if (strcmp(req_user, s_auth_user) != 0 ||
-        strcmp(req_pass, s_auth_pass) != 0) {
+    if (strcmp(req_user, s_auth_user) == 0 &&
+        strcmp(req_pass, s_auth_pass) == 0) {
+        return ESP_OK;
+    }
+
+auth_fail:
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate",
+                       "Basic realm=\"Aquarium Controller\"");
+    httpd_resp_send(req, "Authentication required", -1);
+    return ESP_FAIL;
+}
+
+/* ── Login / Logout endpoints ───────────────────────────────────── */
+
+/**
+ * @brief POST /api/login – validate credentials and issue session cookie.
+ * Body: {"username":"...","password":"..."}
+ */
+static esp_err_t api_login_post_handler(httpd_req_t *req)
+{
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    char user[64] = {0}, pass[128] = {0};
+    json_get_str(buf, "\"username\"", user, sizeof(user));
+    json_get_str(buf, "\"password\"", pass, sizeof(pass));
+
+    if (strcmp(user, s_auth_user) != 0 ||
+        strcmp(pass, s_auth_pass) != 0) {
         httpd_resp_set_status(req, "401 Unauthorized");
-        httpd_resp_set_hdr(req, "WWW-Authenticate",
-                           "Basic realm=\"Aquarium Controller\"");
-        httpd_resp_send(req, "Invalid credentials", -1);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"ok\":false,\"error\":\"invalid_credentials\"}", -1);
         return ESP_FAIL;
     }
 
-    return ESP_OK;
+    char token[SESSION_TOKEN_LEN + 1];
+    if (!session_create(token)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Session creation failed");
+        return ESP_FAIL;
+    }
+
+    /* Set session cookie: HttpOnly, SameSite=Strict, 24 h max-age */
+    char cookie[128];
+    snprintf(cookie, sizeof(cookie),
+             "session=%s; HttpOnly; SameSite=Strict; Max-Age=%d; Path=/",
+             token, SESSION_TTL_S);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+
+/**
+ * @brief POST /api/logout – invalidate session cookie.
+ */
+static esp_err_t api_logout_post_handler(httpd_req_t *req)
+{
+    char token[SESSION_TOKEN_LEN + 4] = {0};
+    if (cookie_get(req, "session", token, sizeof(token))) {
+        session_invalidate(token);
+    }
+    /* Clear cookie */
+    httpd_resp_set_hdr(req, "Set-Cookie",
+                       "session=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 #define AUTH_CHECK(req) \
@@ -224,6 +417,9 @@ static void auth_load_credentials(void) {}
 
 #endif /* CONFIG_WEB_AUTH_ENABLE */
 
+/* Boot count and reset reason exposed by main.c */
+extern uint32_t app_main_get_boot_count(void);
+
 static httpd_handle_t s_server = NULL;
 /* Embedded Web UI files generated by CMake EMBED_TXTFILES.
  * Naming convention: ESP-IDF uses only the filename (not the path),
@@ -234,6 +430,10 @@ extern const uint8_t www_style_css_start[]  asm("_binary_style_css_start");
 extern const uint8_t www_style_css_end[]    asm("_binary_style_css_end");
 extern const uint8_t www_bg_svg_start[]     asm("_binary_bg_svg_start");
 extern const uint8_t www_bg_svg_end[]       asm("_binary_bg_svg_end");
+extern const uint8_t www_manifest_json_start[] asm("_binary_manifest_json_start");
+extern const uint8_t www_manifest_json_end[]   asm("_binary_manifest_json_end");
+extern const uint8_t www_sw_js_start[]      asm("_binary_sw_js_start");
+extern const uint8_t www_sw_js_end[]        asm("_binary_sw_js_end");
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -296,7 +496,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
 /* JSON response buffer sizes */
-#define JSON_STATUS_BUF_SIZE   512   /* enlarged from 384: now includes ntp_ok + partition */
+#define JSON_STATUS_BUF_SIZE   640   /* enlarged: now includes restart_reason, boot_count */
 #define JSON_LEDS_BUF_SIZE     256
 #define JSON_SCHED_BUF_SIZE    768
 #define JSON_TEMP_BUF_SIZE     128
@@ -326,7 +526,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
 /* Keep a generous limit for the current API set and future endpoint growth. */
-#define HTTP_MAX_URI_HANDLERS  45
+#define HTTP_MAX_URI_HANDLERS  60
 
 /* ── Embedded Web UI server (/ and /www/wildcard) ───────────────────────── */
 
@@ -370,6 +570,18 @@ static esp_err_t static_file_get_handler(httpd_req_t *req)
     return ESP_FAIL;
 }
 
+static esp_err_t manifest_get_handler(httpd_req_t *req)
+{
+    return send_embedded_file(req, www_manifest_json_start, www_manifest_json_end,
+                              "application/manifest+json", true);
+}
+
+static esp_err_t sw_js_get_handler(httpd_req_t *req)
+{
+    return send_embedded_file(req, www_sw_js_start, www_sw_js_end,
+                              "application/javascript", false);
+}
+
 /**
  * @brief Serve the main dashboard HTML from embedded firmware data.
  */
@@ -403,6 +615,18 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     const esp_partition_t *part = esp_ota_get_running_partition();
     const char *part_label = part ? part->label : "unknown";
 
+    /* Restart stats */
+    uint32_t boot_count = app_main_get_boot_count();
+    esp_reset_reason_t rr = esp_reset_reason();
+    static const char * const rr_str[] = {
+        "unknown", "power_on", "ext_reset", "sw_reset",
+        "exception", "int_watchdog", "task_watchdog", "other_watchdog",
+        "deepsleep", "brownout", "sdio",
+    };
+    int rri = (int)rr;
+    const char *restart_reason = (rri >= 0 &&
+        rri < (int)(sizeof(rr_str)/sizeof(rr_str[0]))) ? rr_str[rri] : "unknown";
+
     char buf[JSON_STATUS_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
         "{\"connected\":%s,"
@@ -412,7 +636,9 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
         "\"free_heap\":%" PRIu32 ","
         "\"uptime_s\":%" PRId64 ","
         "\"ntp_ok\":%s,"
-        "\"partition\":\"%s\"}",
+        "\"partition\":\"%s\","
+        "\"boot_count\":%" PRIu32 ","
+        "\"restart_reason\":\"%s\"}",
         ws.connected ? "true" : "false",
         ws.connected ? ws.ip : "",
         escaped_ssid,
@@ -420,7 +646,9 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
         esp_get_free_heap_size(),
         uptime_s,
         ntp_ok ? "true" : "false",
-        part_label);
+        part_label,
+        boot_count,
+        restart_reason);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1397,16 +1625,20 @@ static esp_err_t api_heater_get_handler(httpd_req_t *req)
     AUTH_CHECK(req);
     auto_heater_config_t cfg = auto_heater_get_config();
 
-    char buf[256];
+    char buf[320];
     int len = snprintf(buf, sizeof(buf),
         "{\"enabled\":%s,"
         "\"relay_index\":%d,"
         "\"target_temp_c\":%.1f,"
-        "\"hysteresis_c\":%.1f}",
+        "\"hysteresis_c\":%.1f,"
+        "\"runaway_protection\":%s,"
+        "\"runaway_timeout_min\":%d}",
         cfg.enabled ? "true" : "false",
         cfg.relay_index,
         (double)cfg.target_temp_c,
-        (double)cfg.hysteresis_c);
+        (double)cfg.hysteresis_c,
+        cfg.runaway_protection ? "true" : "false",
+        cfg.runaway_timeout_min);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1438,6 +1670,11 @@ static esp_err_t api_heater_post_handler(httpd_req_t *req)
         cfg.target_temp_c = (float)dval;
     if (json_get_double(buf, "\"hysteresis_c\"", &dval) == 0)
         cfg.hysteresis_c = (float)dval;
+
+    int runaway_bval = json_get_bool(buf, "\"runaway_protection\"");
+    if (runaway_bval >= 0) cfg.runaway_protection = (runaway_bval == 1);
+    if (json_get_double(buf, "\"runaway_timeout_min\"", &dval) == 0)
+        cfg.runaway_timeout_min = (int)dval;
 
     auto_heater_set_config(&cfg);
 
@@ -1888,13 +2125,15 @@ static esp_err_t api_daily_cycle_get_handler(httpd_req_t *req)
         "\"longitude\":%.4f,"
         "\"phase\":%d,"
         "\"sunrise_min\":%d,"
-        "\"sunset_min\":%d}",
+        "\"sunset_min\":%d,"
+        "\"moonlight_duration_min\":%d}",
         cfg.enabled ? "true" : "false",
         cfg.latitude,
         cfg.longitude,
         (int)phase,
         sunrise_min,
-        sunset_min);
+        sunset_min,
+        cfg.moonlight_duration_min);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -1925,6 +2164,8 @@ static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
 
     if (json_get_double(buf, "\"latitude\"",  &dval) == 0) cfg.latitude  = (float)dval;
     if (json_get_double(buf, "\"longitude\"", &dval) == 0) cfg.longitude = (float)dval;
+    if (json_get_double(buf, "\"moonlight_duration_min\"", &dval) == 0)
+        cfg.moonlight_duration_min = (int)dval;
 
     esp_err_t err = daily_cycle_set_config(&cfg);
     if (err != ESP_OK) {
@@ -1933,6 +2174,466 @@ static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
     }
 
     return api_daily_cycle_get_handler(req);
+}
+
+/* ── WebSocket push server (/ws) ─────────────────────────────────── */
+/*
+ * The ESP-IDF HTTP server supports WebSocket upgrade natively.
+ * We register a single /ws handler with .is_websocket = true.
+ * A background task pushes a compact JSON status frame to all
+ * connected WS clients every CONFIG_WS_PUSH_INTERVAL_MS milliseconds.
+ *
+ * Client list management:
+ *   ESP-IDF provides httpd_get_client_list() to enumerate open sockets.
+ *   We check each socket's type with httpd_ws_get_fd_info(); only WS
+ *   sockets receive frames.
+ */
+
+#ifndef CONFIG_WS_PUSH_INTERVAL_MS
+#define CONFIG_WS_PUSH_INTERVAL_MS  3000   /* 3 s default push interval */
+#endif
+
+static TaskHandle_t s_ws_task = NULL;
+
+/** Push a text frame to one WS client; ignores closed-socket errors. */
+static void ws_send_to_fd(int fd, const char *payload, size_t payload_len)
+{
+    httpd_ws_frame_t frame = {
+        .type       = HTTPD_WS_TYPE_TEXT,
+        .payload    = (uint8_t *)payload,
+        .len        = payload_len,
+        .final      = true,
+    };
+    /* httpd_ws_send_frame_async is thread-safe */
+    esp_err_t err = httpd_ws_send_frame_async(s_server, fd, &frame);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGD(TAG, "WS send fd=%d err=%s", fd, esp_err_to_name(err));
+    }
+}
+
+/** Build a compact status JSON string for WS push. */
+static int ws_build_status(char *buf, size_t buf_size)
+{
+    float temp_c = 0.0f;
+    bool temp_ok = temperature_sensor_get(&temp_c);
+    int64_t uptime_s = esp_timer_get_time() / 1000000;
+
+    return snprintf(buf, buf_size,
+        "{\"type\":\"status\","
+        "\"uptime_s\":%" PRId64 ","
+        "\"free_heap\":%" PRIu32 ","
+        "\"temp_ok\":%s,"
+        "\"temp_c\":%.2f,"
+        "\"phase\":%d}",
+        uptime_s,
+        esp_get_free_heap_size(),
+        temp_ok ? "true" : "false",
+        temp_ok ? (double)temp_c : 0.0,
+        (int)daily_cycle_get_phase());
+}
+
+static void ws_push_task(void *arg)
+{
+    (void)arg;
+    char *payload = malloc(256);
+    if (!payload) {
+        ESP_LOGE(TAG, "WS push task: OOM");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_WS_PUSH_INTERVAL_MS));
+
+        if (s_server == NULL) {
+            continue;
+        }
+
+        int payload_len = ws_build_status(payload, 256);
+        if (payload_len <= 0) {
+            continue;
+        }
+
+        /* Enumerate all open sockets and push to WS clients */
+        size_t fds_size = 16;
+        int *fds = malloc(fds_size * sizeof(int));
+        if (!fds) {
+            continue;
+        }
+
+        esp_err_t err = httpd_get_client_list(s_server, &fds_size, fds);
+        if (err == ESP_OK) {
+            for (size_t i = 0; i < fds_size; i++) {
+                httpd_ws_client_info_t info =
+                    httpd_ws_get_fd_info(s_server, fds[i]);
+                if (info == HTTPD_WS_CLIENT_WEBSOCKET) {
+                    ws_send_to_fd(fds[i], payload, (size_t)payload_len);
+                }
+            }
+        }
+        free(fds);
+    }
+}
+
+/** WebSocket handler for /ws. */
+static esp_err_t ws_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET) {
+        /* This is the WebSocket handshake request – accepted automatically
+         * by the framework; we just log the new connection. */
+        ESP_LOGI(TAG, "WebSocket client connected fd=%d",
+                 httpd_req_to_sockfd(req));
+        return ESP_OK;
+    }
+
+    /* Receive and discard any incoming WS frame (ping / client messages) */
+    httpd_ws_frame_t frame = { .type = HTTPD_WS_TYPE_TEXT };
+    uint8_t buf[64] = {0};
+    frame.payload = buf;
+    httpd_ws_recv_frame(req, &frame, sizeof(buf) - 1);
+    return ESP_OK;
+}
+
+static const httpd_uri_t uri_ws = {
+    .uri          = "/ws",
+    .method       = HTTP_GET,
+    .handler      = ws_handler,
+    .is_websocket = true,
+    .user_ctx     = NULL,
+};
+
+/* ── Config export/import endpoints ─────────────────────────────── */
+
+/**
+ * @brief GET /api/config/export – dump all known configs as JSON.
+ *
+ * Serialises the current in-memory configuration of all subsystems
+ * so the caller can save it and restore it later via the import endpoint.
+ */
+static esp_err_t api_config_export_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+
+    /* Use cJSON for clean serialisation */
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    /* LED schedule */
+    {
+        led_schedule_config_t c = led_schedule_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "led_schedule");
+        cJSON_AddBoolToObject(o, "enabled",          c.enabled);
+        cJSON_AddNumberToObject(o, "on_hour",         c.on_hour);
+        cJSON_AddNumberToObject(o, "on_minute",       c.on_minute);
+        cJSON_AddNumberToObject(o, "off_hour",        c.off_hour);
+        cJSON_AddNumberToObject(o, "off_minute",      c.off_minute);
+        cJSON_AddNumberToObject(o, "brightness",      c.brightness);
+        cJSON_AddNumberToObject(o, "red",             c.red);
+        cJSON_AddNumberToObject(o, "green",           c.green);
+        cJSON_AddNumberToObject(o, "blue",            c.blue);
+        cJSON_AddNumberToObject(o, "ramp_duration_min", c.ramp_duration_min);
+        cJSON_AddBoolToObject(o, "pause_enabled",    c.pause_enabled);
+        cJSON_AddNumberToObject(o, "pause_start_hour", c.pause_start_hour);
+        cJSON_AddNumberToObject(o, "pause_start_minute", c.pause_start_minute);
+        cJSON_AddNumberToObject(o, "pause_end_hour", c.pause_end_hour);
+        cJSON_AddNumberToObject(o, "pause_end_minute", c.pause_end_minute);
+        cJSON_AddNumberToObject(o, "pause_brightness", c.pause_brightness);
+        cJSON_AddNumberToObject(o, "pause_red",      c.pause_red);
+        cJSON_AddNumberToObject(o, "pause_green",    c.pause_green);
+        cJSON_AddNumberToObject(o, "pause_blue",     c.pause_blue);
+    }
+
+    /* Auto-heater */
+    {
+        auto_heater_config_t c = auto_heater_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "heater");
+        cJSON_AddBoolToObject(o, "enabled",              c.enabled);
+        cJSON_AddNumberToObject(o, "relay_index",        c.relay_index);
+        cJSON_AddNumberToObject(o, "target_temp_c",      (double)c.target_temp_c);
+        cJSON_AddNumberToObject(o, "hysteresis_c",       (double)c.hysteresis_c);
+        cJSON_AddBoolToObject(o, "runaway_protection",   c.runaway_protection);
+        cJSON_AddNumberToObject(o, "runaway_timeout_min", c.runaway_timeout_min);
+    }
+
+    /* CO2 controller */
+    {
+        co2_config_t c = co2_controller_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "co2");
+        cJSON_AddBoolToObject(o, "enabled",          c.enabled);
+        cJSON_AddNumberToObject(o, "relay_index",    c.relay_index);
+        cJSON_AddNumberToObject(o, "pre_on_min",     c.pre_on_min);
+        cJSON_AddNumberToObject(o, "post_off_min",   c.post_off_min);
+    }
+
+    /* Daily cycle */
+    {
+        daily_cycle_config_t c = daily_cycle_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "daily_cycle");
+        cJSON_AddBoolToObject(o, "enabled",                 c.enabled);
+        cJSON_AddNumberToObject(o, "latitude",              (double)c.latitude);
+        cJSON_AddNumberToObject(o, "longitude",             (double)c.longitude);
+        cJSON_AddNumberToObject(o, "moonlight_duration_min", c.moonlight_duration_min);
+    }
+
+    /* LED scenes */
+    {
+        led_scenes_config_t c = led_scenes_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "led_scenes");
+        cJSON_AddNumberToObject(o, "sunrise_duration_min",   c.sunrise_duration_min);
+        cJSON_AddNumberToObject(o, "sunrise_max_brightness", c.sunrise_max_brightness);
+        cJSON_AddNumberToObject(o, "sunset_duration_min",    c.sunset_duration_min);
+        cJSON_AddNumberToObject(o, "moonlight_brightness",   c.moonlight_brightness);
+        cJSON_AddNumberToObject(o, "moonlight_r",            c.moonlight_r);
+        cJSON_AddNumberToObject(o, "moonlight_g",            c.moonlight_g);
+        cJSON_AddNumberToObject(o, "moonlight_b",            c.moonlight_b);
+        cJSON_AddNumberToObject(o, "storm_intensity",        c.storm_intensity);
+        cJSON_AddNumberToObject(o, "clouds_depth",           c.clouds_depth);
+        cJSON_AddNumberToObject(o, "clouds_period_s",        c.clouds_period_s);
+    }
+
+    /* Timezone */
+    {
+        cJSON *o = cJSON_AddObjectToObject(root, "timezone");
+        char tz[TZ_STRING_MAX];
+        timezone_manager_get(tz, sizeof(tz));
+        cJSON_AddStringToObject(o, "tz", tz);
+    }
+
+    /* Feeding mode */
+    {
+        feeding_config_t c = feeding_mode_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "feeding");
+        cJSON_AddNumberToObject(o, "relay_index",    c.relay_index);
+        cJSON_AddNumberToObject(o, "duration_min",   c.duration_min);
+        cJSON_AddBoolToObject(o, "dim_lights",       c.dim_lights);
+        cJSON_AddNumberToObject(o, "dim_brightness", c.dim_brightness);
+    }
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json_str) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "JSON serialisation failed");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Content-Disposition",
+                       "attachment; filename=\"aquarium_config.json\"");
+    esp_err_t err = httpd_resp_send(req, json_str, (ssize_t)strlen(json_str));
+    free(json_str);
+    return err;
+}
+
+/**
+ * @brief POST /api/config/import – restore configs from JSON body.
+ *
+ * Accepts a JSON document in the same format as the export endpoint
+ * and applies every recognised subsection.  Unknown fields are ignored.
+ */
+static esp_err_t api_config_import_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+
+    /* Limit body to 4 KB */
+    if (req->content_len > 4096) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large (max 4096 bytes)");
+        return ESP_FAIL;
+    }
+
+    char *body = malloc(req->content_len + 1);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    int received = httpd_req_recv(req, body, req->content_len);
+    if (received <= 0) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    int applied = 0;
+
+    /* LED schedule */
+    cJSON *o = cJSON_GetObjectItem(root, "led_schedule");
+    if (o) {
+        led_schedule_config_t c = led_schedule_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "enabled")))           c.enabled           = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "on_hour")))           c.on_hour           = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "on_minute")))         c.on_minute         = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "off_hour")))          c.off_hour          = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "off_minute")))        c.off_minute        = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "brightness")))        c.brightness        = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "red")))               c.red               = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "green")))             c.green             = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "blue")))              c.blue              = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "ramp_duration_min"))) c.ramp_duration_min = (uint16_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_enabled")))     c.pause_enabled     = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "pause_start_hour")))  c.pause_start_hour  = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_start_minute")))c.pause_start_minute= (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_end_hour")))    c.pause_end_hour    = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_end_minute")))  c.pause_end_minute  = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_brightness")))  c.pause_brightness  = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_red")))         c.pause_red         = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_green")))       c.pause_green       = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pause_blue")))        c.pause_blue        = (uint8_t)f->valueint;
+        led_schedule_set_config(&c);
+        applied++;
+    }
+
+    /* Auto-heater */
+    o = cJSON_GetObjectItem(root, "heater");
+    if (o) {
+        auto_heater_config_t c = auto_heater_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "enabled")))              c.enabled              = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "relay_index")))          c.relay_index          = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "target_temp_c")))        c.target_temp_c        = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "hysteresis_c")))         c.hysteresis_c         = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "runaway_protection")))   c.runaway_protection   = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "runaway_timeout_min")))  c.runaway_timeout_min  = f->valueint;
+        auto_heater_set_config(&c);
+        applied++;
+    }
+
+    /* CO2 */
+    o = cJSON_GetObjectItem(root, "co2");
+    if (o) {
+        co2_config_t c = co2_controller_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "enabled")))        c.enabled      = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "relay_index")))    c.relay_index  = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "pre_on_min")))     c.pre_on_min   = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "post_off_min")))   c.post_off_min = f->valueint;
+        co2_controller_set_config(&c);
+        applied++;
+    }
+
+    /* Daily cycle */
+    o = cJSON_GetObjectItem(root, "daily_cycle");
+    if (o) {
+        daily_cycle_config_t c = daily_cycle_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "enabled")))                 c.enabled                = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "latitude")))                c.latitude               = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "longitude")))               c.longitude              = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "moonlight_duration_min")))  c.moonlight_duration_min = f->valueint;
+        daily_cycle_set_config(&c);
+        applied++;
+    }
+
+    /* LED scenes */
+    o = cJSON_GetObjectItem(root, "led_scenes");
+    if (o) {
+        led_scenes_config_t c = led_scenes_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "sunrise_duration_min")))   c.sunrise_duration_min   = (uint16_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "sunrise_max_brightness"))) c.sunrise_max_brightness = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "sunset_duration_min")))    c.sunset_duration_min    = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "moonlight_brightness")))   c.moonlight_brightness   = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "moonlight_r")))            c.moonlight_r            = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "moonlight_g")))            c.moonlight_g            = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "moonlight_b")))            c.moonlight_b            = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "storm_intensity")))        c.storm_intensity        = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "clouds_depth")))           c.clouds_depth           = (uint8_t)f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "clouds_period_s")))        c.clouds_period_s        = (uint16_t)f->valueint;
+        led_scenes_set_config(&c);
+        applied++;
+    }
+
+    /* Timezone */
+    o = cJSON_GetObjectItem(root, "timezone");
+    if (o) {
+        cJSON *f = cJSON_GetObjectItem(o, "tz");
+        if (f && cJSON_IsString(f)) {
+            timezone_manager_set(f->valuestring);
+            applied++;
+        }
+    }
+
+    /* Feeding */
+    o = cJSON_GetObjectItem(root, "feeding");
+    if (o) {
+        feeding_config_t c = feeding_mode_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "relay_index")))   c.relay_index   = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "duration_min")))  c.duration_min  = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "dim_lights")))    c.dim_lights    = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "dim_brightness")))c.dim_brightness= (uint8_t)f->valueint;
+        feeding_mode_set_config(&c);
+        applied++;
+    }
+
+    cJSON_Delete(root);
+
+    event_log_add(EVT_SYSTEM, "Configuration imported via /api/config/import");
+
+    char resp[64];
+    int len = snprintf(resp, sizeof(resp), "{\"ok\":true,\"applied\":%d}", applied);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, resp, len);
+}
+
+/* ── /api/events GET endpoint ────────────────────────────────────── */
+
+static esp_err_t api_events_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+
+    event_entry_t *entries = malloc(EVENT_LOG_MAX * sizeof(event_entry_t));
+    if (!entries) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+
+    int count = 0;
+    event_log_get_all(entries, &count);
+
+    httpd_resp_set_type(req, "application/json");
+
+    static const char * const type_names[] = {
+        "relay_change", "temp_alarm", "sensor_fault",
+        "feeding", "ota", "heater_runaway", "system", "co2",
+    };
+
+    char chunk[160];
+    int n = snprintf(chunk, sizeof(chunk), "{\"count\":%d,\"events\":[", count);
+    httpd_resp_send_chunk(req, chunk, n);
+
+    for (int i = 0; i < count; i++) {
+        int ti = (int)entries[i].type;
+        const char *tname = (ti >= 0 &&
+            ti < (int)(sizeof(type_names)/sizeof(type_names[0])))
+            ? type_names[ti] : "unknown";
+
+        char escaped_msg[EVENT_MSG_MAX * 2];
+        json_escape(entries[i].message, escaped_msg, sizeof(escaped_msg));
+
+        n = snprintf(chunk, sizeof(chunk),
+            "%s{\"t\":%" PRId64 ",\"type\":\"%s\",\"msg\":\"%s\"}",
+            i > 0 ? "," : "",
+            (int64_t)entries[i].timestamp,
+            tname, escaped_msg);
+        httpd_resp_send_chunk(req, chunk, n);
+    }
+
+    httpd_resp_send_chunk(req, "]}", 2);
+    httpd_resp_send_chunk(req, NULL, 0);
+    free(entries);
+    return ESP_OK;
 }
 
 /* ── Factory reset endpoint (/api/factory_reset  POST) ──────────── */
@@ -2245,6 +2946,41 @@ static const httpd_uri_t uri_api_scene_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_login = {
+    .uri      = "/api/login",
+    .method   = HTTP_POST,
+    .handler  = api_login_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_logout = {
+    .uri      = "/api/logout",
+    .method   = HTTP_POST,
+    .handler  = api_logout_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_events_get = {
+    .uri      = "/api/events",
+    .method   = HTTP_GET,
+    .handler  = api_events_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_config_export = {
+    .uri      = "/api/config/export",
+    .method   = HTTP_GET,
+    .handler  = api_config_export_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_config_import = {
+    .uri      = "/api/config/import",
+    .method   = HTTP_POST,
+    .handler  = api_config_import_handler,
+    .user_ctx = NULL,
+};
+
 static const httpd_uri_t uri_api_daily_cycle_get = {
     .uri      = "/api/daily_cycle",
     .method   = HTTP_GET,
@@ -2264,6 +3000,21 @@ static const httpd_uri_t uri_www_static = {
     .uri      = "/www/*",
     .method   = HTTP_GET,
     .handler  = static_file_get_handler,
+    .user_ctx = NULL,
+};
+
+/* PWA manifest and service worker (no auth required for SW) */
+static const httpd_uri_t uri_manifest = {
+    .uri      = "/manifest.json",
+    .method   = HTTP_GET,
+    .handler  = manifest_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_sw = {
+    .uri      = "/sw.js",
+    .method   = HTTP_GET,
+    .handler  = sw_js_get_handler,
     .user_ctx = NULL,
 };
 
@@ -2384,11 +3135,26 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
     httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
     httpd_register_uri_handler(s_server, &uri_api_factory_reset);
+    httpd_register_uri_handler(s_server, &uri_api_events_get);
+    httpd_register_uri_handler(s_server, &uri_api_config_export);
+    httpd_register_uri_handler(s_server, &uri_api_config_import);
+    httpd_register_uri_handler(s_server, &uri_ws);
+    httpd_register_uri_handler(s_server, &uri_manifest);
+    httpd_register_uri_handler(s_server, &uri_sw);
+    httpd_register_uri_handler(s_server, &uri_api_login);
+    httpd_register_uri_handler(s_server, &uri_api_logout);
 #ifdef CONFIG_WEB_AUTH_ENABLE
     httpd_register_uri_handler(s_server, &uri_api_auth_post);
 #endif
     /* Wildcard handler registered last so exact-match API routes take priority */
     httpd_register_uri_handler(s_server, &uri_www_static);
+
+    /* Start WebSocket push task */
+    if (s_ws_task == NULL) {
+        xTaskCreate(ws_push_task, "ws_push", 4096, NULL, 3, &s_ws_task);
+        ESP_LOGI(TAG, "WebSocket push task started (interval %d ms)",
+                 CONFIG_WS_PUSH_INTERVAL_MS);
+    }
 
 #ifdef CONFIG_AQUARIUM_HTTPS_ENABLE
     ESP_LOGI(TAG, "HTTPS server started – open https://<device-ip>/ in a browser");
