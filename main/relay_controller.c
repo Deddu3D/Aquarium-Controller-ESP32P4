@@ -302,24 +302,6 @@ esp_err_t relay_controller_set_schedule(int index, int slot,
     return ESP_OK;
 }
 
-esp_err_t relay_controller_set_all_schedules(int index,
-                                             const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS])
-{
-    if (index < 0 || index >= RELAY_COUNT || schedules == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
-        s_relay[index].schedules[s] = schedules[s];
-        if (s_relay[index].schedules[s].on_min  > 1439)
-            s_relay[index].schedules[s].on_min  = 1439;
-        if (s_relay[index].schedules[s].off_min > 1439)
-            s_relay[index].schedules[s].off_min = 1439;
-    }
-    xSemaphoreGive(s_mutex);
-    nvs_save_schedules(index);
-    return ESP_OK;
-}
 
 void relay_controller_tick_schedules(void)
 {

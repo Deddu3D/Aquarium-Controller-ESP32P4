@@ -121,17 +121,6 @@ void relay_controller_get_all(relay_state_t out[RELAY_COUNT]);
 esp_err_t relay_controller_set_schedule(int index, int slot,
                                         const relay_schedule_t *schedule);
 
-/**
- * @brief Set all schedule slots for a relay channel at once.
- *
- * Convenience wrapper that replaces the entire slots array.
- *
- * @param index     Relay index (0 – RELAY_COUNT-1).
- * @param schedules Array of RELAY_SCHEDULE_SLOTS entries.
- * @return ESP_OK or ESP_ERR_INVALID_ARG.
- */
-esp_err_t relay_controller_set_all_schedules(int index,
-                                             const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS]);
 
 /**
  * @brief Evaluate relay schedules against the current time.
