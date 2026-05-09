@@ -56,7 +56,9 @@ static void temperature_task(void *arg)
         esp_err_t err = ds18b20_trigger_temperature_conversion(s_devices[0]);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Conversion trigger failed: %s", esp_err_to_name(err));
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_valid = false;
+            xSemaphoreGive(s_mutex);
             vTaskDelay(interval);
             continue;
         }

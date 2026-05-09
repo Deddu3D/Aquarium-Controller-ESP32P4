@@ -1112,9 +1112,10 @@ static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
     char escaped_domain[128];
     json_escape(cfg.domain, escaped_domain, sizeof(escaped_domain));
 
-    const char *status = duckdns_get_last_status();
+    char raw_status[64];
+    duckdns_get_last_status(raw_status, sizeof(raw_status));
     char escaped_status[128];
-    json_escape(status, escaped_status, sizeof(escaped_status));
+    json_escape(raw_status, escaped_status, sizeof(escaped_status));
 
     char buf[JSON_DDNS_BUF_SIZE];
     int len = snprintf(buf, sizeof(buf),
@@ -1173,9 +1174,10 @@ static esp_err_t api_duckdns_update_handler(httpd_req_t *req)
 {
     esp_err_t err = duckdns_update_now();
 
-    const char *status = duckdns_get_last_status();
+    char raw_status[64];
+    duckdns_get_last_status(raw_status, sizeof(raw_status));
     char escaped_status[128];
-    json_escape(status, escaped_status, sizeof(escaped_status));
+    json_escape(raw_status, escaped_status, sizeof(escaped_status));
 
     char resp[192];
     int len = snprintf(resp, sizeof(resp),

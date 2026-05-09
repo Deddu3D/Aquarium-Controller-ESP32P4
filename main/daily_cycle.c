@@ -10,6 +10,9 @@
 #include <string.h>
 #include <time.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -39,6 +42,7 @@ static const char *TAG = "daily_cycle";
 
 /* ── Private state ───────────────────────────────────────────────── */
 
+static SemaphoreHandle_t   s_mutex   = NULL;
 static daily_cycle_config_t s_config = {
     .enabled   = false,
     .latitude  = (float)CONFIG_DAILY_CYCLE_LATITUDE_E4  / 10000.0f,
@@ -188,6 +192,12 @@ static void apply_phase(daily_cycle_phase_t phase)
 
 esp_err_t daily_cycle_init(void)
 {
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     nvs_load();
     ESP_LOGI(TAG, "Daily cycle initialised (enabled=%d lat=%.4f lon=%.4f)",
              (int)s_config.enabled, s_config.latitude, s_config.longitude);
@@ -196,7 +206,15 @@ esp_err_t daily_cycle_init(void)
 
 daily_cycle_config_t daily_cycle_get_config(void)
 {
-    return s_config;
+    daily_cycle_config_t copy;
+    if (s_mutex == NULL) {
+        memset(&copy, 0, sizeof(copy));
+        return copy;   /* not yet initialised */
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    copy = s_config;
+    xSemaphoreGive(s_mutex);
+    return copy;
 }
 
 esp_err_t daily_cycle_set_config(const daily_cycle_config_t *cfg)
@@ -204,7 +222,9 @@ esp_err_t daily_cycle_set_config(const daily_cycle_config_t *cfg)
     if (cfg == NULL)                            return ESP_ERR_INVALID_ARG;
     if (cfg->latitude  < -90.0f  || cfg->latitude  > 90.0f)  return ESP_ERR_INVALID_ARG;
     if (cfg->longitude < -180.0f || cfg->longitude > 180.0f) return ESP_ERR_INVALID_ARG;
+    if (s_mutex == NULL) return ESP_ERR_INVALID_STATE;
 
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool was_enabled = s_config.enabled;
     s_config = *cfg;
 
@@ -217,13 +237,21 @@ esp_err_t daily_cycle_set_config(const daily_cycle_config_t *cfg)
     /* Force sun-time recalculation and phase re-evaluation on next tick */
     s_last_day = -1;
     s_phase    = PHASE_UNINIT;
+    xSemaphoreGive(s_mutex);
 
     return nvs_save();
 }
 
 void daily_cycle_tick(void)
 {
-    if (!s_config.enabled) return;
+    if (s_mutex == NULL) return;
+
+    /* Snapshot config under mutex */
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    daily_cycle_config_t cfg = s_config;
+    xSemaphoreGive(s_mutex);
+
+    if (!cfg.enabled) return;
 
     /* ── 1. Get current local time ──────────────────────────────── */
     time_t now = time(NULL);
@@ -244,29 +272,41 @@ void daily_cycle_tick(void)
     while (utc_off < -720) utc_off += 1440;
 
     /* ── 2. Recompute sun times once per calendar day ────────────── */
-    if (lt.tm_mday != s_last_day) {
-        s_sun = sun_position_calc(
-            (double)s_config.latitude,
-            (double)s_config.longitude,
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool need_sun_calc = (lt.tm_mday != s_last_day);
+    xSemaphoreGive(s_mutex);
+
+    if (need_sun_calc) {
+        /* Compute outside the mutex – sun_position_calc() is pure math */
+        sun_times_t new_sun = sun_position_calc(
+            (double)cfg.latitude,
+            (double)cfg.longitude,
             utc_off,
             lt.tm_year + 1900,
             lt.tm_mon  + 1,
             lt.tm_mday);
-        s_last_day = lt.tm_mday;
 
-        if (s_sun.valid) {
+        if (new_sun.valid) {
             ESP_LOGI(TAG, "Sunrise %02d:%02d  Sunset %02d:%02d",
-                     s_sun.sunrise_min / 60, s_sun.sunrise_min % 60,
-                     s_sun.sunset_min  / 60, s_sun.sunset_min  % 60);
+                     new_sun.sunrise_min / 60, new_sun.sunrise_min % 60,
+                     new_sun.sunset_min  / 60, new_sun.sunset_min  % 60);
         } else {
             ESP_LOGW(TAG, "Polar day/night – no sun times today");
         }
 
-        /* Force phase re-evaluation with the freshly computed sun times */
-        s_phase = PHASE_UNINIT;
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        s_sun      = new_sun;
+        s_last_day = lt.tm_mday;
+        s_phase    = PHASE_UNINIT;   /* re-evaluate after new sun times */
+        xSemaphoreGive(s_mutex);
     }
 
-    if (!s_sun.valid) return;   /* polar region – nothing to do */
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    sun_times_t sun_snap  = s_sun;
+    daily_cycle_phase_t prev_phase = s_phase;
+    xSemaphoreGive(s_mutex);
+
+    if (!sun_snap.valid) return;   /* polar region – nothing to do */
 
     /* ── 3. Determine current phase ─────────────────────────────── */
     led_scenes_config_t scene_cfg = led_scenes_get_config();
@@ -274,15 +314,17 @@ void daily_cycle_tick(void)
 
     daily_cycle_phase_t phase = compute_phase(
         cur,
-        s_sun.sunrise_min,
-        s_sun.sunset_min,
+        sun_snap.sunrise_min,
+        sun_snap.sunset_min,
         (int)scene_cfg.sunrise_duration_min,
         (int)scene_cfg.sunset_duration_min);
 
     /* ── 4. Apply phase on change ────────────────────────────────── */
-    if (phase != s_phase) {
+    if (phase != prev_phase) {
         apply_phase(phase);
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_phase = phase;
+        xSemaphoreGive(s_mutex);
     } else if (phase == DAILY_PHASE_SUNRISE || phase == DAILY_PHASE_SUNSET) {
         /* Re-start scene if it finished or was stopped externally */
         if (!led_scenes_is_running()) {
@@ -293,15 +335,27 @@ void daily_cycle_tick(void)
 
 daily_cycle_phase_t daily_cycle_get_phase(void)
 {
-    return (s_phase == PHASE_UNINIT) ? DAILY_PHASE_NIGHT : s_phase;
+    if (s_mutex == NULL) return DAILY_PHASE_NIGHT;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    daily_cycle_phase_t p = (s_phase == PHASE_UNINIT) ? DAILY_PHASE_NIGHT : s_phase;
+    xSemaphoreGive(s_mutex);
+    return p;
 }
 
 int daily_cycle_get_sunrise_min(void)
 {
-    return s_sun.valid ? s_sun.sunrise_min : -1;
+    if (s_mutex == NULL) return -1;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int v = s_sun.valid ? s_sun.sunrise_min : -1;
+    xSemaphoreGive(s_mutex);
+    return v;
 }
 
 int daily_cycle_get_sunset_min(void)
 {
-    return s_sun.valid ? s_sun.sunset_min : -1;
+    if (s_mutex == NULL) return -1;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int v = s_sun.valid ? s_sun.sunset_min : -1;
+    xSemaphoreGive(s_mutex);
+    return v;
 }

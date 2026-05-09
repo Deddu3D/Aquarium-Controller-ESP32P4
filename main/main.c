@@ -16,7 +16,6 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -91,7 +90,7 @@ void app_main(void)
     /* ── 1b. Initialise Task Watchdog Timer ───────────────────── */
     {
         esp_task_wdt_config_t wdt_cfg = {
-            .timeout_ms    = 30000,  /* 30 s watchdog timeout */
+            .timeout_ms    = 45000,  /* 45 s – must exceed WIFI_INIT_TIMEOUT_MS (30 s) */
             .idle_core_mask = 0,     /* do not monitor idle tasks */
             .trigger_panic = true,   /* reboot on WDT timeout */
         };
@@ -101,7 +100,7 @@ void app_main(void)
         }
         if (ret == ESP_OK) {
             esp_task_wdt_add(NULL);  /* subscribe main task */
-            ESP_LOGI(TAG, "Task watchdog initialised (30 s timeout)");
+            ESP_LOGI(TAG, "Task watchdog initialised (45 s timeout)");
         } else {
             ESP_LOGW(TAG, "Task WDT init failed (0x%x) – continuing", ret);
         }
@@ -242,10 +241,13 @@ void app_main(void)
     }
 
     /* ── 10. Start HTTP status server ─────────────────────────────── */
+    bool web_server_running = false;
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "HTTP server start failed (0x%x)", ret);
+        } else {
+            web_server_running = true;
         }
     } else if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "AP mode active – captive portal at http://192.168.4.1");
@@ -269,6 +271,15 @@ void app_main(void)
     /* ── 12. Main application loop ─────────────────────────────────── */
     ESP_LOGI(TAG, "Entering main loop …");
     while (1) {
+        /* ── Lazy web-server start after captive-portal reconnect ── */
+        if (!web_server_running && wifi_manager_is_connected()) {
+            ret = web_server_start();
+            if (ret == ESP_OK) {
+                web_server_running = true;
+                ESP_LOGI(TAG, "Web server started after WiFi reconnection");
+            }
+        }
+
         /* Evaluate LED time-of-day schedule */
         led_schedule_tick();
 

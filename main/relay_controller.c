@@ -302,24 +302,6 @@ esp_err_t relay_controller_set_schedule(int index, int slot,
     return ESP_OK;
 }
 
-esp_err_t relay_controller_set_all_schedules(int index,
-                                             const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS])
-{
-    if (index < 0 || index >= RELAY_COUNT || schedules == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
-        s_relay[index].schedules[s] = schedules[s];
-        if (s_relay[index].schedules[s].on_min  > 1439)
-            s_relay[index].schedules[s].on_min  = 1439;
-        if (s_relay[index].schedules[s].off_min > 1439)
-            s_relay[index].schedules[s].off_min = 1439;
-    }
-    xSemaphoreGive(s_mutex);
-    nvs_save_schedules(index);
-    return ESP_OK;
-}
 
 void relay_controller_tick_schedules(void)
 {
@@ -361,6 +343,10 @@ void relay_controller_tick_schedules(void)
             s_relay[i].on = should_be_on;
             gpio_apply(i);
             relay_change_cb_t cb = s_change_cb;
+            /* Copy name while still holding the mutex */
+            char relay_name[RELAY_NAME_MAX];
+            strncpy(relay_name, s_relay[i].name, sizeof(relay_name) - 1);
+            relay_name[sizeof(relay_name) - 1] = '\0';
             /* Release the lock before invoking the callback to prevent
              * deadlocks if the callback calls back into this module.
              * There is a brief window where relay state is modified but
@@ -369,7 +355,7 @@ void relay_controller_tick_schedules(void)
             xSemaphoreGive(s_mutex);
 
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
-                     i, s_relay[i].name, should_be_on ? "ON" : "OFF");
+                     i, relay_name, should_be_on ? "ON" : "OFF");
 
             if (cb) {
                 cb(i, should_be_on, "schedule");

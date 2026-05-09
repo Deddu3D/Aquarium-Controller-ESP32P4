@@ -61,12 +61,16 @@ esp_err_t duckdns_set_config(const duckdns_config_t *cfg);
 esp_err_t duckdns_update_now(void);
 
 /**
- * @brief Return the last known update status string.
+ * @brief Copy the last known update status string into a caller buffer.
  *
- * The buffer is statically owned by the module; do not free it.
+ * Thread-safe: the copy is made under the module mutex so no race
+ * with the background update task that writes the status.
  * Possible values: "OK", "KO", "never", "error: <msg>".
+ *
+ * @param buf     Destination buffer (must not be NULL).
+ * @param buf_len Size of the destination buffer.
  */
-const char *duckdns_get_last_status(void);
+void duckdns_get_last_status(char *buf, size_t buf_len);
 
 #ifdef __cplusplus
 }
