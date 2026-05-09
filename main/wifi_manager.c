@@ -25,6 +25,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "wifi_manager.h"
+#include "mdns.h"
 
 /* ── Configuration ───────────────────────────────────────────────── */
 
@@ -191,6 +192,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_is_connected = true;
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+        }
+
+        /* ── mDNS: announce aquarium.local on the LAN ─────────────── */
+        esp_err_t mdns_err = mdns_init();
+        if (mdns_err == ESP_OK) {
+            mdns_hostname_set("aquarium");
+            mdns_instance_name_set("Aquarium Controller");
+            mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+            ESP_LOGI(TAG, "mDNS started – device reachable at http://aquarium.local");
+        } else {
+            ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
         }
     }
 }

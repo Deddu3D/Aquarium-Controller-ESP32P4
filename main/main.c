@@ -293,24 +293,30 @@ void app_main(void)
         }
 
         /* Evaluate LED time-of-day schedule */
+        esp_task_wdt_reset();
         led_schedule_tick();
 
         /* Evaluate relay time-of-day schedule slots */
+        esp_task_wdt_reset();
         relay_controller_tick_schedules();
 
         /* Evaluate auto-heater thermostat logic */
+        esp_task_wdt_reset();
         auto_heater_tick();
 
         /* Evaluate CO2 solenoid valve logic */
+        esp_task_wdt_reset();
         co2_controller_tick();
 
         /* Evaluate feeding mode timer */
+        esp_task_wdt_reset();
         feeding_mode_tick();
 
         /* Evaluate daily lighting cycle */
+        esp_task_wdt_reset();
         daily_cycle_tick();
 
-        esp_task_wdt_reset();   /* feed the watchdog */
+        esp_task_wdt_reset();   /* final feed before the long sleep */
         vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
     }
 }

@@ -130,11 +130,40 @@ esp_err_t relay_controller_set_schedule(int index, int slot,
  */
 void relay_controller_tick_schedules(void);
 
+/** Maximum number of simultaneous relay change callbacks */
+#define RELAY_CHANGE_CB_MAX 4
+
 /**
  * @brief Register a callback for relay state changes.
  *
- * Only one callback is supported; pass NULL to unregister.
- * The callback is invoked from the calling task context.
+ * Up to RELAY_CHANGE_CB_MAX callbacks can be registered simultaneously.
+ * Registering the same pointer twice has no effect.
+ * Pass NULL to have no effect (use relay_controller_remove_change_cb to
+ * unregister).
+ *
+ * For backwards compatibility, relay_controller_set_change_cb() replaces
+ * the callback at slot 0 (or registers it if no slot is occupied).
+ *
+ * @param cb  Callback function.
+ * @return ESP_OK, ESP_ERR_INVALID_ARG if cb is NULL, or ESP_ERR_NO_MEM
+ *         if all slots are occupied.
+ */
+esp_err_t relay_controller_add_change_cb(relay_change_cb_t cb);
+
+/**
+ * @brief Unregister a previously added relay state change callback.
+ *
+ * @param cb  Callback function to remove.
+ * @return ESP_OK or ESP_ERR_INVALID_ARG.
+ */
+esp_err_t relay_controller_remove_change_cb(relay_change_cb_t cb);
+
+/**
+ * @brief Register a callback for relay state changes.
+ *
+ * Only one callback is supported via this legacy API; calling again
+ * replaces the previous slot-0 callback.  Pass NULL to unregister
+ * the slot-0 callback.
  *
  * @param cb  Callback function or NULL.
  */

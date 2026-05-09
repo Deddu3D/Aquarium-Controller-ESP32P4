@@ -111,6 +111,14 @@ led_scene_t led_scenes_get_active(void);
  */
 bool led_scenes_is_running(void);
 
+/**
+ * @brief Return the current lunar phase illumination fraction.
+ *
+ * @return Value in [0.0, 1.0] where 0.0 = new moon and 1.0 = full moon.
+ *         Returns 0.5 if the system clock is not yet synchronised.
+ */
+float led_scenes_get_moon_phase(void);
+
 #ifdef __cplusplus
 }
 #endif

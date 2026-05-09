@@ -49,7 +49,7 @@ static const char *s_default_names[RELAY_COUNT] = {
 /* Runtime state – protected by s_mutex for thread safety */
 static relay_state_t     s_relay[RELAY_COUNT];
 static SemaphoreHandle_t s_mutex = NULL;
-static relay_change_cb_t s_change_cb = NULL;
+static relay_change_cb_t s_change_cbs[RELAY_CHANGE_CB_MAX];
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -177,6 +177,9 @@ esp_err_t relay_controller_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    /* Initialise callback list to NULL */
+    memset(s_change_cbs, 0, sizeof(s_change_cbs));
+
     /* Load persisted state and names from NVS */
     nvs_load();
 
@@ -216,16 +219,20 @@ esp_err_t relay_controller_set(int index, bool on)
     bool prev = s_relay[index].on;
     s_relay[index].on = on;
     gpio_apply(index);
-    relay_change_cb_t cb = s_change_cb;
+    /* Snapshot callback list while holding the mutex */
+    relay_change_cb_t cbs[RELAY_CHANGE_CB_MAX];
+    memcpy(cbs, s_change_cbs, sizeof(cbs));
     xSemaphoreGive(s_mutex);
 
     nvs_save_state(index);
     ESP_LOGI(TAG, "Relay %d (%s) → %s",
              index, s_relay[index].name, on ? "ON" : "OFF");
 
-    /* Fire change callback only when state actually changes */
-    if (cb && prev != on) {
-        cb(index, on, "manual");
+    /* Fire all registered callbacks only when state actually changes */
+    if (prev != on) {
+        for (int k = 0; k < RELAY_CHANGE_CB_MAX; k++) {
+            if (cbs[k]) cbs[k](index, on, "manual");
+        }
     }
 
     return ESP_OK;
@@ -342,23 +349,22 @@ void relay_controller_tick_schedules(void)
         if (should_be_on != s_relay[i].on) {
             s_relay[i].on = should_be_on;
             gpio_apply(i);
-            relay_change_cb_t cb = s_change_cb;
+            /* Snapshot callback list while still holding the mutex */
+            relay_change_cb_t cbs[RELAY_CHANGE_CB_MAX];
+            memcpy(cbs, s_change_cbs, sizeof(cbs));
             /* Copy name while still holding the mutex */
             char relay_name[RELAY_NAME_MAX];
             strncpy(relay_name, s_relay[i].name, sizeof(relay_name) - 1);
             relay_name[sizeof(relay_name) - 1] = '\0';
-            /* Release the lock before invoking the callback to prevent
-             * deadlocks if the callback calls back into this module.
-             * There is a brief window where relay state is modified but
-             * the callback has not yet fired; this is intentional and
-             * acceptable for a single-threaded main-loop design. */
+            /* Release the lock before invoking callbacks to prevent
+             * deadlocks if a callback calls back into this module. */
             xSemaphoreGive(s_mutex);
 
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
                      i, relay_name, should_be_on ? "ON" : "OFF");
 
-            if (cb) {
-                cb(i, should_be_on, "schedule");
+            for (int k = 0; k < RELAY_CHANGE_CB_MAX; k++) {
+                if (cbs[k]) cbs[k](i, should_be_on, "schedule");
             }
 
             xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -369,7 +375,49 @@ void relay_controller_tick_schedules(void)
 
 void relay_controller_set_change_cb(relay_change_cb_t cb)
 {
+    /* Legacy API: set slot 0 */
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_change_cb = cb;
+    s_change_cbs[0] = cb;
     xSemaphoreGive(s_mutex);
+}
+
+esp_err_t relay_controller_add_change_cb(relay_change_cb_t cb)
+{
+    if (cb == NULL) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    /* Check for duplicate */
+    for (int i = 0; i < RELAY_CHANGE_CB_MAX; i++) {
+        if (s_change_cbs[i] == cb) {
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+    }
+    /* Find a free slot */
+    for (int i = 0; i < RELAY_CHANGE_CB_MAX; i++) {
+        if (s_change_cbs[i] == NULL) {
+            s_change_cbs[i] = cb;
+            xSemaphoreGive(s_mutex);
+            ESP_LOGI(TAG, "Relay change callback registered at slot %d", i);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    ESP_LOGE(TAG, "No free relay callback slots (max %d)", RELAY_CHANGE_CB_MAX);
+    return ESP_ERR_NO_MEM;
+}
+
+esp_err_t relay_controller_remove_change_cb(relay_change_cb_t cb)
+{
+    if (cb == NULL) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (int i = 0; i < RELAY_CHANGE_CB_MAX; i++) {
+        if (s_change_cbs[i] == cb) {
+            s_change_cbs[i] = NULL;
+            xSemaphoreGive(s_mutex);
+            ESP_LOGI(TAG, "Relay change callback removed from slot %d", i);
+            return ESP_OK;
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return ESP_ERR_INVALID_ARG;
 }
