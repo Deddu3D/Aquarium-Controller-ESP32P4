@@ -5,13 +5,14 @@
  * Automatically simulates a natural full-day lighting cycle using real
  * sunrise / sunset times computed from geographic coordinates:
  *
- *   Night      – LEDs completely off
- *   Sunrise    – LED_SCENE_SUNRISE ramp (warm amber → daylight white)
+ *   Night      – LEDs completely off (before sunrise and after sunset)
+ *   Sunrise    – LED_SCENE_SUNRISE ramp (warm amber → daylight white); starts at sunrise
  *   Morning    – warm daylight white
  *   Noon       – full bright white (around solar noon)
  *   Afternoon  – warm white
- *   Sunset     – LED_SCENE_SUNSET ramp (daylight white → warm amber → off)
- *   Evening    – very dim warm glow (≈60 min twilight after sunset)
+ *   Sunset     – LED_SCENE_SUNSET ramp (daylight white → warm amber → off);
+ *                starts sunset_duration minutes BEFORE astronomical sunset so the
+ *                scene finishes (LEDs off) exactly at the sunset minute
  *
  * Sun times are recomputed once per day using the NOAA simplified
  * solar equations (sun_position.h) and the device's current geographic
@@ -35,13 +36,13 @@ extern "C" {
 /* ── Phase identifiers ──────────────────────────────────────────── */
 
 typedef enum {
-    DAILY_PHASE_NIGHT     = 0, /**< Before sunrise / after evening: LEDs off   */
+    DAILY_PHASE_NIGHT     = 0, /**< Before sunrise / after sunset: LEDs off    */
     DAILY_PHASE_SUNRISE   = 1, /**< Sunrise colour ramp (LED_SCENE_SUNRISE)    */
     DAILY_PHASE_MORNING   = 2, /**< Post-sunrise warm daylight                 */
     DAILY_PHASE_NOON      = 3, /**< Midday full-brightness white               */
     DAILY_PHASE_AFTERNOON = 4, /**< Pre-sunset warm white                      */
     DAILY_PHASE_SUNSET    = 5, /**< Sunset colour ramp (LED_SCENE_SUNSET)      */
-    DAILY_PHASE_EVENING   = 6, /**< Post-sunset dim warm glow                  */
+    DAILY_PHASE_EVENING   = 6, /**< Reserved – not triggered by the daily cycle */
 } daily_cycle_phase_t;
 
 /* ── Configuration ──────────────────────────────────────────────── */
