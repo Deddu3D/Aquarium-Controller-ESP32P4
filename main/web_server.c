@@ -147,7 +147,7 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-/* Kept at 61 to preserve headroom for the large API surface + /www/* handler. */
+/* Keep a generous limit for the current API set and future endpoint growth. */
 #define HTTP_MAX_URI_HANDLERS  61
 
 /* ── Embedded Web UI server (/ and /www/*) ───────────────────────────── */
@@ -160,6 +160,7 @@ static esp_err_t send_embedded_file(httpd_req_t *req,
 {
     uintptr_t start_addr = (uintptr_t)start;
     uintptr_t end_addr   = (uintptr_t)end;
+    /* Sanity check: linker-provided end marker must follow start marker. */
     if (end_addr <= start_addr) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
                             "Embedded asset has invalid boundaries");
