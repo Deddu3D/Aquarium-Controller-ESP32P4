@@ -134,7 +134,7 @@ esp_err_t sd_card_init(void)
         .sclk_io_num     = CONFIG_SD_CLK_GPIO,  /* GPIO 43 */
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = 4000,
+        .max_transfer_sz = 32768,
     };
     esp_err_t ret = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
@@ -143,8 +143,11 @@ esp_err_t sd_card_init(void)
     }
     s_spi_bus_inited = true;
 
-    /* SPI host configuration: 4 MHz is safe for all SD cards during init;
-     * the sdspi driver will negotiate a higher speed after CMD0. */
+    /* SPI host configuration: 4 MHz is a conservative maximum transfer speed
+     * that works reliably on all SD card brands.  The sdspi driver always
+     * uses 400 kHz for the CMD0 initialization sequence internally,
+     * regardless of this setting.  SDSPI_HOST_DEFAULT() defaults to 20 MHz;
+     * we reduce it here to minimise signal-integrity risk on board traces. */
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.max_freq_khz = 4000;
 
