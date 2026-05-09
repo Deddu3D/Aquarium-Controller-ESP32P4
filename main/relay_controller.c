@@ -372,6 +372,12 @@ void relay_controller_tick_schedules(void)
              * deadlocks if a callback calls back into this module. */
             xSemaphoreGive(s_mutex);
 
+            /* Persist the schedule-driven state so it survives a reboot.
+             * Without this the NVS would still hold the old manual state and
+             * the relay would be in the wrong position for up to 60 s after
+             * the next boot until the first schedule tick corrects it. */
+            nvs_save_state(i);
+
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
                      i, relay_name, should_be_on ? "ON" : "OFF");
 
