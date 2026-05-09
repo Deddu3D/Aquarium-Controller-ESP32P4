@@ -135,6 +135,9 @@ CONFIG_WEB_AUTH_ENABLE=y
 CONFIG_WEB_AUTH_USERNAME="admin"
 CONFIG_WEB_AUTH_PASSWORD="aquarium"
 
+# ── HTTP server / WebSocket ───────────────────────────────────────
+CONFIG_HTTPD_WS_SUPPORT=y
+
 # ── LED Scene defaults ────────────────────────────────────────────
 CONFIG_LED_SCENE_SUNRISE_DURATION_MIN=30
 CONFIG_LED_SCENE_SUNSET_DURATION_MIN=30
