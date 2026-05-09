@@ -16,6 +16,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_mac.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -67,7 +68,8 @@ static bool               s_ap_mode;
 static esp_netif_t       *s_sta_netif;
 static esp_netif_t       *s_ap_netif;
 static uint32_t           s_backoff_ms;
-static httpd_handle_t     s_portal_server = NULL;
+static httpd_handle_t     s_portal_server  = NULL;
+static esp_timer_handle_t s_reconnect_timer = NULL;
 
 /* Stored credentials (loaded from NVS, falling back to Kconfig) */
 static char s_ssid[WIFI_SSID_MAX];
@@ -113,6 +115,21 @@ static esp_err_t nvs_save_credentials(const char *ssid, const char *password)
     return ESP_OK;
 }
 
+/* ── Reconnect timer ─────────────────────────────────────────────── */
+
+/**
+ * @brief One-shot timer callback that retries esp_wifi_connect().
+ *
+ * Using a timer instead of vTaskDelay() in the event handler avoids
+ * blocking the esp_event_loop_task, which would starve all other
+ * WiFi / IP event processing.
+ */
+static void reconnect_timer_cb(void *arg)
+{
+    (void)arg;
+    esp_wifi_connect();
+}
+
 /* ── Event handler ───────────────────────────────────────────────── */
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -130,12 +147,20 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             s_retry_count++;
             ESP_LOGW(TAG, "Disconnected – retry %d (backoff %" PRIu32 " ms)",
                      s_retry_count, s_backoff_ms);
-            vTaskDelay(pdMS_TO_TICKS(s_backoff_ms));
+            /* Schedule reconnect via one-shot timer so we never block
+             * the esp_event_loop_task with vTaskDelay(). */
+            if (s_reconnect_timer != NULL) {
+                esp_timer_stop(s_reconnect_timer);   /* cancel any pending */
+                esp_timer_start_once(s_reconnect_timer,
+                                     (uint64_t)s_backoff_ms * 1000ULL);
+            } else {
+                /* Timer not yet created – connect immediately */
+                esp_wifi_connect();
+            }
             s_backoff_ms *= 2;
             if (s_backoff_ms > WIFI_BACKOFF_MAX_MS) {
                 s_backoff_ms = WIFI_BACKOFF_MAX_MS;
             }
-            esp_wifi_connect();
             break;
         }
 
@@ -377,6 +402,15 @@ esp_err_t wifi_manager_init(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+    /* Create the one-shot timer used for back-off reconnect */
+    esp_timer_create_args_t timer_args = {
+        .callback        = reconnect_timer_cb,
+        .arg             = NULL,
+        .name            = "wifi_reconnect",
+        .dispatch_method = ESP_TIMER_TASK,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_reconnect_timer));
+
     esp_event_handler_instance_t inst_any_wifi;
     esp_event_handler_instance_t inst_got_ip;
 
@@ -473,6 +507,11 @@ esp_err_t wifi_manager_set_credentials(const char *ssid, const char *password)
     s_is_connected = false;
     s_retry_count  = 0;
     s_backoff_ms   = WIFI_BACKOFF_INITIAL_MS;
+
+    /* Cancel any pending reconnect timer */
+    if (s_reconnect_timer != NULL) {
+        esp_timer_stop(s_reconnect_timer);
+    }
 
     /* Stop portal if running */
     if (s_portal_server) {

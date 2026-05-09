@@ -361,6 +361,10 @@ void relay_controller_tick_schedules(void)
             s_relay[i].on = should_be_on;
             gpio_apply(i);
             relay_change_cb_t cb = s_change_cb;
+            /* Copy name while still holding the mutex */
+            char relay_name[RELAY_NAME_MAX];
+            strncpy(relay_name, s_relay[i].name, sizeof(relay_name) - 1);
+            relay_name[sizeof(relay_name) - 1] = '\0';
             /* Release the lock before invoking the callback to prevent
              * deadlocks if the callback calls back into this module.
              * There is a brief window where relay state is modified but
@@ -369,7 +373,7 @@ void relay_controller_tick_schedules(void)
             xSemaphoreGive(s_mutex);
 
             ESP_LOGI(TAG, "Schedule: Relay %d (%s) → %s",
-                     i, s_relay[i].name, should_be_on ? "ON" : "OFF");
+                     i, relay_name, should_be_on ? "ON" : "OFF");
 
             if (cb) {
                 cb(i, should_be_on, "schedule");
