@@ -61,6 +61,48 @@ ota_progress_t ota_update_get_progress(void);
  */
 bool ota_update_in_progress(void);
 
+/* ── Direct-upload OTA API ───────────────────────────────────────── */
+
+/**
+ * @brief Begin an OTA firmware upload from raw binary data.
+ *
+ * Selects the next OTA partition and calls esp_ota_begin().
+ * Must be followed by one or more ota_update_write() calls and
+ * a final ota_update_finish() (or ota_update_abort_upload() on error).
+ *
+ * @return ESP_OK on success, or an error code.
+ */
+esp_err_t ota_update_begin(void);
+
+/**
+ * @brief Write a chunk of firmware binary data to the OTA partition.
+ *
+ * @param buf  Pointer to binary data buffer.
+ * @param len  Number of bytes to write.
+ * @return ESP_OK on success, or an error code.
+ */
+esp_err_t ota_update_write(const void *buf, size_t len);
+
+/**
+ * @brief Finalise the OTA upload, validate the image, and set the new
+ *        partition as the boot target.
+ *
+ * @return ESP_OK on success, or an error code.
+ */
+esp_err_t ota_update_finish(void);
+
+/**
+ * @brief Abort an in-progress OTA upload and reset internal state.
+ */
+void ota_update_abort_upload(void);
+
+/**
+ * @brief Update the flash progress percentage displayed by /api/ota_status.
+ *
+ * @param pct  Progress value 0–100.
+ */
+void ota_update_set_progress(int pct);
+
 #ifdef __cplusplus
 }
 #endif
