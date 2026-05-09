@@ -2,22 +2,22 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - SD Card Manager implementation
- * Mounts a FAT32 microSD card via the SDMMC peripheral and provides
+ * Mounts a FAT32 microSD card via SPI2 (SD-SPI mode) and provides
  * configuration backup / restore via JSON.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
  *
- * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SDMMC1 mode):
- *   SDMMC1_CLK = GPIO 43
- *   SDMMC1_CMD = GPIO 44
- *   SDMMC1_D0  = GPIO 39
- *   SDMMC1_D1  = GPIO 40
- *   SDMMC1_D2  = GPIO 41
- *   SDMMC1_D3  = GPIO 42
+ * Hardware wiring (Waveshare ESP32-P4-WiFi6 onboard TF slot, SPI mode):
+ *   SPI2_SCLK (CLK) = GPIO 43
+ *   SPI2_MOSI (CMD) = GPIO 44
+ *   SPI2_MISO (D0)  = GPIO 39
+ *   SPI2_CS   (D3)  = GPIO 42
  *
- * Note: The WiFi coprocessor SDIO transport uses SDMMC host slot 0
- * (GPIO 14-19). The onboard TF slot is routed to SDMMC host slot 1.
+ * Note: Both SDMMC host controllers on ESP32-P4 are claimed at runtime by
+ * the esp_hosted WiFi coprocessor SDIO transport (ESP-IDF v6.0 "SD_HOST"
+ * pool), so SDMMC mode is unavailable for the onboard TF slot.
+ * SPI2 is independent and fully supported by the ESP-IDF sdspi driver.
  */
 
 #include <stdio.h>
@@ -36,13 +36,10 @@
 #include "esp_vfs_fat.h"
 #include "ff.h"
 #include "driver/gpio.h"
-#include "driver/sdmmc_host.h"
+#include "driver/spi_master.h"
+#include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "cJSON.h"
-
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-#include "sd_pwr_ctrl_by_on_chip_ldo.h"
-#endif
 
 #include "sd_card.h"
 
@@ -73,9 +70,7 @@ static const char *TAG = "sd_card";
 static sdmmc_card_t      *s_card           = NULL;
 static bool               s_mounted        = false;
 static SemaphoreHandle_t  s_mutex          = NULL;
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-static sd_pwr_ctrl_handle_t s_pwr_ctrl_handle = NULL;
-#endif
+static bool               s_spi_bus_inited = false;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -87,70 +82,6 @@ static void ensure_dir(const char *path)
         mkdir(path, 0775);
     }
 }
-
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-static esp_err_t sd_power_ctrl_init(sdmmc_host_t *host)
-{
-#if CONFIG_SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
-    if (s_pwr_ctrl_handle == NULL) {
-        sd_pwr_ctrl_ldo_config_t ldo_config = {
-            .ldo_chan_id = CONFIG_SD_CARD_PWR_CTRL_LDO_IO_ID,
-        };
-        esp_err_t ret = sd_pwr_ctrl_new_on_chip_ldo(&ldo_config, &s_pwr_ctrl_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to create SD LDO power control (%s)", esp_err_to_name(ret));
-            return ret;
-        }
-    }
-    host->pwr_ctrl_handle = s_pwr_ctrl_handle;
-#else
-    (void) host;
-#endif
-    return ESP_OK;
-}
-
-static void sd_power_ctrl_deinit(void)
-{
-#if CONFIG_SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
-    if (s_pwr_ctrl_handle != NULL) {
-        esp_err_t ret = sd_pwr_ctrl_del_on_chip_ldo(s_pwr_ctrl_handle);
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to release SD LDO power control (%s)", esp_err_to_name(ret));
-        }
-        s_pwr_ctrl_handle = NULL;
-    }
-#endif
-}
-#endif
-
-/* Kconfig uses GPIO 0 as "disabled" for the optional SD power-reset line. */
-#if defined(CONFIG_SD_CARD_POWER_RESET_GPIO) && (CONFIG_SD_CARD_POWER_RESET_GPIO > 0)
-static esp_err_t sd_card_reset_power(void)
-{
-    gpio_config_t io_conf = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << CONFIG_SD_CARD_POWER_RESET_GPIO),
-    };
-    esp_err_t ret = gpio_config(&io_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure SD power reset GPIO (%s)", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = gpio_set_level(CONFIG_SD_CARD_POWER_RESET_GPIO, 1);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    ret = gpio_set_level(CONFIG_SD_CARD_POWER_RESET_GPIO, 0);
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    vTaskDelay(pdMS_TO_TICKS(10));
-    return ESP_OK;
-}
-#endif
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
@@ -172,55 +103,57 @@ esp_err_t sd_card_init(void)
         return ESP_OK;
     }
 
-#if CONFIG_SD_CARD_BUS_WIDTH_4
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d D1=%d D2=%d D3=%d, width=4-bit)",
-             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO,
-             CONFIG_SD_D1_GPIO, CONFIG_SD_D2_GPIO, CONFIG_SD_D3_GPIO);
-#else
-    ESP_LOGI(TAG, "Initialising SD card (SDMMC1, CLK=%d CMD=%d D0=%d, width=1-bit)",
-             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO, CONFIG_SD_D0_GPIO);
-#endif
+    ESP_LOGI(TAG, "Initialising SD card (SPI2, SCLK=%d MOSI=%d MISO=%d CS=%d)",
+             CONFIG_SD_CLK_GPIO, CONFIG_SD_CMD_GPIO,
+             CONFIG_SD_D0_GPIO, CONFIG_SD_D3_GPIO);
 
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot = SDMMC_HOST_SLOT_1;
-#if CONFIG_SD_CARD_SPEED_DEFAULT
-    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
-#else
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
-#endif
+    /* Enable internal pull-ups on all SD lines before touching the bus.
+     * In SPI mode the MISO (D0) line must idle HIGH when the card is not
+     * driving it; the other lines benefit from pull-ups for signal integrity. */
+    gpio_set_pull_mode(CONFIG_SD_CLK_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(CONFIG_SD_CMD_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(CONFIG_SD_D0_GPIO,  GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(CONFIG_SD_D3_GPIO,  GPIO_PULLUP_ONLY);
 
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-    esp_err_t ret = sd_power_ctrl_init(&host);
+    /* Assert CS HIGH before the SPI bus starts.  Without this the card may
+     * see an undefined CS state during power-on and ignore CMD0. */
+    gpio_set_direction(CONFIG_SD_D3_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(CONFIG_SD_D3_GPIO, 1);
+
+    /* SD cards need ≥74 clock cycles at ≤400 kHz after power-on before the
+     * first SPI command (≈185 µs minimum).  100 ms gives plenty of margin
+     * for slow power-rail rise times on the Waveshare board. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* Initialise SPI2 bus.  Both SDMMC controllers on ESP32-P4 are taken by
+     * the esp_hosted WiFi SDIO transport (ESP-IDF v6.0 "SD_HOST" pool), so
+     * SPI2 is the only option for the onboard TF slot. */
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num     = CONFIG_SD_CMD_GPIO,  /* GPIO 44 */
+        .miso_io_num     = CONFIG_SD_D0_GPIO,   /* GPIO 39 */
+        .sclk_io_num     = CONFIG_SD_CLK_GPIO,  /* GPIO 43 */
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
+        .max_transfer_sz = 32768,
+    };
+    esp_err_t ret = spi_bus_initialize(SPI2_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI2 bus init failed: %s", esp_err_to_name(ret));
         return ret;
     }
-#else
-    esp_err_t ret = ESP_OK;
-#endif
+    s_spi_bus_inited = true;
 
-#if defined(CONFIG_SD_CARD_POWER_RESET_GPIO) && (CONFIG_SD_CARD_POWER_RESET_GPIO > 0)
-    ret = sd_card_reset_power();
-    if (ret != ESP_OK) {
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-        sd_power_ctrl_deinit();
-#endif
-        return ret;
-    }
-#endif
+    /* SPI host configuration: 4 MHz is a conservative maximum transfer speed
+     * that works reliably on all SD card brands.  The sdspi driver always
+     * uses 400 kHz for the CMD0 initialization sequence internally,
+     * regardless of this setting.  SDSPI_HOST_DEFAULT() defaults to 20 MHz;
+     * we reduce it here to minimise signal-integrity risk on board traces. */
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.max_freq_khz = 4000;
 
-    sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-#if CONFIG_SD_CARD_BUS_WIDTH_4
-    slot_config.width = 4;
-    slot_config.d1  = CONFIG_SD_D1_GPIO;
-    slot_config.d2  = CONFIG_SD_D2_GPIO;
-    slot_config.d3  = CONFIG_SD_D3_GPIO;
-#else
-    slot_config.width = 1;
-#endif
-    slot_config.clk = CONFIG_SD_CLK_GPIO;
-    slot_config.cmd = CONFIG_SD_CMD_GPIO;
-    slot_config.d0  = CONFIG_SD_D0_GPIO;
-    slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+    sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot_config.gpio_cs = CONFIG_SD_D3_GPIO;  /* GPIO 42 – chip-select (D3) */
+    slot_config.host_id = SPI2_HOST;
 
     esp_vfs_fat_sdmmc_mount_config_t mount_config = {
         .format_if_mount_failed = false,
@@ -230,7 +163,7 @@ esp_err_t sd_card_init(void)
 
     ret = ESP_FAIL;
     for (int attempt = 1; attempt <= SD_MOUNT_RETRIES; attempt++) {
-        ret = esp_vfs_fat_sdmmc_mount(SD_MOUNT_POINT,
+        ret = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT,
                                       &host,
                                       &slot_config,
                                       &mount_config,
@@ -252,9 +185,10 @@ esp_err_t sd_card_init(void)
         } else {
             ESP_LOGE(TAG, "SD mount failed: %s", esp_err_to_name(ret));
         }
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-        sd_power_ctrl_deinit();
-#endif
+        if (s_spi_bus_inited) {
+            spi_bus_free(SPI2_HOST);
+            s_spi_bus_inited = false;
+        }
         return ret;
     }
 
@@ -282,9 +216,10 @@ void sd_card_deinit(void)
     esp_vfs_fat_sdcard_unmount(SD_MOUNT_POINT, s_card);
     s_card    = NULL;
     s_mounted = false;
-#if SOC_SDMMC_IO_POWER_EXTERNAL
-    sd_power_ctrl_deinit();
-#endif
+    if (s_spi_bus_inited) {
+        spi_bus_free(SPI2_HOST);
+        s_spi_bus_inited = false;
+    }
     ESP_LOGI(TAG, "SD card unmounted");
 }
 

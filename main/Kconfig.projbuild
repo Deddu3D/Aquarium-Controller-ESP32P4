@@ -278,130 +278,55 @@ endmenu
 menu "Aquarium SD Card Settings"
 
     config SD_CARD_ENABLED
-        bool "Enable SD card (SDMMC mode)"
+        bool "Enable SD card (SPI mode)"
         default y
         help
-            Mount the onboard microSD card slot via SDMMC host slot 1
-            (GPIO matrix routing).
+            Mount the onboard microSD card slot via the SPI2 peripheral
+            in SD-SPI mode.
             When enabled, data logging, config backup/restore and local OTA are
             available.  Disable only if no SD card is physically present and you
             want to save the mount attempt time at boot.
 
-            SDMMC host slot 0 (fixed IOMUX, GPIO 14-19) is used by the
-            esp_hosted WiFi coprocessor SDIO transport. The onboard TF slot
-            is routed to SDMMC host slot 1.
+            SPI mode is used because the ESP-IDF v6.0 "SD_HOST" controller pool
+            is fully consumed by the esp_hosted WiFi coprocessor SDIO transport
+            at startup, preventing a second SDMMC controller from being created
+            for the onboard TF slot. SPI2 is independent and always available.
 
     if SD_CARD_ENABLED
 
-    choice SD_CARD_BUS_WIDTH
-        prompt "SD/MMC bus width"
-        default SD_CARD_BUS_WIDTH_4
-        help
-            Select the SDMMC bus width used to talk to the onboard TF slot.
-            4-bit mode is faster; 1-bit mode can help diagnose signal or
-            pull-up issues.
-
-        config SD_CARD_BUS_WIDTH_4
-            bool "4 lines (D0 - D3)"
-
-        config SD_CARD_BUS_WIDTH_1
-            bool "1 line (D0)"
-    endchoice
-
-    choice SD_CARD_SPEED_MODE
-        prompt "SD/MMC speed mode"
-        default SD_CARD_SPEED_HS
-        help
-            Default speed is the safest option. High speed matches the current
-            project behaviour and provides better throughput on a stable bus.
-
-        config SD_CARD_SPEED_DEFAULT
-            bool "Default Speed (20 MHz)"
-
-        config SD_CARD_SPEED_HS
-            bool "High Speed (40 MHz)"
-    endchoice
-
     config SD_CLK_GPIO
-        int "SDMMC1 CLK GPIO"
+        int "SPI2 SCLK (CLK) GPIO"
         default 43
         range 0 56
         help
-            GPIO number for the SDMMC clock signal to the SD card.
+            GPIO number for the SPI clock signal to the SD card.
             On the Waveshare ESP32-P4-WiFi6 board the onboard TF slot
             connects this pin to GPIO 43.
 
     config SD_CMD_GPIO
-        int "SDMMC1 CMD GPIO"
+        int "SPI2 MOSI (CMD) GPIO"
         default 44
         range 0 56
         help
-            GPIO number for the SDMMC CMD signal.
+            GPIO number for the SPI MOSI signal (SD card CMD pin).
             Corresponds to GPIO 44 on the Waveshare ESP32-P4-WiFi6.
 
     config SD_D0_GPIO
-        int "SDMMC1 D0 GPIO"
+        int "SPI2 MISO (D0) GPIO"
         default 39
         range 0 56
         help
-            GPIO number for the SDMMC D0 data line.
+            GPIO number for the SPI MISO signal (SD card D0 pin).
             Corresponds to GPIO 39 on the Waveshare ESP32-P4-WiFi6.
 
-    if SD_CARD_BUS_WIDTH_4
-
-    config SD_D1_GPIO
-        int "SDMMC1 D1 GPIO"
-        default 40
-        range 0 56
-        help
-            GPIO number for the SDMMC D1 data line.
-            Corresponds to GPIO 40 on the Waveshare ESP32-P4-WiFi6.
-
-    config SD_D2_GPIO
-        int "SDMMC1 D2 GPIO"
-        default 41
-        range 0 56
-        help
-            GPIO number for the SDMMC D2 data line.
-            Corresponds to GPIO 41 on the Waveshare ESP32-P4-WiFi6.
-
     config SD_D3_GPIO
-        int "SDMMC1 D3 GPIO"
+        int "SPI2 CS (D3) GPIO"
         default 42
         range 0 56
         help
-            GPIO number for the SDMMC D3 data line.
+            GPIO number for the SPI chip-select signal (SD card D3 pin).
             Corresponds to GPIO 42 on the Waveshare ESP32-P4-WiFi6.
-
-    endif # SD_CARD_BUS_WIDTH_4
-
-    config SD_CARD_POWER_RESET_GPIO
-        int "Card power reset GPIO (0 to disable)"
-        default 0
-        range 0 56
-        depends on SOC_SDMMC_IO_POWER_EXTERNAL
-        help
-            Optional GPIO that toggles power/reset for the TF slot before mount.
-            Leave at 0 when the slot is always powered or the schematic does not
-            expose a dedicated reset line.
-
-    config SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
-        bool "SD power supply comes from internal LDO IO"
-        default y
-        depends on SOC_SDMMC_IO_POWER_EXTERNAL
-        help
-            Required on ESP32-P4 boards where the TF slot power is sourced from
-            the chip's internal SD LDO when using the default SDMMC pins.
-
-    config SD_CARD_PWR_CTRL_LDO_IO_ID
-        int "Internal SD LDO ID"
-        default 4 if IDF_TARGET_ESP32P4
-        default 0
-        depends on SOC_SDMMC_IO_POWER_EXTERNAL && SD_CARD_PWR_CTRL_LDO_INTERNAL_IO
-        help
-            Internal LDO channel used to power the SD card interface.
-            ESP-IDF's ESP32-P4 SDMMC example uses LDO ID 4 for the default
-            SD pins on this target.
+            This is the D3 line of the TF slot, used as CS in SPI mode.
 
     endif # SD_CARD_ENABLED
 
