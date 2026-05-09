@@ -156,17 +156,24 @@ static esp_err_t send_embedded_file(httpd_req_t *req,
                                     const char *content_type,
                                     bool cache)
 {
-    if (start == NULL || end == NULL || end < start) {
+    if (start == NULL || end == NULL) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Embedded asset invalid");
         return ESP_FAIL;
     }
+    uintptr_t start_addr = (uintptr_t)start;
+    uintptr_t end_addr   = (uintptr_t)end;
+    if (end_addr <= start_addr) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Embedded asset invalid");
+        return ESP_FAIL;
+    }
+    size_t len = (size_t)(end_addr - start_addr);
     httpd_resp_set_type(req, content_type);
     if (cache) {
         httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
     } else {
         httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     }
-    return httpd_resp_send(req, (const char *)start, (ssize_t)(end - start));
+    return httpd_resp_send(req, (const char *)start, (ssize_t)len);
 }
 
 /**
