@@ -16,12 +16,15 @@
  */
 
 #include <stdio.h>
+#include <inttypes.h>
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "esp_netif_sntp.h"
 #include "esp_task_wdt.h"
 #include "esp_ota_ops.h"
@@ -42,18 +45,44 @@
 #include "display_ui.h"
 #include "feeding_mode.h"
 #include "daily_cycle.h"
+#include "event_log.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
 static const UBaseType_t DISPLAY_INIT_TASK_PRIORITY = 4; /* above idle, below system-critical tasks */
 static const BaseType_t DISPLAY_INIT_TASK_CORE = tskNO_AFFINITY;
 
-/* ── Relay change callback → Telegram notification ─────────────── */
+/* ── Restart counter (NVS-persisted) ────────────────────────────── */
+#define RESTART_NVS_NS  "sys_stats"
+#define RESTART_NVS_KEY "boot_count"
+
+static uint32_t s_boot_count = 0;
+
+static void restart_counter_load_and_increment(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(RESTART_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_get_u32(h, RESTART_NVS_KEY, &s_boot_count);
+        s_boot_count++;
+        nvs_set_u32(h, RESTART_NVS_KEY, s_boot_count);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+uint32_t app_main_get_boot_count(void) { return s_boot_count; }
+
+/* ── Relay change callback → Telegram + event log ──────────────── */
 static void on_relay_change(int index, bool on, const char *source)
 {
     char name[RELAY_NAME_MAX];
     relay_controller_get_name(index, name, sizeof(name));
     telegram_notify_relay_change(index, on, name, source);
+
+    char evt[EVENT_MSG_MAX];
+    snprintf(evt, sizeof(evt), "Relay %d (%s) %s [%s]",
+             index + 1, name, on ? "ON" : "OFF", source);
+    event_log_add(EVT_RELAY_CHANGE, evt);
 }
 
 static void display_init_task(void *arg)
@@ -87,6 +116,28 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "NVS initialised");
+
+    /* ── 1a. Restart counter and event log ────────────────────── */
+    restart_counter_load_and_increment();
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    ESP_LOGI(TAG, "Boot #%" PRIu32 "  Reset reason: %d", s_boot_count, (int)reset_reason);
+
+    event_log_init();
+
+    {
+        static const char * const reason_str[] = {
+            "unknown", "power-on", "ext-reset", "sw-reset",
+            "exception/panic", "int-watchdog", "task-watchdog", "other-watchdog",
+            "deepsleep-wakeup", "brownout", "sdio",
+        };
+        int ri = (int)reset_reason;
+        char boot_msg[64];
+        snprintf(boot_msg, sizeof(boot_msg), "Boot #%" PRIu32 " reason: %s",
+                 s_boot_count,
+                 (ri >= 0 && ri < (int)(sizeof(reason_str)/sizeof(reason_str[0])))
+                     ? reason_str[ri] : "unknown");
+        event_log_add(EVT_SYSTEM, boot_msg);
+    }
 
     /* ── 1b. Initialise Task Watchdog Timer ───────────────────── */
     {
@@ -280,9 +331,24 @@ void app_main(void)
         }
     }
 
-    /* ── 13. Main application loop ─────────────────────────────────── */
+    /* ── 13. Main application loop (adaptive per-module tick) ────── */
     ESP_LOGI(TAG, "Entering main loop …");
+
+    /* Per-module last-call timestamps (microseconds via esp_timer_get_time) */
+    int64_t t_led_sched  = 0;   /* LED schedule:  60 s */
+    int64_t t_relay_sched = 0;  /* Relay sched:   60 s */
+    int64_t t_heater     = 0;   /* Auto-heater:   30 s */
+    int64_t t_co2        = 0;   /* CO2 valve:     60 s */
+    int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
+    int64_t t_daily      = 0;   /* Daily cycle:   60 s */
+
+#define TICK_INTERVAL_US(sec)  ((int64_t)(sec) * 1000000LL)
+#define SINCE(t)               (esp_timer_get_time() - (t))
+
     while (1) {
+        esp_task_wdt_reset();
+        int64_t now = esp_timer_get_time();
+
         /* ── Lazy web-server start after captive-portal reconnect ── */
         if (!web_server_running && wifi_manager_is_connected()) {
             ret = web_server_start();
@@ -292,31 +358,46 @@ void app_main(void)
             }
         }
 
-        /* Evaluate LED time-of-day schedule */
-        esp_task_wdt_reset();
-        led_schedule_tick();
+        /* Feeding mode: 10 s – fast poll for timer expiry */
+        if (SINCE(t_feeding) >= TICK_INTERVAL_US(10)) {
+            feeding_mode_tick();
+            t_feeding = now;
+        }
 
-        /* Evaluate relay time-of-day schedule slots */
-        esp_task_wdt_reset();
-        relay_controller_tick_schedules();
+        /* Auto-heater: 30 s */
+        if (SINCE(t_heater) >= TICK_INTERVAL_US(30)) {
+            auto_heater_tick();
+            t_heater = now;
+        }
 
-        /* Evaluate auto-heater thermostat logic */
-        esp_task_wdt_reset();
-        auto_heater_tick();
+        /* LED schedule: 60 s */
+        if (SINCE(t_led_sched) >= TICK_INTERVAL_US(60)) {
+            led_schedule_tick();
+            t_led_sched = now;
+        }
 
-        /* Evaluate CO2 solenoid valve logic */
-        esp_task_wdt_reset();
-        co2_controller_tick();
+        /* Relay schedule: 60 s */
+        if (SINCE(t_relay_sched) >= TICK_INTERVAL_US(60)) {
+            relay_controller_tick_schedules();
+            t_relay_sched = now;
+        }
 
-        /* Evaluate feeding mode timer */
-        esp_task_wdt_reset();
-        feeding_mode_tick();
+        /* CO2 valve: 60 s */
+        if (SINCE(t_co2) >= TICK_INTERVAL_US(60)) {
+            co2_controller_tick();
+            t_co2 = now;
+        }
 
-        /* Evaluate daily lighting cycle */
-        esp_task_wdt_reset();
-        daily_cycle_tick();
+        /* Daily lighting cycle: 60 s */
+        if (SINCE(t_daily) >= TICK_INTERVAL_US(60)) {
+            daily_cycle_tick();
+            t_daily = now;
+        }
 
-        esp_task_wdt_reset();   /* final feed before the long sleep */
-        vTaskDelay(pdMS_TO_TICKS(10000));   /* 10 s heartbeat */
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(5000));   /* 5 s base sleep */
     }
+
+#undef TICK_INTERVAL_US
+#undef SINCE
 }

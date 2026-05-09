@@ -25,10 +25,12 @@ extern "C" {
  * @brief Auto-heater configuration.
  */
 typedef struct {
-    bool  enabled;         /**< Auto-heater control active          */
-    int   relay_index;     /**< Relay channel to use (0-3)          */
-    float target_temp_c;   /**< Target temperature (°C)             */
-    float hysteresis_c;    /**< Hysteresis band (°C), default 0.5   */
+    bool  enabled;              /**< Auto-heater control active            */
+    int   relay_index;          /**< Relay channel to use (0-3)            */
+    float target_temp_c;        /**< Target temperature (°C)               */
+    float hysteresis_c;         /**< Hysteresis band (°C), default 0.5     */
+    bool  runaway_protection;   /**< Enable runaway / stuck-relay guard    */
+    int   runaway_timeout_min;  /**< Max consecutive ON minutes (default 60)*/
 } auto_heater_config_t;
 
 /**

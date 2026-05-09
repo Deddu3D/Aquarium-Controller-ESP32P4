@@ -9,6 +9,7 @@
  */
 
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -20,6 +21,8 @@
 #include "auto_heater.h"
 #include "temperature_sensor.h"
 #include "relay_controller.h"
+#include "telegram_notify.h"
+#include "event_log.h"
 
 static const char *TAG = "heater";
 
@@ -30,22 +33,28 @@ static const char *TAG = "heater";
 #define NVS_KEY_RELAY   "relay_idx"
 #define NVS_KEY_TARGET  "target"
 #define NVS_KEY_HYST    "hysteresis"
+#define NVS_KEY_RUNAWAY "runaway_en"
+#define NVS_KEY_RUN_TMO "runaway_tmo"
 
 /* ── Private state ───────────────────────────────────────────────── */
 
 static SemaphoreHandle_t    s_mutex  = NULL;
 static auto_heater_config_t s_config;
 static bool                 s_heater_on = false;   /* last relay command */
+static time_t               s_heater_on_since = 0; /* time when heater was turned ON */
+static bool                 s_runaway_triggered = false; /* guard sent once */
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
 static void nvs_load_config(void)
 {
     /* Defaults */
-    s_config.enabled      = false;
-    s_config.relay_index  = 0;
-    s_config.target_temp_c = 25.0f;
-    s_config.hysteresis_c  = 0.5f;
+    s_config.enabled             = false;
+    s_config.relay_index         = 0;
+    s_config.target_temp_c       = 25.0f;
+    s_config.hysteresis_c        = 0.5f;
+    s_config.runaway_protection  = true;
+    s_config.runaway_timeout_min = 60;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
@@ -58,17 +67,22 @@ static void nvs_load_config(void)
         s_config.enabled = (u8 != 0);
     if (nvs_get_u8(h, NVS_KEY_RELAY, &u8) == ESP_OK)
         s_config.relay_index = (int)u8;
+    if (nvs_get_u8(h, NVS_KEY_RUNAWAY, &u8) == ESP_OK)
+        s_config.runaway_protection = (u8 != 0);
 
     int32_t i32;
     if (nvs_get_i32(h, NVS_KEY_TARGET, &i32) == ESP_OK)
         s_config.target_temp_c = (float)i32 / 100.0f;
     if (nvs_get_i32(h, NVS_KEY_HYST, &i32) == ESP_OK)
         s_config.hysteresis_c = (float)i32 / 100.0f;
+    if (nvs_get_i32(h, NVS_KEY_RUN_TMO, &i32) == ESP_OK)
+        s_config.runaway_timeout_min = (int)i32;
 
     nvs_close(h);
-    ESP_LOGI(TAG, "Config loaded: enabled=%d relay=%d target=%.1f hyst=%.1f",
+    ESP_LOGI(TAG, "Config loaded: enabled=%d relay=%d target=%.1f hyst=%.1f runaway=%d tmo=%d",
              s_config.enabled, s_config.relay_index,
-             (double)s_config.target_temp_c, (double)s_config.hysteresis_c);
+             (double)s_config.target_temp_c, (double)s_config.hysteresis_c,
+             s_config.runaway_protection, s_config.runaway_timeout_min);
 }
 
 static esp_err_t nvs_save_config(void)
@@ -82,8 +96,10 @@ static esp_err_t nvs_save_config(void)
 
     nvs_set_u8(h, NVS_KEY_ENABLED, s_config.enabled ? 1 : 0);
     nvs_set_u8(h, NVS_KEY_RELAY, (uint8_t)s_config.relay_index);
+    nvs_set_u8(h, NVS_KEY_RUNAWAY, s_config.runaway_protection ? 1 : 0);
     nvs_set_i32(h, NVS_KEY_TARGET, (int32_t)(s_config.target_temp_c * 100.0f));
     nvs_set_i32(h, NVS_KEY_HYST, (int32_t)(s_config.hysteresis_c * 100.0f));
+    nvs_set_i32(h, NVS_KEY_RUN_TMO, (int32_t)s_config.runaway_timeout_min);
     nvs_commit(h);
     nvs_close(h);
 
@@ -135,6 +151,8 @@ esp_err_t auto_heater_set_config(const auto_heater_config_t *cfg)
     if (safe.target_temp_c > 35.0f) safe.target_temp_c = 35.0f;
     if (safe.hysteresis_c < 0.1f)   safe.hysteresis_c = 0.1f;
     if (safe.hysteresis_c > 3.0f)   safe.hysteresis_c = 3.0f;
+    if (safe.runaway_timeout_min < 10)  safe.runaway_timeout_min = 10;
+    if (safe.runaway_timeout_min > 480) safe.runaway_timeout_min = 480;
 
     if (s_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
@@ -166,8 +184,10 @@ void auto_heater_tick(void)
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    auto_heater_config_t cfg = s_config;
-    bool currently_on = s_heater_on;
+    auto_heater_config_t cfg        = s_config;
+    bool                 currently_on = s_heater_on;
+    time_t               on_since     = s_heater_on_since;
+    bool                 runaway_done = s_runaway_triggered;
     xSemaphoreGive(s_mutex);
 
     if (!cfg.enabled) {
@@ -180,6 +200,51 @@ void auto_heater_tick(void)
         return;
     }
 
+    /* ── Runaway protection ────────────────────────────────────────── */
+    if (cfg.runaway_protection && currently_on && !runaway_done && on_since > 0) {
+        time_t on_seconds = time(NULL) - on_since;
+        int    on_minutes = (int)(on_seconds / 60);
+        float  high_threshold = cfg.target_temp_c + cfg.hysteresis_c;
+
+        if (on_minutes >= cfg.runaway_timeout_min && temp_c >= high_threshold) {
+            /* Heater has been ON beyond the timeout and temperature is still
+             * above the upper threshold – the relay appears stuck or the
+             * temperature sensor is reading correctly.  Trigger runaway guard. */
+            ESP_LOGE(TAG, "RUNAWAY DETECTED: heater ON %d min, temp=%.1f°C (>%.1f°C)",
+                     on_minutes, (double)temp_c, (double)high_threshold);
+
+            /* Force relay off and disable auto-heater */
+            relay_controller_set(cfg.relay_index, false);
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+            s_heater_on         = false;
+            s_heater_on_since   = 0;
+            s_runaway_triggered = true;
+            s_config.enabled    = false;
+            xSemaphoreGive(s_mutex);
+            nvs_save_config();
+
+            /* Send Telegram alert */
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "\xe2\x9a\xa0\xef\xb8\x8f <b>ALLARME RISCALDATORE RUNAWAY</b>\n"
+                     "Relay %d acceso da %d minuti\n"
+                     "Temperatura: %.1f\xc2\xb0C (soglia: %.1f\xc2\xb0C)\n"
+                     "Riscaldatore automatico DISABILITATO.",
+                     cfg.relay_index + 1, on_minutes,
+                     (double)temp_c, (double)high_threshold);
+            telegram_notify_send(msg);
+
+            /* Log the event */
+            char evt[96];
+            snprintf(evt, sizeof(evt),
+                     "Runaway relay %d: %dmin ON, %.1f°C",
+                     cfg.relay_index + 1, on_minutes, (double)temp_c);
+            event_log_add(EVT_HEATER_RUNAWAY, evt);
+            return;
+        }
+    }
+
+    /* ── Normal thermostat logic ───────────────────────────────────── */
     float low_threshold  = cfg.target_temp_c - cfg.hysteresis_c;
     float high_threshold = cfg.target_temp_c + cfg.hysteresis_c;
     bool new_state = currently_on;
@@ -195,6 +260,12 @@ void auto_heater_tick(void)
         relay_controller_set(cfg.relay_index, new_state);
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_heater_on = new_state;
+        if (new_state) {
+            s_heater_on_since   = time(NULL);
+            s_runaway_triggered = false;  /* reset guard when heater turns on */
+        } else {
+            s_heater_on_since = 0;
+        }
         xSemaphoreGive(s_mutex);
         ESP_LOGI(TAG, "Heater %s (temp=%.1f target=%.1f±%.1f)",
                  new_state ? "ON" : "OFF",
