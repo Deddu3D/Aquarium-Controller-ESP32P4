@@ -156,7 +156,13 @@ static esp_err_t send_embedded_file(httpd_req_t *req,
                                     const char *content_type,
                                     bool cache)
 {
-    size_t len = (size_t)((uintptr_t)end - (uintptr_t)start);
+    uintptr_t start_addr = (uintptr_t)start;
+    uintptr_t end_addr   = (uintptr_t)end;
+    if (end_addr <= start_addr) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Embedded asset invalid");
+        return ESP_FAIL;
+    }
+    size_t len = (size_t)(end_addr - start_addr);
     httpd_resp_set_type(req, content_type);
     if (cache) {
         httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
@@ -1939,7 +1945,7 @@ static esp_err_t api_sdcard_status_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req,
         "{\"mounted\":false,\"card_name\":\"\",\"total_bytes\":0,"
-        "\"free_bytes\":0,\"card_speed_khz\":0,\"disabled\":true}");
+        "\"free_bytes\":0,\"card_speed_khz\":0}");
 }
 
 static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
