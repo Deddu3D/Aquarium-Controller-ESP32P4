@@ -326,6 +326,18 @@ void relay_controller_tick_schedules(void)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
     for (int i = 0; i < RELAY_COUNT; i++) {
+        /* Check whether any slot is enabled for this relay.
+         * If none are enabled the relay is under manual control only –
+         * skip it entirely so the scheduler never overrides a manual state. */
+        bool has_schedule = false;
+        for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
+            if (s_relay[i].schedules[s].enabled) {
+                has_schedule = true;
+                break;
+            }
+        }
+        if (!has_schedule) continue;
+
         /* Compute logical OR of all active slots */
         bool should_be_on = false;
         for (int s = 0; s < RELAY_SCHEDULE_SLOTS; s++) {
