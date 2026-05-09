@@ -39,11 +39,6 @@
 #include "feeding_mode.h"
 #include "led_scenes.h"
 #include "daily_cycle.h"
-#include "sd_card.h"
-#include "sd_logger.h"
-
-#include <sys/stat.h>
-#include <dirent.h>
 
 static const char *TAG = "web_srv";
 
@@ -53,6 +48,13 @@ static const char *TAG = "web_srv";
 #endif
 
 static httpd_handle_t s_server = NULL;
+/* Embedded Web UI files (main/www/* from CMake EMBED_TXTFILES). */
+extern const uint8_t www_index_html_start[] asm("_binary_www_index_html_start");
+extern const uint8_t www_index_html_end[]   asm("_binary_www_index_html_end");
+extern const uint8_t www_style_css_start[]  asm("_binary_www_style_css_start");
+extern const uint8_t www_style_css_end[]    asm("_binary_www_style_css_end");
+extern const uint8_t www_bg_svg_start[]     asm("_binary_www_bg_svg_start");
+extern const uint8_t www_bg_svg_end[]       asm("_binary_www_bg_svg_end");
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -114,9 +116,6 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
-/* Chunk size for streaming HTML, CSS, JS and other static files from SD card */
-#define HTML_SD_CHUNK_SIZE     2048
-
 /* JSON response buffer sizes */
 #define JSON_STATUS_BUF_SIZE   512   /* enlarged from 384: now includes ntp_ok + partition */
 #define JSON_LEDS_BUF_SIZE     256
@@ -131,8 +130,6 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    256
 #define JSON_DAILY_BUF_SIZE    256
-#define JSON_SD_STATUS_BUF_SIZE 256
-#define SD_DOWNLOAD_CHUNK       4096
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -149,155 +146,51 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
-#define HTTP_MAX_URI_HANDLERS  61   /* +1 for the /www/ * static file handler */
+#define HTTP_MAX_URI_HANDLERS  61
 
-/* ── Static file server (/www/ * → /sdcard/www/ *) ───────────────────── */
+/* ── Embedded Web UI server (/ and /www/*) ───────────────────────────── */
 
-/**
- * @brief Return the MIME type string for a file path based on its extension.
- */
-static const char *get_mime_type(const char *path)
+static esp_err_t send_embedded_file(httpd_req_t *req,
+                                    const uint8_t *start,
+                                    const uint8_t *end,
+                                    const char *content_type,
+                                    bool cache)
 {
-    const char *ext = strrchr(path, '.');
-    if (!ext) return "application/octet-stream";
-    if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0)
-        return "text/html; charset=utf-8";
-    if (strcmp(ext, ".css")  == 0) return "text/css";
-    if (strcmp(ext, ".js")   == 0) return "application/javascript";
-    if (strcmp(ext, ".json") == 0) return "application/json";
-    if (strcmp(ext, ".png")  == 0) return "image/png";
-    if (strcmp(ext, ".jpg")  == 0 || strcmp(ext, ".jpeg") == 0)
-        return "image/jpeg";
-    if (strcmp(ext, ".gif")  == 0) return "image/gif";
-    if (strcmp(ext, ".svg")  == 0) return "image/svg+xml";
-    if (strcmp(ext, ".ico")  == 0) return "image/x-icon";
-    if (strcmp(ext, ".woff") == 0) return "font/woff";
-    if (strcmp(ext, ".woff2")== 0) return "font/woff2";
-    if (strcmp(ext, ".ttf")  == 0) return "font/ttf";
-    return "application/octet-stream";
+    if (start == NULL || end == NULL || end < start) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Embedded asset invalid");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, content_type);
+    if (cache) {
+        httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
+    } else {
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    }
+    return httpd_resp_send(req, (const char *)start, (ssize_t)(end - start));
 }
 
 /**
- * @brief Serve any static file under /sdcard/www/ for GET /www/ * requests.
- *
- * The URI /www/style.css maps to /sdcard/www/style.css, etc.
- * Files are streamed in 2 KB chunks with Cache-Control: max-age=3600.
- * Allows the web UI to reference separate CSS, JS, image and font files
- * that live alongside index.html on the SD card.
+ * @brief Serve static Web UI files from embedded firmware data.
  */
 static esp_err_t static_file_get_handler(httpd_req_t *req)
 {
-    const char *uri = req->uri;   /* e.g. "/www/style.css" */
-
-    /* Build SD card path: /sdcard + uri → /sdcard/www/style.css */
-    char sd_path[128];
-    int n = snprintf(sd_path, sizeof(sd_path), "%s%s", SD_MOUNT_POINT, uri);
-    if (n <= 0 || (size_t)n >= sizeof(sd_path)) {
-        httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "Path too long");
-        return ESP_FAIL;
+    if (strcmp(req->uri, "/www/style.css") == 0) {
+        return send_embedded_file(req, www_style_css_start, www_style_css_end, "text/css", true);
     }
-
-    /* Reject path traversal attempts */
-    if (strstr(sd_path, "..") != NULL) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid path");
-        return ESP_FAIL;
+    if (strcmp(req->uri, "/www/bg.svg") == 0) {
+        return send_embedded_file(req, www_bg_svg_start, www_bg_svg_end, "image/svg+xml", true);
     }
-
-#ifdef CONFIG_SD_CARD_ENABLED
-    if (sd_card_is_mounted()) {
-        FILE *f = fopen(sd_path, "r");
-        if (f != NULL) {
-            httpd_resp_set_type(req, get_mime_type(sd_path));
-            httpd_resp_set_hdr(req, "Cache-Control", "max-age=3600");
-
-            char *chunk = malloc(HTML_SD_CHUNK_SIZE);
-            if (chunk == NULL) {
-                fclose(f);
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Out of memory");
-                return ESP_FAIL;
-            }
-            size_t bytes;
-            while ((bytes = fread(chunk, 1, HTML_SD_CHUNK_SIZE, f)) > 0) {
-                if (httpd_resp_send_chunk(req, chunk, (ssize_t)bytes) != ESP_OK) {
-                    break;
-                }
-            }
-            fclose(f);
-            free(chunk);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
-        }
-        ESP_LOGD(TAG, "Static file not found: %s", sd_path);
-    }
-#endif
-
-    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+    httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Asset not found");
     return ESP_FAIL;
 }
 
 /**
- * @brief Serve the main dashboard HTML from the SD card.
- *
- * Reads /sdcard/www/index.html in chunks and streams it to the client.
- * If the SD card is not mounted or the file is not found, a minimal
- * fallback page is sent asking the user to copy www/ to the card.
+ * @brief Serve the main dashboard HTML from embedded firmware data.
  */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-
-#ifdef CONFIG_SD_CARD_ENABLED
-    if (sd_card_is_mounted()) {
-        FILE *f = fopen(SD_WWW_INDEX, "r");
-        if (f != NULL) {
-            char *chunk = malloc(HTML_SD_CHUNK_SIZE);
-            if (chunk == NULL) {
-                fclose(f);
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Failed to allocate buffer for streaming Web UI");
-                return ESP_FAIL;
-            }
-            size_t n;
-            while ((n = fread(chunk, 1, HTML_SD_CHUNK_SIZE, f)) > 0) {
-                if (httpd_resp_send_chunk(req, chunk, (ssize_t)n) != ESP_OK) {
-                    break;
-                }
-            }
-            fclose(f);
-            free(chunk);
-            httpd_resp_send_chunk(req, NULL, 0);
-            return ESP_OK;
-        }
-        /* File not found on SD: fall through to fallback */
-        ESP_LOGW(TAG, "Web UI file not found: " SD_WWW_INDEX);
-    }
-#endif
-
-    /* Fallback: SD card not mounted or index.html missing */
-    static const char FALLBACK_HTML[] =
-        "<!DOCTYPE html><html lang='it'><head>"
-        "<meta charset='UTF-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Aquarium Controller</title>"
-        "<style>body{font-family:sans-serif;background:#0b1121;color:#e2e8f0;"
-        "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}"
-        ".box{background:#131c31;border:1px solid #1a2540;border-radius:12px;"
-        "padding:2rem;max-width:420px;text-align:center}"
-        "h1{color:#38bdf8;margin-bottom:1rem;font-size:1.3rem}"
-        "p{color:#94a3b8;font-size:.9rem;line-height:1.6;margin-bottom:.7rem}"
-        "code{background:#1e293b;padding:.2rem .5rem;border-radius:4px;"
-        "font-size:.85rem;color:#fbbf24}"
-        "</style></head><body>"
-        "<div class='box'>"
-        "<h1>&#x1F4BE; Web UI non trovata</h1>"
-        "<p>Copia la cartella <code>www/</code> sulla SD card:</p>"
-        "<p><code>/sdcard/www/index.html</code></p>"
-        "<p>La SD card deve essere montata e il file deve essere presente "
-        "per accedere alla dashboard.</p>"
-        "<p><a href='/api/status' style='color:#38bdf8'>Stato API JSON</a></p>"
-        "</div></body></html>";
-    return httpd_resp_send(req, FALLBACK_HTML, HTTPD_RESP_USE_STRLEN);
+    return send_embedded_file(req, www_index_html_start, www_index_html_end,
+                              "text/html; charset=utf-8", false);
 }
 
 /* ── JSON status endpoint (/api/status  GET) ─────────────────────── */
@@ -2034,7 +1927,7 @@ static const httpd_uri_t uri_api_ota_sd = {
     .user_ctx = NULL,
 };
 
-/* Wildcard handler: serve any static file from /sdcard/www/ */
+/* Wildcard handler: serve embedded static files under /www/* */
 static const httpd_uri_t uri_www_static = {
     .uri      = "/www/*",
     .method   = HTTP_GET,
@@ -2046,234 +1939,47 @@ static const httpd_uri_t uri_www_static = {
 
 static esp_err_t api_sdcard_status_handler(httpd_req_t *req)
 {
-    sd_card_info_t info;
-    sd_card_get_info(&info);
-
-    char buf[JSON_SD_STATUS_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"mounted\":%s,"
-        "\"card_name\":\"%s\","
-        "\"total_bytes\":%" PRIu64 ","
-        "\"free_bytes\":%" PRIu64 ","
-        "\"card_speed_khz\":%" PRIu32 "}",
-        info.mounted ? "true" : "false",
-        info.card_name,
-        info.total_bytes,
-        info.free_bytes,
-        info.card_speed_khz);
-
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
+    return httpd_resp_sendstr(req,
+        "{\"mounted\":false,\"card_name\":\"\",\"total_bytes\":0,"
+        "\"free_bytes\":0,\"card_speed_khz\":0,\"disabled\":true}");
 }
 
 static esp_err_t api_sdcard_ls_handler(httpd_req_t *req)
 {
-    /* Read ?path= query parameter */
-    char path[128] = SD_MOUNT_POINT;
-    char query[256];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        char val[128];
-        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            /* Sanitise: must start with mount point and must not contain
-             * path traversal sequences. */
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
-                strstr(val, "..") == NULL) {
-                strncpy(path, val, sizeof(path) - 1);
-                path[sizeof(path) - 1] = '\0';
-            }
-        }
-    }
-
-    if (!sd_card_is_mounted()) {
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, "{\"error\":\"SD card not mounted\",\"entries\":[]}");
-    }
-
-    DIR *dir = opendir(path);
-    if (dir == NULL) {
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, "{\"error\":\"Cannot open directory\",\"entries\":[]}");
-    }
-
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr_chunk(req, "{\"path\":\"");
-    httpd_resp_sendstr_chunk(req, path);
-    httpd_resp_sendstr_chunk(req, "\",\"entries\":[");
-
-    struct dirent *entry;
-    bool first = true;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') continue;
-
-        /* Get file size */
-        char full_path[192];
-        int fp_len = snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-        /* Reject if path overflowed or traverses outside mount point */
-        if (fp_len >= (int)sizeof(full_path) ||
-            strncmp(full_path, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) != 0) {
-            continue;
-        }
-        struct stat st;
-        long fsize = 0;
-        bool is_dir = (entry->d_type == DT_DIR);
-        if (!is_dir && stat(full_path, &st) == 0) {
-            fsize = (long)st.st_size;
-        }
-
-        char chunk[256];
-        /* Escape name for JSON */
-        char ename[128];
-        json_escape(entry->d_name, ename, sizeof(ename));
-        snprintf(chunk, sizeof(chunk),
-                 "%s{\"name\":\"%s\",\"is_dir\":%s,\"size\":%ld}",
-                 first ? "" : ",",
-                 ename,
-                 is_dir ? "true" : "false",
-                 fsize);
-        httpd_resp_sendstr_chunk(req, chunk);
-        first = false;
-    }
-    closedir(dir);
-
-    httpd_resp_sendstr_chunk(req, "]}");
-    return httpd_resp_sendstr_chunk(req, NULL);
+    return httpd_resp_sendstr(req,
+        "{\"ok\":false,\"error\":\"SD card feature disabled\",\"entries\":[]}");
 }
 
 static esp_err_t api_sdcard_download_handler(httpd_req_t *req)
 {
-    char query[256];
-    char path[192] = "";
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        char val[192];
-        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
-                strstr(val, "..") == NULL) {
-                strncpy(path, val, sizeof(path) - 1);
-                path[sizeof(path) - 1] = '\0';
-            }
-        }
-    }
-
-    if (path[0] == '\0' || !sd_card_is_mounted()) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad path or SD not mounted");
-        return ESP_FAIL;
-    }
-
-    FILE *f = fopen(path, "rb");
-    if (f == NULL) {
-        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
-        return ESP_FAIL;
-    }
-
-    /* Derive filename from path for Content-Disposition */
-    const char *fname = strrchr(path, '/');
-    fname = fname ? (fname + 1) : path;
-
-    char disp[256];
-    snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", fname);
-    httpd_resp_set_type(req, "application/octet-stream");
-    httpd_resp_set_hdr(req, "Content-Disposition", disp);
-
-    char *buf = malloc(SD_DOWNLOAD_CHUNK);
-    if (buf == NULL) {
-        fclose(f);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-
-    esp_err_t ret = ESP_OK;
-    while (!feof(f)) {
-        size_t len = fread(buf, 1, SD_DOWNLOAD_CHUNK, f);
-        if (len > 0) {
-            if (httpd_resp_send_chunk(req, buf, (ssize_t)len) != ESP_OK) {
-                ret = ESP_FAIL;
-                break;
-            }
-        }
-    }
-    free(buf);
-    fclose(f);
-
-    if (ret == ESP_OK) {
-        httpd_resp_send_chunk(req, NULL, 0);
-    }
-    return ret;
+    httpd_resp_send_err(req, HTTPD_503_SERVICE_UNAVAILABLE, "SD card feature disabled");
+    return ESP_FAIL;
 }
 
 static esp_err_t api_sdcard_delete_handler(httpd_req_t *req)
 {
-    char query[256];
-    char path[192] = "";
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        char val[192];
-        if (httpd_query_key_value(query, "path", val, sizeof(val)) == ESP_OK) {
-            if (strncmp(val, SD_MOUNT_POINT, strlen(SD_MOUNT_POINT)) == 0 &&
-                strstr(val, "..") == NULL) {
-                strncpy(path, val, sizeof(path) - 1);
-                path[sizeof(path) - 1] = '\0';
-            }
-        }
-    }
-
-    if (path[0] == '\0' || !sd_card_is_mounted()) {
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Bad path or SD not mounted\"}");
-    }
-
-    int r = remove(path);
     httpd_resp_set_type(req, "application/json");
-    if (r == 0) {
-        return httpd_resp_sendstr(req, "{\"ok\":true}");
-    } else {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Delete failed\"}");
-    }
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
 }
 
 static esp_err_t api_sdcard_config_export_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
-    if (!sd_card_is_mounted()) {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
-    }
-    esp_err_t err = sd_card_config_export(SD_CONFIG_FILE);
-    if (err == ESP_OK) {
-        return httpd_resp_sendstr(req,
-            "{\"ok\":true,\"path\":\"" SD_CONFIG_FILE "\"}");
-    } else {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Export failed\"}");
-    }
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
 }
 
 static esp_err_t api_sdcard_config_import_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
-    if (!sd_card_is_mounted()) {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
-    }
-    esp_err_t err = sd_card_config_import(SD_CONFIG_FILE);
-    if (err == ESP_OK) {
-        return httpd_resp_sendstr(req, "{\"ok\":true}");
-    } else {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"Import failed\"}");
-    }
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card feature disabled\"}");
 }
 
 static esp_err_t api_ota_sd_post_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
-    if (!sd_card_is_mounted()) {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"SD card not mounted\"}");
-    }
-    if (ota_update_in_progress()) {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"OTA already in progress\"}");
-    }
-    esp_err_t err = ota_update_start_from_sd(SD_FIRMWARE_FILE);
-    if (err == ESP_OK) {
-        return httpd_resp_sendstr(req, "{\"ok\":true}");
-    }
-    char buf[128];
-    snprintf(buf, sizeof(buf), "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
-    return httpd_resp_sendstr(req, buf);
+    return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"OTA from SD disabled\"}");
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -2299,7 +2005,7 @@ esp_err_t web_server_start(void)
     ssl_config.httpd.stack_size       = HTTP_STACK_SIZE;
     ssl_config.httpd.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     ssl_config.httpd.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/ * can serve SD card files */
+    /* Enable wildcard URI matching so /www/* can serve embedded assets */
     ssl_config.httpd.uri_match_fn     = httpd_uri_match_wildcard;
 
     ssl_config.servercert     = server_cert_pem_start;
@@ -2319,7 +2025,7 @@ esp_err_t web_server_start(void)
     config.stack_size       = HTTP_STACK_SIZE;
     config.max_uri_handlers = HTTP_MAX_URI_HANDLERS;
     config.lru_purge_enable = true;
-    /* Enable wildcard URI matching so /www/ * can serve SD card files */
+    /* Enable wildcard URI matching so /www/* can serve embedded assets */
     config.uri_match_fn     = httpd_uri_match_wildcard;
 
     ESP_LOGI(TAG, "Starting HTTP server on port %d", config.server_port);
