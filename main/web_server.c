@@ -1575,7 +1575,7 @@ static esp_err_t api_ota_upload_post_handler(httpd_req_t *req)
             break;
         }
         received += (size_t)r;
-        int pct = (int)((int64_t)received * 100 / (int64_t)total);
+        int pct = (int)(received * 100 / total);
         ota_update_set_progress(pct > 100 ? 100 : pct);
     }
 

@@ -379,8 +379,9 @@ esp_err_t ota_update_begin(void)
         s_in_progress = false;
         xSemaphoreGive(s_mutex);
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
+        return err;
     }
-    return err;
+    return ESP_OK;
 }
 
 esp_err_t ota_update_write(const void *buf, size_t len)
@@ -419,6 +420,7 @@ esp_err_t ota_update_finish(void)
     s_progress.progress_pct = 100;
     s_in_progress           = false;
     xSemaphoreGive(s_mutex);
+    s_upload_handle = 0;
 
     ESP_LOGI(TAG, "OTA upload successful – rebooting in 3 s …");
     return ESP_OK;
@@ -426,7 +428,10 @@ esp_err_t ota_update_finish(void)
 
 void ota_update_abort_upload(void)
 {
-    esp_ota_abort(s_upload_handle);
+    if (s_upload_handle != 0) {
+        esp_ota_abort(s_upload_handle);
+        s_upload_handle = 0;
+    }
     if (s_mutex) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_progress.status = OTA_STATUS_ERROR;
