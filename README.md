@@ -1,548 +1,473 @@
-# 🐟 Aquarium Controller – ESP32-P4
+# 🐠 Aquarium Controller – ESP32-P4
 
-Controller completo per acquario su **Waveshare ESP32-P4-WiFi6** con:
-- gestione **LED WS2812B** (scene animate, schedule alba/tramonto, ciclo giornaliero solare)
-- monitoraggio **temperatura DS18B20** con storico, media mobile e log CSV
-- controllo **4 relè** manuale e automatico
-- modulo **Auto-Heater** (termostato) e controller **CO₂** (pre/post timing)
-- **Modalità alimentazione** (pausa relè + dimmer LED a tempo)
-- **Scene LED** (Alba, Tramonto, Chiaro di luna, Tempesta, Nuvole)
-- **Ciclo luminoso giornaliero** automatico (calcolo alba/tramonto NOAA)
-- **SD card** – backup config JSON e log CSV giornalieri
-- notifiche **Telegram** (allarmi, promemoria, report, test)
-- **Web UI REST** locale (dashboard + 35+ endpoint REST JSON)
-- **Touch Display UI** LVGL v9 su display 720×720 (Waveshare 4-DSI-TOUCH-A)
-- **OTA** via URL remoto o immagine su SD card
-- **DuckDNS** per accesso remoto
+Controller IoT completo per acquario d'acqua dolce basato su **Waveshare ESP32-P4-WiFi6**.  
+Combina una **dashboard Web** accessibile da qualsiasi browser, un **display touch** LVGL da 720 × 720 px, notifiche **Telegram** e un motore di automazione avanzato — tutto in un unico firmware ESP-IDF.
 
-> Stack: ESP-IDF v6.0 + ESP Hosted (P4 + C6 WiFi6) + HTTP/HTTPS server embedded.
+> **Stack**: ESP-IDF v6.0 · ESP-Hosted (P4 + C6 WiFi 6) · LVGL v9 · FreeRTOS · HTTP/HTTPS embedded · PWA
 
 ---
 
-## 📸 Screenshot aggiornati
+## 📸 Screenshot
 
-### Web UI (desktop + mobile)
+### Web UI
 
 | Riepilogo | LED Strip |
-|---|---|
+|:---:|:---:|
 | ![Web UI – Riepilogo](docs/screenshots/web_ui_riepilogo.png) | ![Web UI – LED Strip](docs/screenshots/web_ui_led_strip.png) |
 
 | Telegram | Manutenzione |
-|---|---|
+|:---:|:---:|
 | ![Web UI – Telegram](docs/screenshots/web_ui_telegram.png) | ![Web UI – Manutenzione](docs/screenshots/web_ui_manutenzione.png) |
 
 | Mobile |
-|---|
+|:---:|
 | ![Web UI – Mobile](docs/screenshots/web_ui_mobile.png) |
 
+### Display touch (Waveshare 4-DSI-TOUCH-A)
+
+| Home / Riepilogo | LED Strip |
+|:---:|:---:|
+| ![Display – Riepilogo](docs/screenshots/display_ui_riepilogo.png) | ![Display – LED Strip](docs/screenshots/display_ui_led_strip.png) |
+
+| Manutenzione | Notifiche Telegram |
+|:---:|:---:|
+| ![Display – Manutenzione](docs/screenshots/display_ui_manutenzione.png) | ![Display – Telegram](docs/screenshots/display_ui_telegram.png) |
+
 ---
 
-## 🖥️ Touch Display UI
+## ✨ Funzionalità
 
-Il display circolare **Waveshare 4-DSI-TOUCH-A** (720 × 720, IPS, MIPI-DSI, touch capacitivo GT911) mostra
-una dashboard LVGL v9 a **5 tab** con stile _dark IoT dashboard_.
+### 💡 Controllo LED WS2812B
+- On/off con **ramp di acclimatazione** configurabile (0–120 s)
+- Impostazione colore RGB e luminosità (0–255)
+- **Schedule alba/tramonto** con orari indipendenti e ramp
+- **5 scene animate** (engine FreeRTOS, tick 500 ms):
+  - `SUNRISE` – ramp ambra caldo → bianco giorno
+  - `SUNSET` – ramp bianco → ambra → buio
+  - `MOONLIGHT` – luce lunare blu tenue
+  - `STORM` – flickering casuale con lampeggi
+  - `CLOUDS` – oscillazione sinusoidale lenta
+- **Ciclo giornaliero automatico** con calcolo alba/tramonto NOAA da coordinate GPS:
+  - fasi: Night → Sunrise → Morning → Noon → Afternoon → Sunset → Evening → Moonlight
 
-### Palette & stile
+### 🌡️ Temperatura
+- Polling periodico **DS18B20** (1-Wire, GPIO configurabile)
+- Media mobile per filtrare il rumore
+- Storico giornaliero 24 h in RAM (campionamento configurabile, default 5 min)
+- Esportazione CSV via REST API
 
-| Token | Valore hex | Utilizzo |
+### 🔌 Relè (4 canali)
+- Controllo manuale e via schedule orario
+- Nomi personalizzati persistiti in NVS
+- Polarità active-low/high configurabile
+
+### ♨️ Auto-Heater (termostato)
+- Attivazione/spegnimento automatico del relè riscaldatore
+- Target e isteresi configurabili
+- Protezione **runaway** (timeout + allarme Telegram se relay rimane ON troppo a lungo)
+
+### 💨 CO₂
+- Programmazione oraria con **pre-anticipo ON** e **post-ritardo OFF** rispetto allo schedule luci
+- Configurazione indipendente via Web UI o REST API
+
+### 🐟 Modalità Alimentazione
+- Pausa relè configurabile (1–60 min, default 10 min)
+- Dimmer LED opzionale durante la pausa
+- Notifica Telegram a inizio e fine sessione
+
+### 📱 Notifiche Telegram
+- Allarmi temperatura (alta/bassa)
+- Cambio stato relè
+- Promemoria cambio acqua e fertilizzante
+- Messaggio di test
+
+### 🌐 Web Dashboard (PWA)
+- **Progressive Web App** installabile su smartphone
+- Design dark con sfondo animato (bolle + scena subacquea SVG)
+- Aggiornamento in tempo reale via **WebSocket**
+- Sezioni: Riepilogo · LED Strip · Temperatura · Automazioni · Telegram · Manutenzione
+- Autenticazione con sessione cookie (login/logout)
+- UI **mobile-first** responsive
+
+### 🖥️ Touch Display LVGL v9
+- Display circolare 720 × 720 px MIPI-DSI, touch capacitivo GT911
+- Dashboard a **5 tab**: Home · Luci · Temperatura · Automazioni · Dati
+- Status bar fissa con ora, temperatura badge e stato WiFi
+- Overlay allarme modale
+
+### 🔄 OTA (Over-the-Air)
+- Aggiornamento firmware da **URL HTTP remoto**
+- Upload diretto dal browser (**multipart form**)
+- Partizioni dual OTA con **auto-rollback** in caso di crash
+
+### 🛰️ DuckDNS
+- Aggiornamento automatico IP dinamico per accesso remoto
+
+### 🔒 Sicurezza
+- HTTP Basic Auth + **session cookie** (POST `/api/login`)
+- **HTTPS opzionale** con certificato self-signed embedded
+- Credenziali modificabili a runtime via `/api/auth`
+
+---
+
+## 🧱 Hardware necessario
+
+### Componenti obbligatori
+
+| Componente | Descrizione | Note |
 |---|---|---|
-| `C_BG` | `#0B1E2D` | Sfondo pagina – navy profondo |
-| `C_CARD` | `#102A3D` | Superficie card – `radius=14`, no border |
-| `C_BORDER` | `#1A3A55` | Divisori sottili |
-| `C_INPUT` | `#0D2236` | Superfici input / bottoni secondari |
-| `C_PRIMARY` | `#1FA3FF` | Blu – accent primario, arc indicatore |
-| `C_YELLOW` | `#F1C40F` | Giallo – luci / scene giorno |
-| `C_ORANGE` | `#F39C12` | Arancione – temperatura warning |
-| `C_TEXT` | `#ECF5FB` | Bianco ghiaccio – testo principale |
-| `C_MUTED` | `#5C7F9A` | Grigio ardesia – testo secondario |
-| `C_ON` | `#2ECC71` | Verde – OK / attivo (con glow shadow) |
-| `C_ERR` | `#E74C3C` | Rosso – allarme / errore |
-| `C_BAR_BG` | `#070F1A` | Sfondo status bar |
+| **Waveshare ESP32-P4-WiFi6** | Board principale (ESP32-P4 + ESP32-C6 coprocessore WiFi 6) | rev 1.3 o superiore |
+| **Striscia LED WS2812B** | Striscia indirizzabile RGB | collegata a GPIO 20 (default) |
+| **Sensore DS18B20** | Sensore temperatura 1-Wire | GPIO 21 + pull-up 4.7 kΩ a 3.3 V |
+| **Modulo relè 4 canali** | Active-low, optoisolato | GPIO 28/29/30/31 (default) |
+| **Alimentatore 5 V** | Per la striscia LED e il modulo relè | dimensionare in base al numero di LED |
 
-- **Card** `radius=14`, no border, padding 14 px
-- **Switch** con alone verde (`shadow`) quando attivi
-- **Slider** h=8 px, knob con shadow giallo
-- **Spinbox** `[−][value][+]` con bottoni circolari r=22
-- **Tab bar** in fondo (65 px), tab attivo evidenziato
-- **Status bar** fissa in cima (48 px): ora | temperatura + badge stato | WiFi
+### Componenti opzionali ma consigliati
+
+| Componente | Descrizione | Note |
+|---|---|---|
+| **Waveshare 4-DSI-TOUCH-A** | Display IPS 720×720 MIPI-DSI + touch GT911 | collegato via connettore DSI on-board |
+| **Valvola CO₂ + elettrovalvola** | Controllo CO₂ via relè | relè 3 (default) |
+| **Riscaldatore acquario** | Controllato dal termostato firmware | relè 2 (default) |
+
+### Schema pin di default
+
+```
+ESP32-P4-WiFi6 header DESTRO (lato LED/sensore):
+  GPIO 20  ──►  WS2812B  DATA
+  GPIO 21  ──►  DS18B20  DATA  (+ 4.7 kΩ pull-up a 3.3V)
+
+ESP32-P4-WiFi6 header SINISTRO (lato relè):
+  GPIO 28  ──►  Relè 1  (Filtro)
+  GPIO 29  ──►  Relè 2  (Riscaldatore)
+  GPIO 30  ──►  Relè 3  (CO₂)
+  GPIO 31  ──►  Relè 4  (Pompa)
+
+Display DSI (connettore on-board):
+  GPIO  7  ──►  GT911 I2C SDA
+  GPIO  8  ──►  GT911 I2C SCL
+  Backlight: hardware-controlled (nessun GPIO aggiuntivo)
+
+⚠️  GPIO 24 e GPIO 25 sono DM/DP USB – non usare!
+```
+
+> Tutti i pin sono modificabili da `idf.py menuconfig → Aquarium *`.
 
 ---
 
-### 🔝 Status Bar (presente in tutti i tab)
+## 🖥️ Touch Display UI – dettaglio
+
+Il display **Waveshare 4-DSI-TOUCH-A** (720 × 720 px, IPS, MIPI-DSI, touch capacitivo GT911)
+mostra una dashboard LVGL v9 a **5 tab** con stile _dark IoT dashboard_.
+
+### Palette colori
+
+| Token | Hex | Utilizzo |
+|---|---|---|
+| `C_BG` | `#0B1E2D` | Sfondo – navy profondo |
+| `C_CARD` | `#102A3D` | Card – `radius=14` |
+| `C_PRIMARY` | `#1FA3FF` | Blu accent, arc indicatore |
+| `C_YELLOW` | `#F1C40F` | Luci / scene giorno |
+| `C_ORANGE` | `#F39C12` | Temperatura warning |
+| `C_ON` | `#2ECC71` | Verde – OK / attivo |
+| `C_ERR` | `#E74C3C` | Rosso – allarme / errore |
+| `C_TEXT` | `#ECF5FB` | Bianco ghiaccio – testo |
+| `C_MUTED` | `#5C7F9A` | Grigio – testo secondario |
+
+### Status Bar (tutti i tab)
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │  09:34              ⚠  25.4°C   [✓  OK]                      WiFi    │
-│  (ora locale)       (temp)  (badge verde/arancio/rosso)      (icona)  │
+│  (ora locale)        (temp)  (badge verde/arancio/rosso)      (icona)  │
 └────────────────────────────────────────────────────────────────────────┘
 ```
-
-Il badge centrale diventa **⚠ ALLARME** (rosso) quando `display_ui_show_alarm()` è invocato.
-
----
 
 ### Tab 0 – 🏠 Home
 
-Panoramica in tempo reale – aggiornamento ogni 2 s. Ogni card è **cliccabile** e naviga al relativo tab.
+Panoramica 2×2 con aggiornamento ogni 2 s. Ogni card è cliccabile e naviga al tab relativo.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR  09:34        ⚠ 25.4°C  [✓  OK]               WiFi       │
-├─────────────────────────────────┬──────────────────────────────────────┤
+┌─────────────────────────────────┬──────────────────────────────────────┐
 │  ⚠  TEMPERATURA                 │  ☰  LUCI                            │
-│                                 │                                      │
-│     25.4°C  (Montserrat 28)     │     80%   (Montserrat 28)           │
-│     [✓  OK]   (badge verde)     │     [ON]  (badge verde)             │
-│                                 │                                      │
-│  ← naviga Tab 2 →               │  ← naviga Tab 1 →                   │
+│      25.4°C  [✓ OK]             │      80%  [ON]                      │
+│  → Tab Temperatura              │  → Tab Luci                          │
 ├─────────────────────────────────┼──────────────────────────────────────┤
 │  ↺  CO₂                         │  ↻  LIVELLO ACQUA                   │
-│                                 │                                      │
-│     OFF   (Montserrat 28)       │     OK    (Montserrat 28, verde)    │
-│     Terminazione: --:--         │     Stato: Normale                  │
-│                                 │                                      │
-│  ← naviga Tab 3 →               │  (statico, placeholder)             │
+│      OFF  Terminazione: --:--   │      OK  – Stato: Normale           │
+│  → Tab Automazioni              │  (placeholder)                       │
 └─────────────────────────────────┴──────────────────────────────────────┘
-│  [ Home ]  [ Luci ]  [ Temp ]  [ Auto ]  [ Dati ]   ← tab bar (65px) │
-└────────────────────────────────────────────────────────────────────────┘
+│  [ Home ]  [ Luci ]  [ Temp ]  [ Auto ]  [ Dati ]  ← tab bar (65px)  │
 ```
-
-- Temperatura: verde `C_ON` se 24–28 °C · arancione fuori range · grigio se errore sensore
-- Badge CO₂: testo `ON` verde o `OFF` grigio in base al controller
-
----
 
 ### Tab 1 – 💡 Luci
 
-Controllo luminosità manuale + selezione scena.
+Slider luminosità + 4 bottoni scena.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR                                                            │
-├────────────────────────────────────────────────────────────────────────┤
-│  ┌─ LUCI ─────────────────────────────────── OFF  [○] ─────────────┐  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│  ┌─ Luminosità ──────────────────────────────────────────────────────┐ │
-│  │  −                          80%                           +       │ │
-│  │  ●══════════════════════════════════════════════════════○         │ │
-│  │  (slider giallo, aggiornamento immediato)                         │ │
-│  └───────────────────────────────────────────────────────────────────┘ │
-│                                                                        │
-│  ┌─ Scena ────────────────────────────────────────────────────────────┐ │
-│  │  ┌─── Alba ───┐  ┌── Giorno ──┐  ┌─ Tramonto ─┐  ┌─ Notte ────┐ │ │
-│  │  │  + (amber) │  │ ☰ (giallo) │  │ − (arancio)│  │ ↻ (blu)   │ │ │
-│  │  │    Alba    │  │   Giorno   │  │  Tramonto  │  │   Notte   │ │ │
-│  │  │    30%     │  │   100%     │  │    50%     │  │   10%     │ │ │
-│  │  └────────────┘  └────────────┘  └────────────┘  └───────────┘ │ │
-│  │  (tap: avvia LED_SCENE_SUNRISE / LED off+full / SUNSET / MOONLIGHT)│ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│  [ Home ]  [💡Luci]  [ Temp ]  [ Auto ]  [ Dati ]                     │
-└────────────────────────────────────────────────────────────────────────┘
+  Switch ON/OFF   Slider brightness 0–100%   Scena: Alba | Giorno | Tramonto | Notte
 ```
-
-- Lo switch ON/OFF invoca `led_controller_fade_on/off()` con ramp Kconfig
-- Il bottone scena selezionato riceve bordo colorato; bordo assente sugli altri
-- Scene disponibili: `LED_SCENE_SUNRISE`, `LED_SCENE_SUNSET`, `LED_SCENE_MOONLIGHT`
-
----
 
 ### Tab 2 – 🌡 Temperatura
 
-Arc gauge + target ± spinbox + stato riscaldatore/raffreddamento.
+Arc gauge (15–40 °C) + spinbox target + stato riscaldatore/raffreddamento.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR                                                            │
-├────────────────────────────────────────────────────────────────────────┤
-│               TEMPERATURA                                              │
-│                                                                        │
-│   ┌──────────────────────────┐          TARGET                        │
-│   │     ╭──────────╮         │                                        │
-│   │    /  25.4°C   \         │      [−]  26.0  [+]                   │
-│   │   │   ATTUALE   │        │      (spinbox ×0.1 °C)                │
-│   │    \           /         │                                        │
-│   │     ╰──────────╯         │      [ Salva ]  (btn primario blu)    │
-│   │  (arc 270°, blu→verde    │                                        │
-│   │   se OK, arancio se OOB) │                                        │
-│   └──────────────────────────┘                                        │
-│                                                                        │
-│   ┌─ ⚠ RISCALDATORE ──────────┐   ┌─ ↺ RAFFREDDAMENTO ─────────────┐ │
-│   │        OFF                │   │          OFF                    │ │
-│   └───────────────────────────┘   └─────────────────────────────────┘ │
-│   (pill: rosso se ON, grigio scuro se OFF)                            │
-│  [ Home ]  [ Luci ]  [🌡Temp]  [ Auto ]  [ Dati ]                    │
-└────────────────────────────────────────────────────────────────────────┘
+         ╭──────────╮         TARGET
+        /  25.4°C   \         [−]  26.0  [+]   [ Salva ]
+        │   ATTUALE  │
+         ╰──────────╯
+  ┌─ ⚠ RISCALDATORE ──┐   ┌─ ↺ RAFFREDDAMENTO ─┐
+  │       OFF          │   │        OFF           │
+  └────────────────────┘   └──────────────────────┘
 ```
-
-- Arc range: 15.0–40.0 °C (mappato su 150–400 ×10). Indicatore blu; rosso/arancione se allarme.
-- "Salva" aggiorna `auto_heater_set_config()` con il target impostato.
-
----
 
 ### Tab 3 – ⚙ Automazioni
 
-Lista scorrevole di automazioni + controllo manuale relè + bottone alimentazione.
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR                                                            │
-├────────────────────────────────────────────────────────────────────────┤
-│  AUTOMAZIONI                                                           │
-│                                                                        │
-│  ┌─ ☰  Luci ──────────────────── 08:00 – 22:00  ·  Tutti i giorni ─[●]─┐ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                        │
-│  ┌─ ↺  CO₂ ───────────────────── 07:30 – 22:10  ·  Tutti i giorni ─[●]─┐ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                        │
-│  ┌─ ⚠  Riscaldatore ──── Target: 26.0°C  ·  Termostato auto ────────[●]─┐ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                        │
-│  ┌─ ⚙  Filtro ────────────────────────────────── Relè 1 ───────────[●]─┐ │
-│  ┌─ ⚙  Riscaldatore ──────────────────────────── Relè 2 ───────────[○]─┐ │
-│  ┌─ ⚙  CO₂ ───────────────────────────────────── Relè 3 ───────────[●]─┐ │
-│  ┌─ ⚙  Pompa ─────────────────────────────────── Relè 4 ───────────[○]─┐ │
-│                                                                        │
-│  ┌───────────────────────────────────────────────────────────────────┐ │
-│  │  ▶  Avvia Alimentazione                   (verde, h=60px)        │ │
-│  └───────────────────────────────────────────────────────────────────┘ │
-│  [ Home ]  [ Luci ]  [ Temp ]  [⚙Auto]  [ Dati ]                     │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-- Ogni toggle aggiorna immediatamente il modulo corrispondente (persiste in NVS).
-- Il bottone Alimentazione diventa **■ Ferma Alimentazione** (sfondo rosso scuro) se la modalità è attiva.
-- I nomi dei relè mostrano il valore attuale da `relay_controller_get_name()`.
-
----
+Toggle per ogni automazione (Luci, CO₂, Riscaldatore, 4 relè) + bottone **Avvia/Ferma Alimentazione**.
 
 ### Tab 4 – 📊 Dati
 
-Grafico storico a 48 punti (= 24 h × 30 min per punto) con selettore canale.
+Grafico storico 24 h (48 punti) con selettore: **Temperatura** · **Luci** · **CO₂**.
+
+### Overlay Allarme
+
+Chiamabile da qualsiasi task via `display_ui_show_alarm(msg, detail)`:
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR                                                            │
-├────────────────────────────────────────────────────────────────────────┤
-│  DATI                                                                  │
-│                                                                        │
-│  [ TEMPERATURA ]   [   LUCI   ]   [   CO₂   ]   ← bottoni selettore  │
-│  (blu attivo)      (grigio)        (grigio)                           │
-│                                                                        │
-│  ┌────────────────────────────────────────────────────────────────┐   │
-│  │ 32.0 ┤                                                         │   │
-│  │      │                   ╭──╮                                  │   │
-│  │ 26.0 ┤     ╭─────────────╯  ╰──────────────────╮              │   │
-│  │      │    /                                      \             │   │
-│  │ 20.0 ┤───╯                                        ╰─────       │   │
-│  │      └─────────────────────────────────────────────────────    │   │
-│  │      -24h          -18h          -12h          -6h          0h │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-│                                                                        │
-│  TEMPERATURA → line chart (blu), range 18–32 °C,                     │
-│  LUCI        → bar chart (giallo), range 0–100 % schedule             │
-│  CO₂         → bar chart (verde), finestra attiva CO₂                 │
-│  [ Home ]  [ Luci ]  [ Temp ]  [ Auto ]  [📊Dati]                    │
-└────────────────────────────────────────────────────────────────────────┘
+  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+  ░░  ┌──────────────────────┐  ░░
+  ░░  │    ⚠                 │  ░░
+  ░░  │  TEMPERATURA ALTA!   │  ░░
+  ░░  │  Attuale: 29.3 °C    │  ░░
+  ░░  │ [DISATTIVA]  [ OK ]  │  ░░
+  ░░  └──────────────────────┘  ░░
+  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
 ---
 
-### 🚨 Overlay Allarme
+## 🌐 Web UI – dettaglio
 
-Chiamabile da qualsiasi task via `display_ui_show_alarm(msg, detail)`.
+La Web UI è un'applicazione **PWA** (Progressive Web App) installabile su Android e iOS.
+Il frontend (HTML + CSS + JS + SVG) è **embedded nel firmware** e servito direttamente dall'ESP32-P4
+senza necessità di SD card o server esterno.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│  STATUS BAR   ⚠ ALLARME  (badge rosso)                                │
-│                                                                        │
-│  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ (overlay 50%)   │
-│  ░░  ┌────────────────────────────────────────────┐  ░░              │
-│  ░░  │              ⚠                             │  ░░              │
-│  ░░  │   TEMPERATURA TROPPO ALTA!                 │  ░░              │
-│  ░░  │   Attuale: 29.3°C  (dettaglio muted)       │  ░░              │
-│  ░░  │                                            │  ░░              │
-│  ░░  │  [ DISATTIVA ALLARME ]   [  OK  ] (rosso)  │  ░░              │
-│  ░░  └────────────────────────────────────────────┘  ░░              │
-│  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ (overlay 50%)   │
-└────────────────────────────────────────────────────────────────────────┘
-```
+- **Sfondo**: scena subacquea SVG animata con bolle CSS
+- **Glassmorphism cards**: `backdrop-filter: blur(12px)`
+- **Aggiornamento real-time**: WebSocket push ogni 3 s
+- **Autenticazione**: form login → cookie di sessione (24 h)
 
-- **DISATTIVA ALLARME**: nasconde l'overlay ma mantiene il badge rosso nella status bar
-- **OK**: nasconde l'overlay e ripristina il badge verde `✓ OK`
+### Sezioni principali
 
----
-
-## ✨ Funzionalità principali
-
-- **WiFi STA + AP fallback** (captive portal di configurazione)
-- **Web dashboard** con controlli in tempo reale
-- **REST API JSON** per integrazione esterna (35+ endpoint)
-- **LED control avanzato**
-  - on/off rapido con ramp configurabile
-  - RGB + luminosità (0–255)
-  - schedule alba/tramonto con ramp
-  - preset colore e scena
-- **Scene LED animate** (engine FreeRTOS, tick 500 ms)
-  - `SUNRISE` – ramp alba: ambra caldo → bianco giorno
-  - `SUNSET` – ramp tramonto: bianco → ambra → spento
-  - `MOONLIGHT` – luce lunare blu tenue
-  - `STORM` – flickering casuale con lampeggi
-  - `CLOUDS` – variazione sinusoidale lenta della luminosità
-- **Ciclo luminoso giornaliero automatico** (`daily_cycle`)
-  - fasi: Night → Sunrise → Morning → Noon → Afternoon → Sunset → Evening
-  - calcolo alba/tramonto NOAA da lat/lon configurabili in NVS
-  - ricalcolo automatico ogni giorno
-- **Temperatura acqua**
-  - polling periodico DS18B20
-  - media mobile
-  - storico giornaliero (esportazione CSV via HTTP)
-  - log CSV giornaliero su SD card
-- **Relè**
-  - comando manuale
-  - nomi personalizzati (persistiti in NVS)
-- **Auto-Heater (termostato)**
-  - accensione/spegnimento automatico per relè configurabile
-  - target e isteresi impostabili
-- **CO₂**
-  - programmazione oraria con pre-anticipo ON e post-ritardo OFF rispetto allo schedule luci
-- **Modalità alimentazione** (`feeding_mode`)
-  - pausa relè configurabile per N minuti (1–60)
-  - dimmer LED opzionale durante la pausa
-  - notifica Telegram a inizio e fine sessione
-- **SD Card** (microSD via SDMMC slot 1)
-  - mount FAT, crea directory `/sdcard/logs/` e `/sdcard/config/`
-  - backup/restore configurazione completa in JSON
-  - log temperatura CSV giornaliero
-  - log eventi (relay, feeding, CO₂, scene) CSV giornaliero
-  - log notifiche Telegram giornaliero
-  - log diagnostico WARN/ERR giornaliero
-  - OTA da immagine `firmware.bin` sulla SD card
-- **Telegram bot**
-  - eventi relè
-  - allarmi temperatura
-  - test messaggio
-  - promemoria cambio acqua / fertilizzante
-- **Touch Display UI** LVGL v9 su display 720×720
-  - 5 tab: Home / Luci / Temperatura / Automazioni / Dati
-  - card 2×2 panoramica con navigazione rapida al tab
-  - arc gauge temperatura con colore adattivo
-  - slider luminosità + 4 bottoni scena (Alba/Giorno/Tramonto/Notte)
-  - spinbox target temperatura + pulsante salva
-  - toggle automazioni (Luci, CO₂, Riscaldatore, 4 relè)
-  - bottone Avvia/Ferma Alimentazione
-  - grafico storico 24h (Temperatura/Luci/CO₂) con selettore
-  - overlay allarme modale con badge status bar
-- **OTA** via URL HTTP remoto
-- **DuckDNS** per accesso remoto con aggiornamento IP automatico
-- **HTTPS opzionale** (certificato embedded)
-- **Fuso orario POSIX** con SNTP e lista timezone configurabili
-
----
-
-## 🧱 Architettura
-
-### Hardware target
-- **MCU principale**: ESP32-P4
-- **Coprocessore**: ESP32-C6 (WiFi 6 / BLE 5 via SDIO)
-- **Board**: Waveshare ESP32-P4-WiFi6 rev 1.3
-
-### Flusso di avvio (semplificato)
-1. NVS init + Task WDT
-2. SD card init (non fatale)
-3. SD logger init
-4. WiFi manager init
-5. SNTP + timezone
-6. init moduli (LED, scene, daily cycle, sensore, Telegram, relè, heater, CO₂, feeding, DuckDNS)
-7. avvio Web server
-8. **display UI init** (task separato: LVGL + MIPI-DSI HX8394 + GT911 touch)
-9. loop applicativo (tick moduli ogni ~10 s)
-
-### Moduli principali (`main/`)
-
-| File | Responsabilità |
+| Sezione | Contenuto |
 |---|---|
-| `main.c` | bootstrap, orchestrazione loop applicativo |
-| `wifi_manager.*` | STA/AP, captive portal di provisioning |
-| `web_server.*` | HTTP/HTTPS server, dashboard + 35+ endpoint REST |
-| `display_ui.*` | touch UI LVGL v9 (5 tab, dark IoT theme) |
-| `led_controller.*` | WS2812B – on/off, RGB, brightness, fade |
-| `led_schedule.*` | schedule orario alba/tramonto con ramp |
-| `led_scenes.*` | engine 5 scene animate (FreeRTOS task) |
-| `daily_cycle.*` | ciclo luminoso giornaliero da coordinate GPS |
-| `sun_position.*` | calcolo alba/tramonto NOAA |
-| `temperature_sensor.*` | polling DS18B20, media mobile |
-| `temperature_history.*` | storico campioni in-RAM |
-| `relay_controller.*` | 4 relè GPIO, nomi NVS |
-| `auto_heater.*` | termostato automatico |
-| `co2_controller.*` | programmazione CO₂ con pre/post offset |
-| `feeding_mode.*` | pausa alimentazione a tempo |
-| `telegram_notify.*` | notifiche Telegram via HTTPS |
-| `duckdns.*` | aggiornamento DDNS |
-| `ota_update.*` | OTA via URL HTTP |
-| `sd_card.*` | mount SDMMC, backup/restore config JSON |
-| `sd_logger.*` | log CSV giornalieri su SD card |
-| `timezone_manager.*` | POSIX timezone, lista preset |
+| **Riepilogo** | Stato sistema, uptime, IP, NTP, versione firmware, boot count |
+| **LED Strip** | On/off, luminosità, colore RGB, preset, schedule, scena attiva |
+| **Temperatura** | Gauge attuale, target heater, storico chart 24h, esporta CSV |
+| **Automazioni** | Relè (manuale + schedule), heater, CO₂, modalità alimentazione |
+| **Telegram** | Configura bot, test messaggio, promemoria cambio acqua/fertilizzante |
+| **Manutenzione** | DuckDNS, OTA (URL o upload browser), timezone, factory reset, log eventi |
 
 ---
 
-## 📌 Pin di default (Kconfig)
+## 🌐 REST API
 
-### Periferiche
-- LED strip data: **GPIO 20**
-- DS18B20 data: **GPIO 21**
-- Relay 1..4: **GPIO 28 / 29 / 30 / 31** (lato sinistro, opposto a LED/sensore)
-- Polarità relè: **active-low** (default, tipico moduli optoisolati)
-- **Display MIPI-DSI** touch I2C: SCL **GPIO 8**, SDA **GPIO 7** · Backlight: hardware-controlled (GPIO -1)
-
-> Tutti i valori sono modificabili da `idf.py menuconfig`.
-
-> ⚠️ **Non usare GPIO24/GPIO25**: su questa board sono DM/DP del bus USB; il loro uso causa conflitti con la programmazione e l'USB device.
-
-> 📌 **GPIO disponibili sull'header (Waveshare ESP32-P4-WiFi6)**:  
-> Lato destro (LED/sensore): 20, 21, 22, 23, 26, 27, 32, 33, 46, 47, 48  
-> Lato sinistro (relè): 2, 3, 4, 5, **28, 29, 30, 31**, 49, 50, 51, 52 · 7(SDA) · 8(SCL riservati touch)
-
----
-
-## ⚙️ Configurazione
-
-### Prerequisiti
-- ESP-IDF installato e attivato in shell
-- Toolchain per target ESP32-P4
-
-### Build & flash
-```bash
-idf.py set-target esp32p4
-idf.py menuconfig
-idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
-```
-
-### Configurazioni importanti (`menuconfig`)
-- **Aquarium WiFi Settings**
-- **Aquarium Timezone Settings**
-- **Aquarium LED Strip Settings**
-- **Aquarium Temperature Sensor Settings**
-- **Aquarium Relay Settings**
-- **Aquarium Auto-Heater Settings**
-- **Aquarium CO₂ Controller Settings**
-- **Aquarium Feeding Mode Settings**
-- **Aquarium LED Scene Settings**
-- **Aquarium Daily Cycle Settings**
-- **SD Card Settings** (`CONFIG_SD_CARD_ENABLED`, bus width/speed, pin CLK/CMD/D0..D3, internal LDO SD)
-- **Display Settings** (`CONFIG_DISPLAY_ENABLED`, `CONFIG_TOUCH_I2C_SCL/SDA`)
-- **Aquarium Telegram Settings**
-- **Aquarium DuckDNS Settings**
-- **Aquarium HTTPS Settings**
-
----
-
-## 🌐 REST API (endpoint completi)
+Tutti gli endpoint richiedono autenticazione (Basic Auth o cookie di sessione).
 
 ### Sistema
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| `GET` | `/api/health` | Stato sistema (ping) |
-| `GET` | `/api/status` | Stato completo JSON |
+| `GET` | `/api/health` | Ping – stato sistema |
+| `GET` | `/api/status` | Stato completo JSON (tutti i moduli) |
+| `GET` | `/api/events` | Log eventi (relay, scene, boot, allarmi) |
+| `POST` | `/api/login` | Crea sessione cookie |
+| `POST` | `/api/logout` | Invalida sessione |
+| `POST` | `/api/auth` | Cambia username/password |
+| `POST` | `/api/factory_reset` | Reset NVS e riavvio |
 
 ### LED
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
 | `GET` | `/api/leds` | Stato LED (on, R, G, B, brightness) |
 | `POST` | `/api/leds` | Imposta LED (on/off, colore, brightness) |
-| `GET` | `/api/led_schedule` | Legge schedule luci |
-| `POST` | `/api/led_schedule` | Aggiorna schedule luci |
-| `GET` | `/api/led_presets` | Legge preset LED |
-| `POST` | `/api/led_presets` | Applica preset LED |
+| `GET` | `/api/led_schedule` | Legge schedule alba/tramonto |
+| `POST` | `/api/led_schedule` | Aggiorna schedule |
+| `GET` | `/api/led_presets` | Legge preset colore |
+| `POST` | `/api/led_presets` | Applica preset colore |
 
 ### Scene LED
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
 | `GET` | `/api/scene` | Scena attiva + configurazione |
-| `POST` | `/api/scene` | Avvia/ferma scena (sunrise/sunset/moonlight/storm/clouds/none) |
+| `POST` | `/api/scene` | Avvia/ferma scena (`sunrise`/`sunset`/`moonlight`/`storm`/`clouds`/`none`) |
 
 ### Ciclo giornaliero
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
 | `GET` | `/api/daily_cycle` | Configurazione e fase attuale |
-| `POST` | `/api/daily_cycle` | Aggiorna enabled, lat, lon |
+| `POST` | `/api/daily_cycle` | Aggiorna `enabled`, `lat`, `lon` |
 
 ### Temperatura
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
 | `GET` | `/api/temperature` | Temperatura attuale |
 | `GET` | `/api/temperature_history` | Storico campioni JSON |
-| `GET` | `/api/temperature/export.csv` | Esporta storico in CSV |
+| `GET` | `/api/temperature/export.csv` | Esporta storico CSV |
 
 ### Relè
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
 | `GET` | `/api/relays` | Stato tutti i relè |
-| `POST` | `/api/relays` | Imposta relè (index, on/off, nome) |
+| `POST` | `/api/relays` | Imposta relè (index, on/off, nome, schedule) |
 
 ### Automazioni
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| `GET` | `/api/heater` | Config auto-heater |
-| `POST` | `/api/heater` | Aggiorna auto-heater |
-| `GET` | `/api/co2` | Config CO₂ controller |
-| `POST` | `/api/co2` | Aggiorna CO₂ controller |
-| `GET` | `/api/feeding` | Config + stato modalità alimentazione |
-| `POST` | `/api/feeding` | Config / avvia / ferma modalità alimentazione |
+| `GET` | `/api/heater` | Configurazione auto-heater |
+| `POST` | `/api/heater` | Aggiorna heater (target, isteresi, relay) |
+| `GET` | `/api/co2` | Configurazione CO₂ |
+| `POST` | `/api/co2` | Aggiorna CO₂ |
+| `GET` | `/api/feeding` | Configurazione + stato modalità alimentazione |
+| `POST` | `/api/feeding` | Configura / avvia / ferma alimentazione |
 
 ### Telegram
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| `GET` | `/api/telegram` | Config bot (token, chat_id, flags) |
-| `POST` | `/api/telegram` | Aggiorna config bot |
+| `GET` | `/api/telegram` | Config bot (token, chat_id, flag notifiche) |
+| `POST` | `/api/telegram` | Aggiorna configurazione |
 | `POST` | `/api/telegram_test` | Invia messaggio di test |
-| `POST` | `/api/telegram_wc` | Invia promemoria cambio acqua |
-| `POST` | `/api/telegram_fert` | Invia promemoria fertilizzante |
-
-### SD Card
-| Metodo | Endpoint | Descrizione |
-|---|---|---|
-| `GET` | `/api/sdcard` | Stato SD (montata, spazio, nome) |
-| `GET` | `/api/sdcard/ls` | Lista file in una directory |
-| `GET` | `/api/sdcard/download` | Scarica file dalla SD card |
-| `DELETE` | `/api/sdcard/delete` | Elimina file dalla SD card |
-| `POST` | `/api/sdcard/config/export` | Esporta config JSON su SD |
-| `POST` | `/api/sdcard/config/import` | Importa config JSON da SD |
+| `POST` | `/api/telegram_wc` | Promemoria cambio acqua |
+| `POST` | `/api/telegram_fert` | Promemoria fertilizzante |
 
 ### Manutenzione
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
-| `GET` | `/api/duckdns` | Config DuckDNS |
-| `POST` | `/api/duckdns` | Aggiorna config DuckDNS |
-| `POST` | `/api/duckdns_update` | Forza aggiornamento IP DuckDNS |
+| `GET` | `/api/duckdns` | Configurazione DuckDNS |
+| `POST` | `/api/duckdns` | Aggiorna DuckDNS |
+| `POST` | `/api/duckdns_update` | Forza aggiornamento IP |
 | `POST` | `/api/ota` | Avvia OTA da URL remoto |
+| `POST` | `/api/ota/upload` | Upload firmware dal browser (multipart) |
 | `GET` | `/api/ota_status` | Stato aggiornamento OTA |
-| `POST` | `/api/ota/sd` | Avvia OTA da `firmware.bin` su SD card |
 | `GET` | `/api/timezone` | Timezone configurata |
 | `POST` | `/api/timezone` | Imposta timezone POSIX |
+| `GET` | `/api/config/export` | Scarica configurazione JSON |
+| `POST` | `/api/config/import` | Carica configurazione JSON |
+
+### WebSocket
+| URI | Descrizione |
+|---|---|
+| `ws://<ip>/ws` | Push stato JSON ogni 3 s a tutti i client connessi |
 
 ---
 
-## 🔒 Sicurezza
+## ⚙️ Build & Flash
 
-- Se abiliti HTTPS (`AQUARIUM_HTTPS_ENABLE`), usa connessioni TLS sulla LAN.
-- Certificato self-signed predefinito: il browser mostrerà warning iniziale.
-- Per ambienti esposti su Internet, consigliato reverse proxy con certificati validi.
+### Prerequisiti
+
+- [ESP-IDF v6.0](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32p4/) installato e attivato
+- Toolchain ESP32-P4 (`idf.py set-target esp32p4`)
+- Python 3.8+
+
+### Comandi
+
+```bash
+# Clona il repository
+git clone https://github.com/Deddu3D/Aquarium-Controller-ESP32P4.git
+cd Aquarium-Controller-ESP32P4
+
+# Configura target e opzioni
+idf.py set-target esp32p4
+idf.py menuconfig
+
+# Compila e flasha
+idf.py build
+idf.py -p /dev/ttyACM0 flash monitor
+```
+
+### Configurazioni principali (`menuconfig`)
+
+| Menu | Opzioni chiave |
+|---|---|
+| **Aquarium WiFi Settings** | SSID, password WiFi |
+| **Aquarium Web Authentication** | username, password Web UI |
+| **Aquarium Timezone Settings** | stringa POSIX timezone (default: `CET-1CEST,M3.5.0/2,M10.5.0/3`) |
+| **Aquarium LED Strip Settings** | GPIO data, numero LED, luminosità default, durata ramp |
+| **Aquarium Temperature Sensor Settings** | GPIO DS18B20, intervallo lettura, calibrazione |
+| **Aquarium Relay Settings** | GPIO relè 1–4, polarità active-low |
+| **Aquarium Display Settings** | abilita display, GPIO I2C touch (SDA=7, SCL=8), timeout backlight |
+| **Aquarium Auto-Heater Settings** | timeout runaway protection |
+| **Aquarium Feeding Mode Settings** | relè pausa, durata default |
+| **Aquarium LED Scene Settings** | durata alba/tramonto, luminosità moonlight |
+| **Aquarium Daily Cycle Settings** | latitudine × 10000, longitudine × 10000, durata moonlight |
+| **Aquarium HTTPS Settings** | abilita TLS (default: off) |
+| **Aquarium WebSocket Settings** | intervallo push (default: 3000 ms) |
+
+> **Prima configurazione**: imposta almeno SSID + password WiFi. Le credenziali vengono salvate in NVS e possono essere aggiornate in seguito anche via captive portal (AP mode) o Web UI.
 
 ---
 
-## 🛠️ Troubleshooting rapido
+## 🧱 Architettura
 
-- **WiFi non connesso** → verificare SSID/password o usare AP setup.
-- **Telegram non invia** → controllare token/chat ID e ora SNTP sincronizzata.
-- **Temperatura nulla** → verificare DS18B20 e pull-up 4.7 kΩ su GPIO 21.
-- **OTA fallisce** → verificare URL binario, rete e spazio partizioni.
-- **SD card non montata** → verificare formattazione FAT32, pin CLK/CMD/D0 e `CONFIG_SD_CARD_ENABLED=y`.
-- **Display nero** → verificare `CONFIG_DISPLAY_ENABLED=y` e rev chip ≥ v1.0 (`CONFIG_ESP32P4_REV_MIN_FULL=100`).
-- **Scene non si avviano** → verificare `CONFIG_LV_USE_ARC=y` e heap disponibile (≥ 100 kB raccomandati).
-- **Daily cycle inattivo** → verificare ora SNTP sincronizzata e `enabled=true` in `/api/daily_cycle`.
+### Hardware target
+
+| Componente | Dettaglio |
+|---|---|
+| MCU principale | ESP32-P4 (dual-core Xtensa LX7 @ 400 MHz, no WiFi integrato) |
+| Coprocessore WiFi | ESP32-C6 (WiFi 6 / BLE 5, collegato via SDIO) |
+| Board | Waveshare ESP32-P4-WiFi6 rev 1.3 |
+| Flash | 16 MB (partizioni: NVS 24 KB + OTA dual 6 MB × 2) |
+| Display | Waveshare 4-DSI-TOUCH-A – 720 × 720 px IPS MIPI-DSI, touch GT911 |
+
+### Flusso di avvio
+
+```
+1. NVS init
+2. Task Watchdog (45 s timeout)
+3. WiFi manager (STA → captive portal AP se fallisce)
+4. Timezone (NVS → default POSIX)
+5. SNTP sync (max 15 s)
+6. LED strip + schedule + scene + daily cycle
+7. DS18B20 + history
+8. Telegram
+9. Relè + auto-heater + CO₂ + feeding mode
+10. DuckDNS
+11. Web server HTTP/HTTPS
+12. Display UI (task separato: LVGL + MIPI-DSI HX8394 + GT911)
+13. OTA validate (auto-rollback)
+14. Main loop (tick moduli ogni 5–60 s)
+```
+
+### Moduli (`main/`)
+
+| File | Responsabilità |
+|---|---|
+| `main.c` | Bootstrap e loop applicativo |
+| `wifi_manager.*` | STA/AP, captive portal di provisioning |
+| `web_server.*` | HTTP/HTTPS server, PWA embedded, 35+ endpoint REST + WebSocket |
+| `display_ui.*` | Touch UI LVGL v9 (5 tab, dark IoT theme) |
+| `led_controller.*` | WS2812B – on/off, RGB, brightness, fade |
+| `led_schedule.*` | Schedule orario alba/tramonto con ramp |
+| `led_scenes.*` | Engine 5 scene animate (FreeRTOS task) |
+| `daily_cycle.*` | Ciclo luminoso giornaliero automatico |
+| `sun_position.*` | Calcolo alba/tramonto NOAA |
+| `temperature_sensor.*` | Polling DS18B20, media mobile |
+| `temperature_history.*` | Storico campioni in-RAM |
+| `relay_controller.*` | 4 relè GPIO, nomi NVS, schedule |
+| `auto_heater.*` | Termostato automatico + runaway protection |
+| `co2_controller.*` | Controller CO₂ con pre/post offset |
+| `feeding_mode.*` | Pausa alimentazione a tempo |
+| `telegram_notify.*` | Notifiche Telegram via HTTPS |
+| `duckdns.*` | Aggiornamento DDNS |
+| `ota_update.*` | OTA via URL HTTP e upload diretto |
+| `timezone_manager.*` | POSIX timezone, lista preset, SNTP |
+| `event_log.*` | Log eventi in-RAM (relay, scene, boot, allarmi) |
+
+### Componente locale
+
+| Componente | Descrizione |
+|---|---|
+| `components/esp_lcd_hx8394/` | Driver panel MIPI-DSI HX8394 (override del managed component) |
 
 ---
 
@@ -551,46 +476,77 @@ idf.py -p /dev/ttyACM0 flash monitor
 ```text
 .
 ├── CMakeLists.txt
-├── partitions.csv
+├── partitions.csv              ← OTA dual (ota_0 + ota_1, 6 MB ciascuna)
 ├── sdkconfig.defaults
 ├── README.md
 ├── components/
-│   └── esp_lcd_hx8394/        ← driver HX8394 locale (override managed component)
+│   └── esp_lcd_hx8394/        ← driver HX8394 locale
 ├── docs/
 │   └── screenshots/
-│       ├── web_ui_*.png        ← screenshot Web UI
-│       └── display_ui_*.png   ← screenshot display (hardware reale)
+│       ├── web_ui_*.png
+│       └── display_ui_*.png
 └── main/
     ├── Kconfig.projbuild       ← tutte le opzioni menuconfig
-    ├── idf_component.yml       ← dipendenze managed (lvgl, cjson, gt911, hx8394…)
+    ├── idf_component.yml       ← dipendenze managed (lvgl, ds18b20, gt911, cjson, mdns…)
     ├── CMakeLists.txt
-    ├── main.c                  ← bootstrap + loop applicativo
-    ├── web_server.c/h          ← HTTP/HTTPS + 35+ endpoint REST
-    ├── display_ui.c/h          ← LVGL v9 touch dashboard (5 tab)
+    ├── main.c
+    ├── web_server.c/h          ← HTTP/HTTPS + REST + WebSocket
+    ├── display_ui.c/h          ← LVGL v9 touch dashboard
     ├── led_controller.c/h
     ├── led_schedule.c/h
-    ├── led_scenes.c/h          ← engine scene animate (5 scene)
-    ├── daily_cycle.c/h         ← ciclo luminoso giornaliero NOAA
-    ├── sun_position.c/h        ← calcolo alba/tramonto
+    ├── led_scenes.c/h
+    ├── daily_cycle.c/h
+    ├── sun_position.c/h
     ├── temperature_sensor.c/h
     ├── temperature_history.c/h
     ├── relay_controller.c/h
     ├── auto_heater.c/h
     ├── co2_controller.c/h
-    ├── feeding_mode.c/h        ← modalità alimentazione a tempo
+    ├── feeding_mode.c/h
+    ├── event_log.c/h
     ├── telegram_notify.c/h
-    ├── sd_card.c/h             ← SD card mount + config backup
-    ├── sd_logger.c/h           ← log CSV/log giornalieri su SD
     ├── duckdns.c/h
     ├── ota_update.c/h
     ├── timezone_manager.c/h
     ├── wifi_manager.c/h
     ├── server.crt              ← certificato HTTPS embedded
-    └── server.key
+    ├── server.key
+    └── www/                    ← Web UI (embedded nel firmware via CMake EMBED_TXTFILES)
+        ├── index.html
+        ├── style.css
+        ├── bg.svg
+        ├── manifest.json
+        └── sw.js
 ```
+
+---
+
+## 🛠️ Troubleshooting
+
+| Problema | Soluzione |
+|---|---|
+| **WiFi non connesso** | Verificare SSID/password; connettersi a `AquariumSetup` per il captive portal |
+| **Telegram non invia** | Controllare token e chat ID; verificare SNTP sincronizzato |
+| **Temperatura 0 / errore** | Verificare DS18B20 e pull-up 4.7 kΩ su GPIO 21 |
+| **OTA fallisce** | Verificare URL binario accessibile dalla rete locale, partizioni dual OTA presenti |
+| **Display nero** | Verificare `CONFIG_DISPLAY_ENABLED=y` e rev chip ≥ v1.0 (`CONFIG_ESP32P4_REV_MIN_FULL=100`) |
+| **Web UI non carica** | Il firmware include la UI embedded – nessuna SD card necessaria. Verificare connessione WiFi e autenticazione |
+| **Scene non si avviano** | Verificare `CONFIG_LV_USE_ARC=y` e heap disponibile (≥ 100 kB) |
+| **Daily cycle inattivo** | Verificare SNTP sincronizzato e `enabled=true` via `/api/daily_cycle` |
+| **Bootloader rifiuta la board** | Aggiungere `CONFIG_ESP32P4_REV_MIN_FULL=100` a `sdkconfig.defaults` |
+
+---
+
+## 🔒 Note di sicurezza
+
+- **Autenticazione abilitata di default** (username: `admin`, password: `aquarium`) — cambiare le credenziali prima di esporre su Internet.
+- **HTTPS opzionale** (`CONFIG_AQUARIUM_HTTPS_ENABLE=y`): usa TLS con certificato self-signed embedded; il browser mostrerà un avviso iniziale da accettare.
+- Per esposizione su Internet si raccomanda un **reverse proxy** (es. nginx) con certificato Let's Encrypt valido.
+- Le credenziali Web UI vengono salvate in NVS e possono essere modificate via `POST /api/auth`.
 
 ---
 
 ## 📄 Licenza
 
-Questo progetto è distribuito con licenza **MIT**.
+Distribuito con licenza **MIT**.  
+Vedere il file `LICENSE` per i dettagli.
