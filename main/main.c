@@ -254,6 +254,11 @@ void app_main(void)
         ESP_LOGI(TAG, "Relay controller ready (4 channels)");
         /* Register Telegram notification callback for relay state changes */
         relay_controller_set_change_cb(on_relay_change);
+        /* Run one immediate schedule evaluation so that relays reach their
+         * correct schedule state right away rather than waiting up to 60 s
+         * for the first periodic tick in the main loop.  The function
+         * returns silently if the clock is not yet valid. */
+        relay_controller_tick_schedules();
     }
 
     /* ── 8b. Initialise auto-heater thermostat ───────────────────── */

@@ -95,8 +95,9 @@ CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
 CONFIG_ESP_TLS_USING_MBEDTLS=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
-# Enable HTTPS web server by default
-CONFIG_AQUARIUM_HTTPS_ENABLE=y
+# Disable HTTPS web server: TLS handshakes are too slow on a local-LAN device
+# and spam "performing session handshake" on every request. Plain HTTP is used.
+CONFIG_AQUARIUM_HTTPS_ENABLE=n
 
 # ── Touch Display (Waveshare 4-DSI-TOUCH-A, 720×720, HX8394 + GT911) ──
 CONFIG_DISPLAY_ENABLED=y
@@ -134,6 +135,9 @@ CONFIG_FEEDING_DEFAULT_DURATION_MIN=10
 CONFIG_WEB_AUTH_ENABLE=y
 CONFIG_WEB_AUTH_USERNAME="admin"
 CONFIG_WEB_AUTH_PASSWORD="aquarium"
+
+# ── HTTP server / WebSocket ───────────────────────────────────────
+CONFIG_HTTPD_WS_SUPPORT=y
 
 # ── LED Scene defaults ────────────────────────────────────────────
 CONFIG_LED_SCENE_SUNRISE_DURATION_MIN=30

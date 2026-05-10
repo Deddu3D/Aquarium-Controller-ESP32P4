@@ -18,6 +18,7 @@
 #include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_random.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
@@ -69,6 +70,9 @@ static const char *TAG = "web_srv";
 /* Loaded once at server start; updated on POST /api/auth */
 static char s_auth_user[64];
 static char s_auth_pass[128];
+
+/* Forward declaration – defined below in the session-management block */
+static void session_init(void);
 
 /**
  * @brief Load credentials from NVS (falls back to Kconfig defaults).
