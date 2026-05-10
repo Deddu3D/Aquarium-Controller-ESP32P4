@@ -49,6 +49,33 @@
   --glass:     rgba(16,42,61,0.72);
 }
 
+/* ── Light mode overrides ───────────────────────────────────────────── */
+html.light {
+  --bg:        #dff0fb;
+  --card:      #ffffff;
+  --text:      #0b1e2d;
+  --muted:     #4a6a80;
+  --on-bg:     #d4f4e0;
+  --err-bg:    #fde8e6;
+  --off:       #c8dce8;
+  --border:    rgba(31,163,255,0.30);
+  --shadow:    rgba(0,0,0,0.15);
+  --glass:     rgba(255,255,255,0.80);
+}
+html.light body {
+  background-image:
+    repeating-linear-gradient(
+      105deg,
+      transparent 0%,
+      transparent 6%,
+      rgba(31,163,255,0.04) 6%,
+      rgba(31,163,255,0.04) 7%,
+      transparent 7%
+    ),
+    radial-gradient(ellipse at 50% 0%, rgba(31,163,255,0.10) 0%, transparent 65%),
+    linear-gradient(180deg, #b8ddf5 0%, #8ec8ef 60%, #63b0e8 100%);
+}
+
 /* ── Animated underwater background ───────────────────────────────── */
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
@@ -131,6 +158,15 @@ body {
 .title-bar .version {
   font-size: .72rem; color: var(--muted);
 }
+
+/* Dark/Light mode toggle button */
+#theme-toggle {
+  background: none; border: 1px solid var(--border);
+  border-radius: 20px; padding: .25rem .55rem;
+  cursor: pointer; font-size: 1rem; line-height: 1;
+  color: var(--text); transition: background .2s, border-color .2s;
+}
+#theme-toggle:hover { background: rgba(31,163,255,0.12); }
 
 /* ── Tab bar ────────────────────────────────────────────────────────── */
 .tab-bar {

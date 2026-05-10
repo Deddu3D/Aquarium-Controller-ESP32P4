@@ -24,6 +24,8 @@ extern "C" {
 #define WIFI_SSID_MAX      33
 /** Maximum password length (including NUL). */
 #define WIFI_PASSWORD_MAX  65
+/** Maximum mDNS hostname length (including NUL). */
+#define WIFI_MDNS_HOST_MAX 32
 
 /**
  * @brief Initialise the WiFi subsystem.
@@ -84,6 +86,27 @@ esp_err_t wifi_manager_set_credentials(const char *ssid, const char *password);
  * Can also be called externally to re-open the portal.
  */
 esp_err_t wifi_manager_start_portal(void);
+
+/**
+ * @brief Return the current mDNS hostname (NUL-terminated).
+ *
+ * Default is "aquarium" (device reachable as http://aquarium.local).
+ *
+ * @param buf  Destination buffer (at least WIFI_MDNS_HOST_MAX bytes).
+ * @param len  Size of @p buf.
+ */
+void wifi_manager_get_mdns_hostname(char *buf, size_t len);
+
+/**
+ * @brief Change the mDNS hostname and persist it in NVS.
+ *
+ * Takes effect immediately if WiFi is currently connected.
+ *
+ * @param host  NUL-terminated hostname (max WIFI_MDNS_HOST_MAX-1 chars,
+ *              only letters, digits and hyphens allowed by mDNS spec).
+ * @return ESP_OK or error code.
+ */
+esp_err_t wifi_manager_set_mdns_hostname(const char *host);
 
 #ifdef __cplusplus
 }

@@ -26,6 +26,7 @@ void display_ui_show_alarm(const char *msg, const char *detail)
 {
     (void)msg; (void)detail;
 }
+void display_ui_clear_alarm(void) {}
 
 #else  /* CONFIG_DISPLAY_ENABLED */
 
@@ -197,6 +198,11 @@ static int                 s_chart_mode = 0;
 
 /* ─ Alarm overlay ─────────────────────────────────────────────────── */
 static lv_obj_t *s_alarm_overlay = NULL;
+
+/* ─ Alarm badge (persistent red count badge in status bar) ─────────── */
+static lv_obj_t *s_alarm_badge_chip = NULL;  /* container pill        */
+static lv_obj_t *s_alarm_badge_lbl  = NULL;  /* "⚠ N" label inside    */
+static volatile int s_alarm_count   = 0;      /* active alarm count    */
 
 /* ─ Forward declarations ──────────────────────────────────────────── */
 static void auto_feed_cb(lv_event_t *e);
@@ -1507,10 +1513,22 @@ static void alarm_ok_cb(lv_event_t *e)
         lv_obj_del(s_alarm_overlay);
         s_alarm_overlay = NULL;
     }
-    if (s_status_ok_chip)
-        lv_obj_set_style_bg_color(s_status_ok_chip, lv_color_hex(C_ON_BG), 0);
-    if (s_status_ok_lbl)
-        lv_label_set_text(s_status_ok_lbl, LV_SYMBOL_OK "  OK");
+    /* Acknowledge one alarm: decrement badge counter */
+    if (s_alarm_count > 0) {
+        s_alarm_count--;
+    }
+    if (s_alarm_count == 0) {
+        if (s_alarm_badge_chip)
+            lv_obj_add_flag(s_alarm_badge_chip, LV_OBJ_FLAG_HIDDEN);
+        if (s_status_ok_chip)
+            lv_obj_set_style_bg_color(s_status_ok_chip, lv_color_hex(C_ON_BG), 0);
+        if (s_status_ok_lbl)
+            lv_label_set_text(s_status_ok_lbl, LV_SYMBOL_OK "  OK");
+    } else {
+        if (s_alarm_badge_lbl)
+            lv_label_set_text_fmt(s_alarm_badge_lbl,
+                                  LV_SYMBOL_WARNING " %d", s_alarm_count);
+    }
 }
 
 static void alarm_dismiss_cb(lv_event_t *e)
@@ -1530,6 +1548,14 @@ void display_ui_show_alarm(const char *msg, const char *detail)
     if (s_alarm_overlay) {
         lv_obj_del(s_alarm_overlay);
         s_alarm_overlay = NULL;
+    }
+
+    /* Increment persistent badge counter */
+    s_alarm_count++;
+    if (s_alarm_badge_chip && s_alarm_badge_lbl) {
+        lv_label_set_text_fmt(s_alarm_badge_lbl,
+                              LV_SYMBOL_WARNING " %d", s_alarm_count);
+        lv_obj_remove_flag(s_alarm_badge_chip, LV_OBJ_FLAG_HIDDEN);
     }
 
     /* Update status bar chip to ALLARME */
@@ -1617,6 +1643,35 @@ void display_ui_show_alarm(const char *msg, const char *detail)
     xSemaphoreGive(s_mutex);
 }
 
+void display_ui_clear_alarm(void)
+{
+    if (!s_mutex) return;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    if (s_alarm_count > 0) {
+        s_alarm_count--;
+    }
+
+    if (s_alarm_count == 0) {
+        /* All alarms resolved – hide badge and restore OK status */
+        if (s_alarm_badge_chip) {
+            lv_obj_add_flag(s_alarm_badge_chip, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (s_status_ok_chip)
+            lv_obj_set_style_bg_color(s_status_ok_chip, lv_color_hex(C_ON_BG), 0);
+        if (s_status_ok_lbl)
+            lv_label_set_text(s_status_ok_lbl, LV_SYMBOL_OK "  OK");
+    } else {
+        /* Still some alarms active – update count */
+        if (s_alarm_badge_lbl) {
+            lv_label_set_text_fmt(s_alarm_badge_lbl,
+                                  LV_SYMBOL_WARNING " %d", s_alarm_count);
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+}
+
 /* ╔══════════════════════════════════════════════════════════════════════
  * ║  13. Status bar
  * ╚══════════════════════════════════════════════════════════════════════ */
@@ -1670,6 +1725,11 @@ static void build_status_bar(void)
     lv_label_set_text(wifi_lbl, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_color(wifi_lbl, lv_color_hex(C_MUTED), 0);
     lv_obj_set_style_text_font(wifi_lbl, &lv_font_montserrat_20, 0);
+
+    /* Alarm count badge – hidden when count == 0 */
+    s_alarm_badge_chip = make_badge(bar, "", C_ERR_BG, C_ERR,
+                                    &s_alarm_badge_lbl);
+    lv_obj_add_flag(s_alarm_badge_chip, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* ╔══════════════════════════════════════════════════════════════════════
