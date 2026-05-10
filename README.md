@@ -403,8 +403,7 @@ idf.py -p /dev/ttyACM0 flash monitor
 | **Aquarium HTTPS Settings** | abilita TLS (default: off) |
 | **Aquarium WebSocket Settings** | intervallo push (default: 3000 ms) |
 
-> **Prima configurazione**: imposta almeno SSID + password WiFi. Le credenziali vengono salvate in NVS  
-> e possono essere aggiornate in seguito anche via captive portal (AP mode) o Web UI.
+> **Prima configurazione**: imposta almeno SSID + password WiFi. Le credenziali vengono salvate in NVS e possono essere aggiornate in seguito anche via captive portal (AP mode) o Web UI.
 
 ---
 
