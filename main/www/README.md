@@ -1,89 +1,66 @@
-# Web UI – SD card files
+# Web UI – file sorgente
 
-This directory contains the web dashboard files that must be copied
-to the microSD card before the Web UI is accessible.
+Questa directory contiene i file della Web UI.
+Vengono **compilati direttamente nel firmware** tramite `CMake EMBED_TXTFILES`
+e serviti dall'ESP32-P4 senza alcuna SD card.
 
-## File list
+## File
 
-| File | Description |
+| File | Descrizione |
 |------|-------------|
-| `index.html` | Main dashboard page (HTML + JS) |
-| `style.css`  | Aquarium-themed stylesheet — edit this to change the look |
-| `bg.svg`     | Bundled underwater scene background (SVG, no extra download needed) |
-| `bg.jpg` *(optional)* | Replace `bg.svg` with a real aquarium photo — rename to `bg.svg` or update the `url()` in style.css. |
-| `README.md` | This file |
+| `index.html` | Dashboard HTML + JS (inclusi sprite SVG inline) |
+| `style.css`  | Foglio di stile dark (palette identica a `display_ui.c`) |
+| `bg.svg`     | Scena subacquea SVG (sfondo animato) |
+| `manifest.json` | PWA manifest (nome app, icone, theme color) |
+| `sw.js`      | Service Worker (cache PWA offline) |
 
-## Setup
+## Come funziona
 
-Copy **this entire `www/` folder** to the root of the SD card:
+Il `CMakeLists.txt` della componente `main` usa `EMBED_TXTFILES` per incorporare
+tutti i file di questa directory nel binario ELF:
 
+```cmake
+EMBED_TXTFILES
+    "www/index.html"
+    "www/style.css"
+    "www/bg.svg"
+    "www/manifest.json"
+    "www/sw.js"
 ```
-/sdcard/www/index.html
-/sdcard/www/style.css
-/sdcard/www/bg.svg         ← bundled underwater scene (included in repo)
+
+Il `web_server.c` li serve con i MIME type corretti:
+
+- `GET /`              → `index.html`
+- `GET /www/style.css` → `style.css`
+- `GET /www/bg.svg`    → `bg.svg`
+- `GET /manifest.json` → `manifest.json`
+- `GET /sw.js`         → `sw.js`
+
+## Aggiornare la UI
+
+Per aggiornare la Web UI è necessario ricompilare e reflashare il firmware:
+
+```bash
+# Modifica i file in main/www/
+idf.py build
+idf.py -p /dev/ttyACM0 flash
 ```
 
-The controller creates the `/sdcard/www/` directory automatically at
-boot if it is missing, but it does not copy the files — they must be
-placed manually (or via the SD-card file-browser in the Web UI once
-a previous version of index.html is already present).
+In alternativa, usa l'**OTA via upload browser** (`POST /api/ota/upload`)
+per aggiornare senza collegamento fisico.
 
-## How it works
+## Palette colori
 
-On every `GET /` request the firmware opens `/sdcard/www/index.html`
-and streams it to the browser in 2 KB chunks.  No RAM copy of the
-whole page is needed.
+| Variabile CSS | Hex | Ruolo |
+|---------------|-----|-------|
+| `--bg`      | `#0b1e2d` | Sfondo pagina |
+| `--card`    | `#102a3d` | Superficie card (glassmorphism) |
+| `--primary` | `#1fa3ff` | Blu accent |
+| `--yellow`  | `#f1c40f` | Luci / scene |
+| `--orange`  | `#f39c12` | Temperatura warning |
+| `--text`    | `#ecf5fb` | Testo principale |
+| `--muted`   | `#5c7f9a` | Testo secondario |
+| `--on`      | `#2ecc71` | Attivo / OK |
+| `--err`     | `#e74c3c` | Errore / allarme |
 
-Any file under `/www/` on the SD card can be fetched by the browser
-via `GET /www/<filename>` (e.g. `GET /www/style.css`).  MIME types
-are detected automatically (.html, .css, .js, .json, .png, .jpg,
-.gif, .svg, .ico, .woff, .woff2, .ttf).  Responses include
-`Cache-Control: max-age=3600` so the browser caches them for 1 hour.
-
-If the SD card is not mounted or the file is not found, a minimal
-fallback page is served with instructions to copy `www/` to the card.
-
-All dynamic data (temperature, LED state, relay status, etc.) is
-fetched by the page JavaScript via the `/api/*` REST endpoints.
-The status bar (IP / NTP / Uptime / Partition) is populated on load
-from `/api/status`.
-
-## Design language
-
-The stylesheet uses the same colour palette as the physical display
-(`display_ui.c`):
-
-| Variable | Hex | Role |
-|----------|-----|------|
-| `--bg`      | `#0b1e2d` | Page background |
-| `--card`    | `#102a3d` | Card surface |
-| `--primary` | `#1fa3ff` | Blue accent |
-| `--yellow`  | `#f1c40f` | Lights / scenes |
-| `--orange`  | `#f39c12` | Temperature warning |
-| `--text`    | `#ecf5fb` | Main text |
-| `--muted`   | `#5c7f9a` | Secondary text |
-| `--on`      | `#2ecc71` | Active / OK |
-| `--err`     | `#e74c3c` | Error / alarm |
-
-Glassmorphism cards use `backdrop-filter: blur(12px)`.
-
-The background combines animated rising bubbles (pure CSS) with
-the bundled `bg.svg` underwater scene. To replace it with a real
-aquarium photograph, see the section below.
-
-## Replacing the background with a real aquarium photo
-
-1. Take a photo of your aquarium (or download one).
-2. Copy it to `/sdcard/www/` as any filename (e.g. `tank.jpg`).
-3. Edit the `url('/www/bg.svg')` line in `style.css` to `url('/www/tank.jpg')`.
-4. Hard-refresh the browser.
-
-The photo appears behind the CSS gradient and bubble overlay layers.
-
-## Updating the UI
-
-To update the dashboard without re-flashing the firmware:
-1. Edit files in `main/www/` on your PC.
-2. Copy the updated files to the SD card.
-3. Hard-refresh the browser (Ctrl+Shift+R / Cmd+Shift+R).
-
+La palette è identica a quella usata nel display fisico (`display_ui.c`).
