@@ -2592,10 +2592,84 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
 }
 
 /* ── /api/events GET endpoint ────────────────────────────────────── */
+/*
+ * Optional query parameters:
+ *   type=<name>         – filter to a single event type by name
+ *                         (relay_change, temp_alarm, sensor_fault, feeding,
+ *                          ota, heater_runaway, system, co2)
+ *   since=<unix_epoch>  – only return events with timestamp >= since
+ *   until=<unix_epoch>  – only return events with timestamp <= until
+ *
+ * Example: GET /api/events?type=temp_alarm&since=1700000000
+ */
+
+static const char * const k_event_type_names[] = {
+    "relay_change", "temp_alarm", "sensor_fault",
+    "feeding", "ota", "heater_runaway", "system", "co2",
+};
+#define K_EVENT_TYPE_COUNT \
+    ((int)(sizeof(k_event_type_names)/sizeof(k_event_type_names[0])))
+
+/**
+ * @brief Parse URL query string for the /api/events endpoint.
+ *
+ * Fills *type_mask, *since, *until from the URI query string.
+ */
+static void parse_events_query(httpd_req_t *req,
+                                uint32_t *type_mask,
+                                time_t   *since,
+                                time_t   *until)
+{
+    *type_mask = 0;
+    *since     = 0;
+    *until     = 0;
+
+    /* Retrieve full query string */
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen == 0) return;
+
+    char *qs = malloc(qlen + 1);
+    if (!qs) return;
+    if (httpd_req_get_url_query_str(req, qs, qlen + 1) != ESP_OK) {
+        free(qs);
+        return;
+    }
+
+    /* type= */
+    char type_str[32] = {0};
+    if (httpd_query_key_value(qs, "type", type_str, sizeof(type_str)) == ESP_OK
+        && type_str[0] != '\0') {
+        for (int i = 0; i < K_EVENT_TYPE_COUNT; i++) {
+            if (strcmp(type_str, k_event_type_names[i]) == 0) {
+                *type_mask = (1u << (uint32_t)i);
+                break;
+            }
+        }
+    }
+
+    /* since= */
+    char ts_str[24] = {0};
+    if (httpd_query_key_value(qs, "since", ts_str, sizeof(ts_str)) == ESP_OK
+        && ts_str[0] != '\0') {
+        *since = (time_t)atoll(ts_str);
+    }
+
+    /* until= */
+    if (httpd_query_key_value(qs, "until", ts_str, sizeof(ts_str)) == ESP_OK
+        && ts_str[0] != '\0') {
+        *until = (time_t)atoll(ts_str);
+    }
+
+    free(qs);
+}
 
 static esp_err_t api_events_get_handler(httpd_req_t *req)
 {
     AUTH_CHECK(req);
+
+    uint32_t type_mask;
+    time_t   since, until;
+    parse_events_query(req, &type_mask, &since, &until);
 
     event_entry_t *entries = malloc(EVENT_LOG_MAX * sizeof(event_entry_t));
     if (!entries) {
@@ -2604,14 +2678,13 @@ static esp_err_t api_events_get_handler(httpd_req_t *req)
     }
 
     int count = 0;
-    event_log_get_all(entries, &count);
+    if (type_mask == 0 && since == 0 && until == 0) {
+        event_log_get_all(entries, &count);
+    } else {
+        event_log_get_filtered(entries, &count, type_mask, since, until);
+    }
 
     httpd_resp_set_type(req, "application/json");
-
-    static const char * const type_names[] = {
-        "relay_change", "temp_alarm", "sensor_fault",
-        "feeding", "ota", "heater_runaway", "system", "co2",
-    };
 
     char chunk[160];
     int n = snprintf(chunk, sizeof(chunk), "{\"count\":%d,\"events\":[", count);
@@ -2619,9 +2692,8 @@ static esp_err_t api_events_get_handler(httpd_req_t *req)
 
     for (int i = 0; i < count; i++) {
         int ti = (int)entries[i].type;
-        const char *tname = (ti >= 0 &&
-            ti < (int)(sizeof(type_names)/sizeof(type_names[0])))
-            ? type_names[ti] : "unknown";
+        const char *tname = (ti >= 0 && ti < K_EVENT_TYPE_COUNT)
+            ? k_event_type_names[ti] : "unknown";
 
         char escaped_msg[EVENT_MSG_MAX * 2];
         json_escape(entries[i].message, escaped_msg, sizeof(escaped_msg));
@@ -2638,6 +2710,60 @@ static esp_err_t api_events_get_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, NULL, 0);
     free(entries);
     return ESP_OK;
+}
+
+/* ── mDNS hostname GET endpoint (/api/mdns  GET) ──────────────────── */
+
+static esp_err_t api_mdns_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char host[WIFI_MDNS_HOST_MAX];
+    wifi_manager_get_mdns_hostname(host, sizeof(host));
+
+    char escaped[WIFI_MDNS_HOST_MAX * 2];
+    json_escape(host, escaped, sizeof(escaped));
+
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"hostname\":\"%s\",\"fqdn\":\"%s.local\"}", escaped, escaped);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+/* ── mDNS hostname POST endpoint (/api/mdns  POST) ─────────────────── */
+/*
+ * Body: {"hostname":"<new_name>"}
+ * Hostname must be 1–31 characters, letters/digits/hyphens only.
+ */
+
+static esp_err_t api_mdns_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char buf[128];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+    buf[received] = '\0';
+
+    char hostname[WIFI_MDNS_HOST_MAX] = {0};
+    if (json_get_str(buf, "\"hostname\"", hostname, sizeof(hostname)) != 0 ||
+        hostname[0] == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing 'hostname' field");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = wifi_manager_set_mdns_hostname(hostname);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "Invalid hostname (letters, digits, hyphens only; max 31 chars)");
+        return ESP_FAIL;
+    }
+
+    event_log_add(EVT_SYSTEM, "mDNS hostname changed");
+    return api_mdns_get_handler(req);
 }
 
 /* ── Factory reset endpoint (/api/factory_reset  POST) ──────────── */
@@ -3031,6 +3157,20 @@ static const httpd_uri_t uri_api_factory_reset = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_mdns_get = {
+    .uri      = "/api/mdns",
+    .method   = HTTP_GET,
+    .handler  = api_mdns_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_mdns_post = {
+    .uri      = "/api/mdns",
+    .method   = HTTP_POST,
+    .handler  = api_mdns_post_handler,
+    .user_ctx = NULL,
+};
+
 #ifdef CONFIG_WEB_AUTH_ENABLE
 static const httpd_uri_t uri_api_auth_post = {
     .uri      = "/api/auth",
@@ -3144,6 +3284,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_events_get);
     httpd_register_uri_handler(s_server, &uri_api_config_export);
     httpd_register_uri_handler(s_server, &uri_api_config_import);
+    httpd_register_uri_handler(s_server, &uri_api_mdns_get);
+    httpd_register_uri_handler(s_server, &uri_api_mdns_post);
     httpd_register_uri_handler(s_server, &uri_ws);
     httpd_register_uri_handler(s_server, &uri_manifest);
     httpd_register_uri_handler(s_server, &uri_sw);

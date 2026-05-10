@@ -76,6 +76,21 @@ void event_log_add(event_type_t type, const char *message);
  */
 void event_log_get_all(event_entry_t *out, int *out_count);
 
+/**
+ * @brief Copy filtered events from the ring buffer in chronological order.
+ *
+ * Thread-safe.  Acts like event_log_get_all() but applies optional filters.
+ *
+ * @param[out] out        Caller-allocated array of at least EVENT_LOG_MAX elements.
+ * @param[out] out_count  Number of matching entries written.
+ * @param      type_mask  Bitmask of event_type_t values to include
+ *                        (bit N = 1 means include type N).  Pass 0 to include all.
+ * @param      since      Minimum UNIX timestamp (inclusive).  Pass 0 for no lower limit.
+ * @param      until      Maximum UNIX timestamp (inclusive).  Pass 0 for no upper limit.
+ */
+void event_log_get_filtered(event_entry_t *out, int *out_count,
+                             uint32_t type_mask, time_t since, time_t until);
+
 #ifdef __cplusplus
 }
 #endif

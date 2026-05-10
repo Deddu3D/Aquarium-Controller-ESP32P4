@@ -82,3 +82,34 @@ void event_log_get_all(event_entry_t *out, int *out_count)
 
     xSemaphoreGive(s_mutex);
 }
+
+void event_log_get_filtered(event_entry_t *out, int *out_count,
+                             uint32_t type_mask, time_t since, time_t until)
+{
+    if (out == NULL || out_count == NULL) {
+        return;
+    }
+    if (s_mutex == NULL) {
+        *out_count = 0;
+        return;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    int start = (s_head - s_count + EVENT_LOG_MAX) % EVENT_LOG_MAX;
+    int j = 0;
+    for (int i = 0; i < s_count; i++) {
+        const event_entry_t *e = &s_ring[(start + i) % EVENT_LOG_MAX];
+        /* Type filter (0 = accept all) */
+        if (type_mask != 0 && !((type_mask >> (uint32_t)e->type) & 1u)) {
+            continue;
+        }
+        /* Time filters */
+        if (since != 0 && e->timestamp < since) continue;
+        if (until != 0 && e->timestamp > until) continue;
+        out[j++] = *e;
+    }
+    *out_count = j;
+
+    xSemaphoreGive(s_mutex);
+}

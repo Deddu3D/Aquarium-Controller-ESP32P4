@@ -59,6 +59,10 @@ static const char *TAG = "wifi_mgr";
 #define NVS_NAMESPACE  "wifi_creds"
 #define NVS_KEY_SSID   "ssid"
 #define NVS_KEY_PASS   "password"
+#define NVS_KEY_MDNS   "mdns_host"
+
+/* Default mDNS hostname */
+#define MDNS_HOST_DEFAULT "aquarium"
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -75,6 +79,7 @@ static esp_timer_handle_t s_reconnect_timer = NULL;
 /* Stored credentials (loaded from NVS, falling back to Kconfig) */
 static char s_ssid[WIFI_SSID_MAX];
 static char s_password[WIFI_PASSWORD_MAX];
+static char s_mdns_host[WIFI_MDNS_HOST_MAX];
 
 /* ── NVS credential helpers ──────────────────────────────────────── */
 
@@ -85,6 +90,10 @@ static void nvs_load_credentials(void)
     strncpy(s_password, CONFIG_WIFI_PASSWORD, sizeof(s_password) - 1);
     s_ssid[sizeof(s_ssid) - 1]         = '\0';
     s_password[sizeof(s_password) - 1] = '\0';
+
+    /* Seed mDNS hostname with default */
+    strncpy(s_mdns_host, MDNS_HOST_DEFAULT, sizeof(s_mdns_host) - 1);
+    s_mdns_host[sizeof(s_mdns_host) - 1] = '\0';
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
@@ -100,8 +109,13 @@ static void nvs_load_credentials(void)
     if (nvs_get_str(h, NVS_KEY_PASS, s_password, &len) != ESP_OK) {
         /* Keep default */
     }
+    len = sizeof(s_mdns_host);
+    if (nvs_get_str(h, NVS_KEY_MDNS, s_mdns_host, &len) != ESP_OK) {
+        /* Keep default */
+    }
     nvs_close(h);
-    ESP_LOGI(TAG, "Loaded credentials for SSID: %s", s_ssid);
+    ESP_LOGI(TAG, "Loaded credentials for SSID: %s  mDNS: %s.local",
+             s_ssid, s_mdns_host);
 }
 
 static esp_err_t nvs_save_credentials(const char *ssid, const char *password)
@@ -194,13 +208,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }
 
-        /* ── mDNS: announce aquarium.local on the LAN ─────────────── */
+        /* ── mDNS: announce <hostname>.local on the LAN ──────────── */
         esp_err_t mdns_err = mdns_init();
         if (mdns_err == ESP_OK) {
-            mdns_hostname_set("aquarium");
+            mdns_hostname_set(s_mdns_host);
             mdns_instance_name_set("Aquarium Controller");
             mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-            ESP_LOGI(TAG, "mDNS started – device reachable at http://aquarium.local");
+            ESP_LOGI(TAG, "mDNS started – device reachable at http://%s.local",
+                     s_mdns_host);
         } else {
             ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
         }
@@ -569,5 +584,46 @@ esp_err_t wifi_manager_start_portal(void)
     httpd_register_uri_handler(s_portal_server, &uri_any);
 
     ESP_LOGI(TAG, "Captive portal running at http://192.168.4.1");
+    return ESP_OK;
+}
+
+void wifi_manager_get_mdns_hostname(char *buf, size_t len)
+{
+    if (!buf || len == 0) return;
+    strncpy(buf, s_mdns_host, len - 1);
+    buf[len - 1] = '\0';
+}
+
+esp_err_t wifi_manager_set_mdns_hostname(const char *host)
+{
+    if (!host || host[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Validate: only letters, digits, hyphens; no leading/trailing hyphen */
+    size_t hlen = strlen(host);
+    if (hlen >= WIFI_MDNS_HOST_MAX) return ESP_ERR_INVALID_ARG;
+    if (host[0] == '-' || host[hlen - 1] == '-') return ESP_ERR_INVALID_ARG;
+    for (size_t i = 0; i < hlen; i++) {
+        char c = host[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '-')) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+
+    /* Persist to NVS */
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, NVS_KEY_MDNS, host);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+
+    strncpy(s_mdns_host, host, sizeof(s_mdns_host) - 1);
+    s_mdns_host[sizeof(s_mdns_host) - 1] = '\0';
+
+    /* Apply immediately if mDNS is running */
+    mdns_hostname_set(s_mdns_host);
+    ESP_LOGI(TAG, "mDNS hostname changed to %s.local", s_mdns_host);
     return ESP_OK;
 }

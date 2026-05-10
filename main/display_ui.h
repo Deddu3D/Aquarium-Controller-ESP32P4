@@ -53,10 +53,23 @@ esp_err_t display_ui_init(void);
  *  – "DISATTIVA ALLARME" (dismiss/hide)
  *  – "OK" (acknowledge and clear)
  *
+ * Also increments the persistent alarm badge counter in the status bar so
+ * that active alarms remain visible even after the popup is dismissed.
+ *
  * @param msg    Main alarm message (e.g. "TEMPERATURA TROPPO ALTA!"). Must not be NULL.
  * @param detail Optional detail line (e.g. "Attuale: 28.7°C"). Pass NULL or "" to omit.
  */
 void display_ui_show_alarm(const char *msg, const char *detail);
+
+/**
+ * @brief Clear one active alarm from the persistent badge counter.
+ *
+ * Thread-safe.  Decrements the alarm count shown in the status bar badge.
+ * When the count reaches zero the badge returns to the green "OK" state.
+ * Intended to be called by the module that raised the alarm once the
+ * condition is resolved.
+ */
+void display_ui_clear_alarm(void);
 
 #ifdef __cplusplus
 }
