@@ -180,14 +180,14 @@ function eventsLoad(){
   var stored = localStorage.getItem('theme');
   if(stored==='light') { document.documentElement.classList.add('light'); }
   var btn = document.getElementById('theme-toggle');
-  if(btn) btn.textContent = stored==='light' ? '\u2600\ufe0f' : '\U0001f319';
+  if(btn) btn.textContent = stored==='light' ? '\u2600\ufe0f' : '\uD83C\uDF19';
 })();
 function toggleTheme(){
   var html=document.documentElement;
   var isLight=html.classList.toggle('light');
   localStorage.setItem('theme', isLight ? 'light' : 'dark');
   var btn=document.getElementById('theme-toggle');
-  if(btn) btn.textContent = isLight ? '\u2600\ufe0f' : '\U0001f319';
+  if(btn) btn.textContent = isLight ? '\u2600\ufe0f' : '\uD83C\uDF19';
 }
 
 /* ── Service Worker (PWA) ── */
