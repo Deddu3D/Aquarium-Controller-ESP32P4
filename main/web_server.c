@@ -2950,6 +2950,7 @@ static const httpd_uri_t uri_api_scene_post = {
     .user_ctx = NULL,
 };
 
+#ifdef CONFIG_WEB_AUTH_ENABLE
 static const httpd_uri_t uri_api_login = {
     .uri      = "/api/login",
     .method   = HTTP_POST,
@@ -2963,6 +2964,7 @@ static const httpd_uri_t uri_api_logout = {
     .handler  = api_logout_post_handler,
     .user_ctx = NULL,
 };
+#endif /* CONFIG_WEB_AUTH_ENABLE */
 
 static const httpd_uri_t uri_api_events_get = {
     .uri      = "/api/events",
@@ -3145,9 +3147,9 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_ws);
     httpd_register_uri_handler(s_server, &uri_manifest);
     httpd_register_uri_handler(s_server, &uri_sw);
+#ifdef CONFIG_WEB_AUTH_ENABLE
     httpd_register_uri_handler(s_server, &uri_api_login);
     httpd_register_uri_handler(s_server, &uri_api_logout);
-#ifdef CONFIG_WEB_AUTH_ENABLE
     httpd_register_uri_handler(s_server, &uri_api_auth_post);
 #endif
     /* Wildcard handler registered last so exact-match API routes take priority */
