@@ -149,7 +149,9 @@ Combina una **dashboard Web** accessibile da qualsiasi browser, un **display tou
 
 > Tutti i pin sono modificabili da `idf.py menuconfig → Aquarium *`.
 
-📄 **Schema di collegamento completo (ASCII + tabelle):** [`docs/wiring.md`](docs/wiring.md)
+📄 **Schema di collegamento completo:** [`docs/wiring.md`](docs/wiring.md)
+
+![Schema dei collegamenti](docs/wiring_diagram.svg)
 
 ---
 

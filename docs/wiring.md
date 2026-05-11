@@ -2,6 +2,10 @@
 
 Board di riferimento: **Waveshare ESP32-P4-WiFi6** (rev 1.3)
 
+## Schema grafico
+
+![Schema dei collegamenti](wiring_diagram.svg)
+
 ---
 
 ## Panoramica generale
