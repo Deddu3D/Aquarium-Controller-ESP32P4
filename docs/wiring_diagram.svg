@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" font-family="monospace,Arial" font-size="13">
+<rect width="1200" height="820" fill="#0d1b2a"/>
+<rect x="20" y="8" width="1160" height="38" fill="#102a3d" stroke="#1fa3ff" rx="6" stroke-width="2" opacity="1"/>
+<text x="600" y="32" fill="#1fa3ff" font-size="16" font-weight="bold" text-anchor="middle">Aquarium Controller – Schema dei collegamenti  |  Waveshare ESP32-P4-WiFi6</text>
+<rect x="430" y="200" width="340" height="420" fill="#102a3d" stroke="#1fa3ff" rx="10" stroke-width="2" opacity="1"/>
+<text x="600" y="224" fill="#1fa3ff" font-size="15" font-weight="bold" text-anchor="middle">ESP32-P4-WiFi6</text>
+<text x="600" y="242" fill="#5c7f9a" font-size="11" font-weight="normal" text-anchor="middle">(Waveshare rev 1.3)</text>
+<text x="470" y="265" fill="#5c7f9a" font-size="10" font-weight="normal" text-anchor="middle">Header SX</text>
+<text x="730" y="265" fill="#5c7f9a" font-size="10" font-weight="normal" text-anchor="middle">Header DX</text>
+<circle cx="436" cy="293" r="5" fill="#f1c40f" stroke="#fff" stroke-width="1"/>
+<text x="450" y="298" fill="#f1c40f" font-size="11" font-weight="normal" text-anchor="start">GPIO 7 (SDA)</text>
+<circle cx="436" cy="329" r="5" fill="#f1c40f" stroke="#fff" stroke-width="1"/>
+<text x="450" y="334" fill="#f1c40f" font-size="11" font-weight="normal" text-anchor="start">GPIO 8 (SCL)</text>
+<circle cx="436" cy="365" r="5" fill="#e74c3c" stroke="#fff" stroke-width="1"/>
+<text x="450" y="370" fill="#e74c3c" font-size="11" font-weight="normal" text-anchor="start">GPIO 28</text>
+<circle cx="436" cy="401" r="5" fill="#e74c3c" stroke="#fff" stroke-width="1"/>
+<text x="450" y="406" fill="#e74c3c" font-size="11" font-weight="normal" text-anchor="start">GPIO 29</text>
+<circle cx="436" cy="437" r="5" fill="#f39c12" stroke="#fff" stroke-width="1"/>
+<text x="450" y="442" fill="#f39c12" font-size="11" font-weight="normal" text-anchor="start">GPIO 30</text>
+<circle cx="436" cy="473" r="5" fill="#3498db" stroke="#fff" stroke-width="1"/>
+<text x="450" y="478" fill="#3498db" font-size="11" font-weight="normal" text-anchor="start">GPIO 31</text>
+<circle cx="436" cy="509" r="5" fill="#666" stroke="#fff" stroke-width="1"/>
+<text x="450" y="514" fill="#666" font-size="11" font-weight="normal" text-anchor="start">GND</text>
+<circle cx="436" cy="545" r="5" fill="#2ecc71" stroke="#fff" stroke-width="1"/>
+<text x="450" y="550" fill="#2ecc71" font-size="11" font-weight="normal" text-anchor="start">5V out</text>
+<circle cx="764" cy="293" r="5" fill="#f1c40f" stroke="#fff" stroke-width="1"/>
+<text x="750" y="298" fill="#f1c40f" font-size="11" font-weight="normal" text-anchor="end">GPIO 20</text>
+<circle cx="764" cy="329" r="5" fill="#2ecc71" stroke="#fff" stroke-width="1"/>
+<text x="750" y="334" fill="#2ecc71" font-size="11" font-weight="normal" text-anchor="end">GPIO 21</text>
+<circle cx="764" cy="365" r="5" fill="#444" stroke="#fff" stroke-width="1"/>
+<text x="750" y="370" fill="#556" font-size="11" font-weight="normal" text-anchor="end">GPIO 22</text>
+<circle cx="764" cy="401" r="5" fill="#444" stroke="#fff" stroke-width="1"/>
+<text x="750" y="406" fill="#556" font-size="11" font-weight="normal" text-anchor="end">GPIO 23</text>
+<circle cx="764" cy="437" r="5" fill="#2ecc71" stroke="#fff" stroke-width="1"/>
+<text x="750" y="442" fill="#2ecc71" font-size="11" font-weight="normal" text-anchor="end">3.3V out</text>
+<circle cx="764" cy="473" r="5" fill="#666" stroke="#fff" stroke-width="1"/>
+<text x="750" y="478" fill="#666" font-size="11" font-weight="normal" text-anchor="end">GND</text>
+<circle cx="764" cy="509" r="5" fill="#444" stroke="#fff" stroke-width="1"/>
+<text x="750" y="514" fill="#556" font-size="11" font-weight="normal" text-anchor="end">GPIO 46</text>
+<circle cx="764" cy="545" r="5" fill="#444" stroke="#fff" stroke-width="1"/>
+<text x="750" y="550" fill="#556" font-size="11" font-weight="normal" text-anchor="end">GPIO 47</text>
+<rect x="520" y="580" width="160" height="30" fill="#0b1e2d" stroke="#334" rx="4" stroke-width="2" opacity="1"/>
+<text x="600" y="600" fill="#5c7f9a" font-size="10" font-weight="normal" text-anchor="middle">GPIO 14-19, 54 → SDIO ESP32-C6 (interno)</text>
+<rect x="565" y="602" width="70" height="16" fill="#1a3a2a" stroke="#2ecc71" rx="4" stroke-width="2" opacity="1"/>
+<text x="600" y="613" fill="#2ecc71" font-size="10" font-weight="normal" text-anchor="middle">USB-C</text>
+<rect x="460" y="30" width="280" height="110" fill="#102a3d" stroke="#f1c40f" rx="8" stroke-width="2" opacity="1"/>
+<text x="600" y="50" fill="#f1c40f" font-size="13" font-weight="bold" text-anchor="middle">Display 4-DSI-TOUCH-A</text>
+<text x="600" y="68" fill="#aaa" font-size="11" font-weight="normal" text-anchor="middle">720×720px  MIPI-DSI + GT911</text>
+<rect x="480" y="80" width="240" height="22" fill="#0b1e2d" stroke="#f1c40f" rx="4" stroke-width="2" opacity="1"/>
+<text x="600" y="95" fill="#f1c40f" font-size="11" font-weight="normal" text-anchor="middle">SDA → GPIO 7   SCL → GPIO 8</text>
+<rect x="480" y="106" width="240" height="22" fill="#0b1e2d" stroke="#334" rx="4" stroke-width="2" opacity="1"/>
+<text x="600" y="121" fill="#5c7f9a" font-size="10" font-weight="normal" text-anchor="middle">Video: connettore MIPI-DSI on-board</text>
+<polyline points="600,200 600,140" fill="none" stroke="#f1c40f" stroke-width="2.5"/>
+<text x="606" y="152" fill="#f1c40f" font-size="10" font-weight="normal" text-anchor="start">DSI</text>
+<polyline points="436,293 520,293 520,95" fill="none" stroke="#f1c40f" stroke-width="2" stroke-dasharray="6,3"/>
+<polyline points="436,329 535,329 535,95" fill="none" stroke="#f1c40f" stroke-width="2" stroke-dasharray="6,3"/>
+<rect x="870" y="155" width="180" height="80" fill="#102a3d" stroke="#f1c40f" rx="8" stroke-width="2" opacity="1"/>
+<text x="960" y="175" fill="#f1c40f" font-size="13" font-weight="bold" text-anchor="middle">WS2812B</text>
+<text x="960" y="191" fill="#aaa" font-size="11" font-weight="normal" text-anchor="middle">LED Strip</text>
+<text x="960" y="210" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">DIN  GND  VCC(5V)</text>
+<polyline points="764,293 870,293" fill="none" stroke="#f1c40f" stroke-width="2.5"/>
+<text x="817" y="287" fill="#f1c40f" font-size="10" font-weight="normal" text-anchor="middle">DATA (GPIO 20)</text>
+<polyline points="764,473 1040,473 1040,210" fill="none" stroke="#666" stroke-width="1.5" stroke-dasharray="4,3"/>
+<polyline points="960,235 960,265" fill="none" stroke="#2ecc71" stroke-width="2"/>
+<text x="960" y="279" fill="#2ecc71" font-size="10" font-weight="normal" text-anchor="middle">5V  (ext.)</text>
+<rect x="870" y="310" width="180" height="100" fill="#102a3d" stroke="#2ecc71" rx="8" stroke-width="2" opacity="1"/>
+<text x="960" y="330" fill="#2ecc71" font-size="13" font-weight="bold" text-anchor="middle">DS18B20</text>
+<text x="960" y="346" fill="#aaa" font-size="11" font-weight="normal" text-anchor="middle">Sensore 1-Wire</text>
+<text x="960" y="366" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">VDD  DQ  GND</text>
+<rect x="880" y="378" width="160" height="22" fill="#0b1e2d" stroke="#2ecc71" rx="3" stroke-width="2" opacity="1"/>
+<text x="960" y="393" fill="#2ecc71" font-size="10" font-weight="normal" text-anchor="middle">4.7 kΩ pull-up 3.3V→DQ</text>
+<polyline points="764,329 870,329" fill="none" stroke="#2ecc71" stroke-width="2.5"/>
+<text x="817" y="323" fill="#2ecc71" font-size="10" font-weight="normal" text-anchor="middle">DQ (GPIO 21)</text>
+<polyline points="764,437 1040,437 1040,366" fill="none" stroke="#2ecc71" stroke-width="1.5" stroke-dasharray="4,3"/>
+<polyline points="764,473 1030,473 1030,366" fill="none" stroke="#666" stroke-width="1.5" stroke-dasharray="4,3"/>
+<rect x="70" y="220" width="180" height="200" fill="#102a3d" stroke="#e74c3c" rx="8" stroke-width="2" opacity="1"/>
+<text x="160" y="240" fill="#e74c3c" font-size="13" font-weight="bold" text-anchor="middle">Modulo Relè 4CH</text>
+<text x="160" y="255" fill="#aaa" font-size="10" font-weight="normal" text-anchor="middle">(active-low, optoisolato)</text>
+<rect x="80" y="280" width="160" height="24" fill="#1a0808" stroke="#e74c3c" rx="3" stroke-width="2" opacity="1"/>
+<text x="160" y="296" fill="#e74c3c" font-size="11" font-weight="normal" text-anchor="middle">IN1 – Relè 1</text>
+<rect x="80" y="312" width="160" height="24" fill="#1a0808" stroke="#e74c3c" rx="3" stroke-width="2" opacity="1"/>
+<text x="160" y="328" fill="#e74c3c" font-size="11" font-weight="normal" text-anchor="middle">IN2 – Relè 2</text>
+<rect x="80" y="344" width="160" height="24" fill="#1a1000" stroke="#f39c12" rx="3" stroke-width="2" opacity="1"/>
+<text x="160" y="360" fill="#f39c12" font-size="11" font-weight="normal" text-anchor="middle">IN3 – Relè 3</text>
+<rect x="80" y="376" width="160" height="24" fill="#00001a" stroke="#3498db" rx="3" stroke-width="2" opacity="1"/>
+<text x="160" y="392" fill="#3498db" font-size="11" font-weight="normal" text-anchor="middle">IN4 – Relè 4</text>
+<rect x="90" y="435" width="140" height="18" fill="#0b1e2d" stroke="#2ecc71" rx="3" stroke-width="2" opacity="1"/>
+<text x="160" y="448" fill="#666" font-size="10" font-weight="normal" text-anchor="middle">VCC 5V    GND</text>
+<polyline points="436,365 250,365 250,292 240,292" fill="none" stroke="#e74c3c" stroke-width="2.5"/>
+<polyline points="436,401 250,401 250,324 240,324" fill="none" stroke="#e74c3c" stroke-width="2.5"/>
+<polyline points="436,437 250,437 250,356 240,356" fill="none" stroke="#f39c12" stroke-width="2.5"/>
+<polyline points="436,473 250,473 250,388 240,388" fill="none" stroke="#3498db" stroke-width="2.5"/>
+<text x="343" y="360" fill="#e74c3c" font-size="10" font-weight="normal" text-anchor="middle">GPIO 28</text>
+<text x="343" y="396" fill="#e74c3c" font-size="10" font-weight="normal" text-anchor="middle">GPIO 29</text>
+<text x="343" y="432" fill="#f39c12" font-size="10" font-weight="normal" text-anchor="middle">GPIO 30</text>
+<text x="343" y="468" fill="#3498db" font-size="10" font-weight="normal" text-anchor="middle">GPIO 31</text>
+<rect x="1055" y="209" width="110" height="32" fill="#0b1e2d" stroke="#e74c3c" rx="6" stroke-width="2" opacity="1"/>
+<text x="1110" y="224" fill="#e74c3c" font-size="12" font-weight="bold" text-anchor="middle">Filtro</text>
+<text x="1110" y="239" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">230V~</text>
+<rect x="1055" y="274" width="110" height="32" fill="#0b1e2d" stroke="#e74c3c" rx="6" stroke-width="2" opacity="1"/>
+<text x="1110" y="289" fill="#e74c3c" font-size="12" font-weight="bold" text-anchor="middle">Riscald.</text>
+<text x="1110" y="304" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">230V~</text>
+<rect x="1055" y="339" width="110" height="32" fill="#0b1e2d" stroke="#f39c12" rx="6" stroke-width="2" opacity="1"/>
+<text x="1110" y="354" fill="#f39c12" font-size="12" font-weight="bold" text-anchor="middle">Valvola CO₂</text>
+<text x="1110" y="369" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">12V</text>
+<rect x="1055" y="404" width="110" height="32" fill="#0b1e2d" stroke="#3498db" rx="6" stroke-width="2" opacity="1"/>
+<text x="1110" y="419" fill="#3498db" font-size="12" font-weight="bold" text-anchor="middle">Pompa 2</text>
+<text x="1110" y="434" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">—</text>
+<polyline points="70,292 1045,292 1055,225" fill="none" stroke="#e74c3c" stroke-width="1.8" stroke-dasharray="5,3"/>
+<polyline points="70,324 1045,324 1055,290" fill="none" stroke="#e74c3c" stroke-width="1.8" stroke-dasharray="5,3"/>
+<polyline points="70,356 1045,356 1055,355" fill="none" stroke="#f39c12" stroke-width="1.8" stroke-dasharray="5,3"/>
+<polyline points="70,388 1045,388 1055,420" fill="none" stroke="#3498db" stroke-width="1.8" stroke-dasharray="5,3"/>
+<text x="1035" y="229" fill="#e74c3c" font-size="9" font-weight="normal" text-anchor="end">COM/NO</text>
+<text x="1035" y="294" fill="#e74c3c" font-size="9" font-weight="normal" text-anchor="end">COM/NO</text>
+<text x="1035" y="359" fill="#f39c12" font-size="9" font-weight="normal" text-anchor="end">COM/NO</text>
+<text x="1035" y="424" fill="#3498db" font-size="9" font-weight="normal" text-anchor="end">COM/NO</text>
+<rect x="340" y="700" width="200" height="80" fill="#102a3d" stroke="#2ecc71" rx="8" stroke-width="2" opacity="1"/>
+<text x="440" y="718" fill="#2ecc71" font-size="12" font-weight="bold" text-anchor="middle">Alimentatore 5V / 8-10A</text>
+<text x="440" y="734" fill="#aaa" font-size="10" font-weight="normal" text-anchor="middle">per striscia LED</text>
+<text x="440" y="752" fill="#666" font-size="10" font-weight="normal" text-anchor="middle">+ GND comune</text>
+<text x="440" y="766" fill="#5c7f9a" font-size="9" font-weight="normal" text-anchor="middle">dimensiona: ~60mA × N_LED</text>
+<rect x="600" y="700" width="200" height="80" fill="#102a3d" stroke="#2ecc71" rx="8" stroke-width="2" opacity="1"/>
+<text x="700" y="718" fill="#2ecc71" font-size="12" font-weight="bold" text-anchor="middle">Alimentatore 5V / 2A</text>
+<text x="700" y="734" fill="#aaa" font-size="10" font-weight="normal" text-anchor="middle">per modulo relè</text>
+<text x="700" y="752" fill="#666" font-size="10" font-weight="normal" text-anchor="middle">VCC + GND</text>
+<polyline points="440,700 960,265" fill="none" stroke="#2ecc71" stroke-width="1.5" stroke-dasharray="5,3"/>
+<polyline points="700,700 160,420" fill="none" stroke="#2ecc71" stroke-width="1.5" stroke-dasharray="5,3"/>
+<rect x="570" y="715" width="130" height="50" fill="#0b1e2d" stroke="#2ecc71" rx="6" stroke-width="2" opacity="1"/>
+<text x="635" y="734" fill="#2ecc71" font-size="11" font-weight="bold" text-anchor="middle">USB-C 5V/2A</text>
+<text x="635" y="750" fill="#888" font-size="10" font-weight="normal" text-anchor="middle">→ Board + Display</text>
+<rect x="860" y="480" width="300" height="210" fill="#0b1e2d" stroke="#334" rx="6" stroke-width="2" opacity="1"/>
+<text x="1010" y="498" fill="#ccc" font-size="12" font-weight="bold" text-anchor="middle">LEGENDA</text>
+<rect x="872" y="509" width="18" height="12" fill="#f1c40f" stroke="#f1c40f" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="520" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Display touch / LED schedule (I2C, GPIO7/8)</text>
+<rect x="872" y="533" width="18" height="12" fill="#2ecc71" stroke="#2ecc71" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="544" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Sensore DS18B20 / Alimentazione</text>
+<rect x="872" y="557" width="18" height="12" fill="#e74c3c" stroke="#e74c3c" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="568" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Relè 1-2 (Filtro, Riscaldatore)</text>
+<rect x="872" y="581" width="18" height="12" fill="#f39c12" stroke="#f39c12" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="592" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Relè 3 – Valvola CO₂</text>
+<rect x="872" y="605" width="18" height="12" fill="#3498db" stroke="#3498db" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="616" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Relè 4 – Pompa secondaria</text>
+<rect x="872" y="629" width="18" height="12" fill="#666" stroke="#666" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="640" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">GND / massa comune</text>
+<rect x="872" y="653" width="18" height="12" fill="#5c7f9a" stroke="#5c7f9a" rx="2" stroke-width="2" opacity="1"/>
+<text x="898" y="664" fill="#ccc" font-size="10" font-weight="normal" text-anchor="start">Segnali interni board (SDIO)</text>
+<rect x="860" y="700" width="300" height="80" fill="#200" stroke="#e74c3c" rx="6" stroke-width="2" opacity="1"/>
+<text x="1010" y="720" fill="#e74c3c" font-size="12" font-weight="bold" text-anchor="middle">⚠ ATTENZIONE – 230 V ~</text>
+<text x="1010" y="738" fill="#ccc" font-size="10" font-weight="normal" text-anchor="middle">I collegamenti 230 V sui relè</text>
+<text x="1010" y="752" fill="#ccc" font-size="10" font-weight="normal" text-anchor="middle">sono pericolosi per la vita.</text>
+<text x="1010" y="766" fill="#ccc" font-size="10" font-weight="normal" text-anchor="middle">Affidare a un elettricista.</text>
+<rect x="480" y="540" width="240" height="28" fill="#0b1e2d" stroke="#334" rx="4" stroke-width="2" opacity="1"/>
+<text x="600" y="558" fill="#e74c3c" font-size="10" font-weight="normal" text-anchor="middle">⚠ GPIO 24/25 = USB DM/DP – non usare!</text>
+</svg>

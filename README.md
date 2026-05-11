@@ -132,26 +132,26 @@ Combina una **dashboard Web** accessibile da qualsiasi browser, un **display tou
 
 ### Schema pin di default
 
-```
-ESP32-P4-WiFi6 header DESTRO (lato LED/sensore):
-  GPIO 20  ──►  WS2812B  DATA
-  GPIO 21  ──►  DS18B20  DATA  (+ 4.7 kΩ pull-up a 3.3V)
+| Segnale              | GPIO | Header    | Note                            |
+|----------------------|------|-----------|---------------------------------|
+| WS2812B DIN          | 20   | Destro    | Striscia LED RGB                |
+| DS18B20 DQ           | 21   | Destro    | 1-Wire + pull-up 4,7 kΩ a 3,3V |
+| Relè 1 IN (Filtro)   | 28   | Sinistro  | Active-low                      |
+| Relè 2 IN (Riscalda) | 29   | Sinistro  | Active-low                      |
+| Relè 3 IN (CO₂)      | 30   | Sinistro  | Active-low                      |
+| Relè 4 IN (Pompa)    | 31   | Sinistro  | Active-low                      |
+| GT911 I2C SDA        | 7    | Sinistro  | Touch display (riservato)       |
+| GT911 I2C SCL        | 8    | Sinistro  | Touch display (riservato)       |
+| MIPI-DSI             | —    | Connettore DSI on-board | Display 720×720  |
 
-ESP32-P4-WiFi6 header SINISTRO (lato relè):
-  GPIO 28  ──►  Relè 1  (Filtro)
-  GPIO 29  ──►  Relè 2  (Riscaldatore)
-  GPIO 30  ──►  Relè 3  (CO₂)
-  GPIO 31  ──►  Relè 4  (Pompa)
-
-Display DSI (connettore on-board):
-  GPIO  7  ──►  GT911 I2C SDA
-  GPIO  8  ──►  GT911 I2C SCL
-  Backlight: hardware-controlled (nessun GPIO aggiuntivo)
-
-⚠️  GPIO 24 e GPIO 25 sono DM/DP USB – non usare!
-```
+> ⚠️  **GPIO 24 e GPIO 25** sono DM/DP USB — non usare mai.
+> GPIO 14–19 e 54 sono riservati al bus SDIO interno verso il coprocessore WiFi ESP32-C6.
 
 > Tutti i pin sono modificabili da `idf.py menuconfig → Aquarium *`.
+
+📄 **Schema di collegamento completo:** [`docs/wiring.md`](docs/wiring.md)
+
+![Schema dei collegamenti](docs/wiring_diagram.svg)
 
 ---
 
