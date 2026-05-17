@@ -12,3 +12,8 @@ dependencies.lock
 # OS
 .DS_Store
 Thumbs.db
+android/.gradle/
+android/app/build/
+android/build/
+google_maven_proxy.py
+wget-log
