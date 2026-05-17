@@ -1,0 +1,48 @@
+HTTP/2 307 
+cf-ray: 9fd1d76e2b501dee-DFW
+content-type: text/html; charset=UTF-8
+date: Sun, 17 May 2026 10:12:02 GMT
+location: https://github.com/gradle/gradle-distributions/releases/download/v8.9.0/gradle-8.9-bin.zip
+server: cloudflare
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+content-length: 169
+
+HTTP/2 302 
+cache-control: no-cache
+content-security-policy: default-src 'none'; base-uri 'self'; child-src github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.github.com/assets-cdn/worker/; connect-src 'self' uploads.github.com www.githubstatus.com collector.github.com raw.githubusercontent.com api.github.com github-cloud.s3.amazonaws.com github-production-repository-file-5c1aeb.s3.amazonaws.com github-production-upload-manifest-file-7fdce7.s3.amazonaws.com github-production-user-asset-6210df.s3.amazonaws.com *.rel.tunnels.api.visualstudio.com wss://*.rel.tunnels.api.visualstudio.com github.githubassets.com objects-origin.githubusercontent.com copilot-proxy.githubusercontent.com proxy.individual.githubcopilot.com proxy.business.githubcopilot.com proxy.enterprise.githubcopilot.com *.actions.githubusercontent.com wss://*.actions.githubusercontent.com productionresultssa0.blob.core.windows.net productionresultssa1.blob.core.windows.net productionresultssa2.blob.core.windows.net productionresultssa3.blob.core.windows.net productionresultssa4.blob.core.windows.net productionresultssa5.blob.core.windows.net productionresultssa6.blob.core.windows.net productionresultssa7.blob.core.windows.net productionresultssa8.blob.core.windows.net productionresultssa9.blob.core.windows.net productionresultssa10.blob.core.windows.net productionresultssa11.blob.core.windows.net productionresultssa12.blob.core.windows.net productionresultssa13.blob.core.windows.net productionresultssa14.blob.core.windows.net productionresultssa15.blob.core.windows.net productionresultssa16.blob.core.windows.net productionresultssa17.blob.core.windows.net productionresultssa18.blob.core.windows.net productionresultssa19.blob.core.windows.net github-production-repository-image-32fea6.s3.amazonaws.com github-production-release-asset-2e65be.s3.amazonaws.com insights.github.com wss://alive.github.com wss://alive-staging.github.com api.githubcopilot.com api.individual.githubcopilot.com api.business.githubcopilot.com api.enterprise.githubcopilot.com; font-src github.githubassets.com; form-action 'self' github.com gist.github.com copilot-workspace.githubnext.com objects-origin.githubusercontent.com; frame-ancestors 'none'; frame-src viewscreen.githubusercontent.com notebooks.githubusercontent.com; img-src 'self' data: blob: github.githubassets.com media.githubusercontent.com camo.githubusercontent.com identicons.github.com avatars.githubusercontent.com private-avatars.githubusercontent.com github-cloud.s3.amazonaws.com objects.githubusercontent.com release-assets.githubusercontent.com secured-user-images.githubusercontent.com user-images.githubusercontent.com private-user-images.githubusercontent.com opengraph.githubassets.com marketplace-screenshots.githubusercontent.com copilotprodattachments.blob.core.windows.net/github-production-copilot-attachments/ github-production-user-asset-6210df.s3.amazonaws.com customer-stories-feed.github.com spotlights-feed.github.com explore-feed.github.com objects-origin.githubusercontent.com *.githubusercontent.com; manifest-src 'self'; media-src github.com user-images.githubusercontent.com secured-user-images.githubusercontent.com private-user-images.githubusercontent.com github-production-user-asset-6210df.s3.amazonaws.com gist.github.com github.githubassets.com; script-src github.githubassets.com; style-src 'unsafe-inline' github.githubassets.com; upgrade-insecure-requests; worker-src github.githubassets.com github.com/assets-cdn/worker/ github.com/assets/ gist.github.com/assets-cdn/worker/
+content-type: text/html; charset=utf-8
+date: Sun, 17 May 2026 10:12:03 GMT
+location: https://release-assets.githubusercontent.com/github-production-release-asset/696192900/5e4f6e5d-ac37-408e-81e5-1ab67320ad64?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-05-17T11%3A07%3A39Z&rscd=attachment%3B+filename%3Dgradle-8.9-bin.zip&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-05-17T10%3A07%3A37Z&ske=2026-05-17T11%3A07%3A39Z&sks=b&skv=2018-11-09&sig=9Iv2ZKTnzeZEPaDbLt41WaC9w9IcJzZGDc1Tqq2iM8g%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc3OTAxNjMyMywibmJmIjoxNzc5MDEyNzIzLCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.7wXTNlZXOOrR8Az2vzRZxgp0dud8SSfvb4YzKYTdvh4&response-content-disposition=attachment%3B%20filename%3Dgradle-8.9-bin.zip&response-content-type=application%2Foctet-stream
+referrer-policy: no-referrer-when-downgrade
+server: github.com
+strict-transport-security: max-age=31536000; includeSubdomains; preload
+vary: X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame, X-Requested-With, Sec-Fetch-Site,Accept-Encoding, Accept, X-Requested-With
+x-content-type-options: nosniff
+x-frame-options: deny
+x-github-request-id: B410:64364:1C4FB28:23711FE:6A099472
+x-xss-protection: 0
+content-length: 0
+
+HTTP/2 200 
+accept-ranges: bytes
+age: 3845
+content-disposition: attachment; filename=gradle-8.9-bin.zip
+content-type: application/octet-stream
+date: Sun, 17 May 2026 10:12:03 GMT
+etag: "0x8DCA1B8EC761113"
+last-modified: Thu, 11 Jul 2024 14:51:19 GMT
+server: Windows-Azure-Blob/1.0 Microsoft-HTTPAPI/2.0
+via: 1.1 varnish, 1.1 varnish
+x-cache: HIT, HIT
+x-cache-hits: 4, 1
+x-ms-blob-type: BlockBlob
+x-ms-creation-time: Thu, 11 Jul 2024 14:51:19 GMT
+x-ms-lease-state: available
+x-ms-lease-status: unlocked
+x-ms-request-id: c3ebd5ed-601e-005e-5ee5-f00ab5000000
+x-ms-server-encrypted: true
+x-ms-version: 2018-11-09
+x-served-by: cache-iad-kcgs7200076-IAD, cache-chi-kigq8000030-CHI
+x-timer: S1779012723.238922,VS0,VE12
+content-length: 136114148
+
