@@ -64,7 +64,7 @@ CONFIG_WIFI_PASSWORD="your_password"
 
 # ── LED strip (WS2812B) ───────────────────────────────────────────
 CONFIG_LED_STRIP_GPIO=20
-CONFIG_LED_STRIP_NUM_LEDS=105
+CONFIG_LED_STRIP_NUM_LEDS=208
 CONFIG_LED_STRIP_DEFAULT_BRIGHTNESS=128
 
 # ── DS18B20 temperature sensor ────────────────────────────────────
