@@ -73,7 +73,7 @@ menu "Aquarium LED Strip Settings"
 
     config LED_STRIP_NUM_LEDS
         int "Number of LEDs"
-        default 105
+        default 208
         range 1 1024
         help
             Total number of LEDs in the WS2812B strip.
