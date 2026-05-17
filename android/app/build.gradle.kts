@@ -47,6 +47,7 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 
     implementation(libs.androidx.core.ktx)
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
@@ -71,7 +72,6 @@ dependencies {
     ksp(libs.moshi.codegen)
 
     implementation(libs.datastore.preferences)
-    implementation(libs.mpandroidchart)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.accompanist.permissions)
 
