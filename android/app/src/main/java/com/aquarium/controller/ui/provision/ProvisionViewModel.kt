@@ -266,7 +266,7 @@ class ProvisionViewModel @Inject constructor(
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: return@withContext ""
                     // Simple extraction of device_id without full JSON parsing
-                    val match = Regex(""""device_id"\s*:\s*"([a-fA-F0-9]+)"""").find(body)
+                    val match = Regex(""""device_id"\s*:\s*"([a-fA-F0-9]{12})"""").find(body)
                     val id = match?.groupValues?.getOrNull(1) ?: ""
                     if (id.isNotBlank()) return@withContext id
                 }

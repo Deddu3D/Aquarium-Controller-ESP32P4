@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -50,10 +51,10 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     /** Persisted settings (deviceId, mqttEnabled, etc.) */
-    val connectionSettings: StateFlow<com.aquarium.controller.data.prefs.ConnectionSettings> =
+    val connectionSettings: StateFlow<ConnectionSettings> =
         connectionPrefs.settings
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000),
-                com.aquarium.controller.data.prefs.ConnectionSettings())
+                ConnectionSettings())
 
     init { load() }
 
@@ -191,11 +192,8 @@ class SettingsViewModel @Inject constructor(
 
     fun setMqttEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            val settings = connectionPrefs.settings
             if (enabled) {
-                val deviceId = connectionPrefs.settings
-                    .stateIn(viewModelScope, SharingStarted.Eagerly,
-                        com.aquarium.controller.data.prefs.ConnectionSettings()).value.deviceId
+                val deviceId = connectionPrefs.settings.first().deviceId
                 if (deviceId.isNotBlank()) {
                     repository.enableRemoteAccess(deviceId)
                     _snackbarMessage.value = "Remote access enabled"
