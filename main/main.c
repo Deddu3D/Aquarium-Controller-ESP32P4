@@ -358,6 +358,7 @@ void app_main(void)
     int64_t t_co2        = 0;   /* CO2 valve:     60 s */
     int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
     int64_t t_daily      = 0;   /* Daily cycle:   60 s */
+    int64_t t_mqtt_pub   = 0;   /* MQTT status:   30 s */
 
 #define TICK_INTERVAL_US(sec)  ((int64_t)(sec) * 1000000LL)
 #define SINCE(t)               (esp_timer_get_time() - (t))
@@ -409,6 +410,12 @@ void app_main(void)
         if (SINCE(t_daily) >= TICK_INTERVAL_US(60)) {
             daily_cycle_tick();
             t_daily = now;
+        }
+
+        /* MQTT periodic status: 30 s – keeps the app updated even when idle */
+        if (SINCE(t_mqtt_pub) >= TICK_INTERVAL_US(30)) {
+            remote_relay_publish_status();
+            t_mqtt_pub = now;
         }
 
         esp_task_wdt_reset();
