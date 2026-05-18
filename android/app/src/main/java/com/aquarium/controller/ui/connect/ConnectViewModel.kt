@@ -25,7 +25,8 @@ data class ConnectUiState(
     val isScanning: Boolean = false,
     val discoveredHosts: List<String> = emptyList(),
     val error: String? = null,
-    val navigateToLogin: Boolean = false
+    val navigateToLogin: Boolean = false,
+    val navigateToProvision: Boolean = false
 )
 
 @HiltViewModel
@@ -41,12 +42,17 @@ class ConnectViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val settings = connectionPrefs.settings.first()
-            _uiState.value = _uiState.value.copy(
-                host = settings.host,
-                port = settings.port.toString(),
-                useHttps = settings.useHttps,
-                username = settings.username
-            )
+            if (settings.host.isBlank()) {
+                // No host configured – redirect to first-run provisioning wizard
+                _uiState.value = _uiState.value.copy(navigateToProvision = true)
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    host = settings.host,
+                    port = settings.port.toString(),
+                    useHttps = settings.useHttps,
+                    username = settings.username
+                )
+            }
         }
     }
 
@@ -125,5 +131,5 @@ class ConnectViewModel @Inject constructor(
     }
 
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
-    fun clearNavigation() { _uiState.value = _uiState.value.copy(navigateToLogin = false) }
+    fun clearNavigation() { _uiState.value = _uiState.value.copy(navigateToLogin = false, navigateToProvision = false) }
 }

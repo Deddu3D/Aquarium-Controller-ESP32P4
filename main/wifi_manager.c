@@ -76,6 +76,12 @@ static uint32_t           s_backoff_ms;
 static httpd_handle_t     s_portal_server  = NULL;
 static esp_timer_handle_t s_reconnect_timer = NULL;
 
+/* Deferred provisioning: store pending credentials so the HTTP response
+ * can be sent before the WiFi mode is switched (which kills the AP). */
+static char               s_prov_ssid[WIFI_SSID_MAX];
+static char               s_prov_password[WIFI_PASSWORD_MAX];
+static esp_timer_handle_t s_prov_timer = NULL;
+
 /* Stored credentials (loaded from NVS, falling back to Kconfig) */
 static char s_ssid[WIFI_SSID_MAX];
 static char s_password[WIFI_PASSWORD_MAX];
@@ -153,8 +159,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_STA_START:
-            ESP_LOGI(TAG, "WiFi STA started – connecting to %s …", s_ssid);
-            esp_wifi_connect();
+            /* In APSTA provisioning mode the STA interface starts but
+             * must NOT try to connect – we only use it for scanning. */
+            if (!s_ap_mode) {
+                ESP_LOGI(TAG, "WiFi STA started – connecting to %s …", s_ssid);
+                esp_wifi_connect();
+            } else {
+                ESP_LOGI(TAG, "APSTA: STA iface ready for scanning");
+            }
             break;
 
         case WIFI_EVENT_STA_DISCONNECTED: {
@@ -220,6 +232,163 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             ESP_LOGW(TAG, "mDNS init failed: %s", esp_err_to_name(mdns_err));
         }
     }
+}
+
+/* ── JSON helper for portal API handlers ─────────────────────────── */
+
+/* Maximum number of WiFi networks returned by the scan endpoint */
+#define MAX_SCAN_NETWORKS      24
+/* Response buffer for the scan JSON (24 networks × ~80 chars each) */
+#define SCAN_RESPONSE_BUF_SIZE 2048
+/* Maximum SSID length as per IEEE 802.11 */
+#define WIFI_SSID_RAW_MAX      32
+/* Maximum escaped SSID length (each byte can become 2 chars + NUL) */
+#define WIFI_SSID_ESC_MAX      (WIFI_SSID_RAW_MAX * 2 + 4)
+
+/**
+ * @brief Extract a JSON string value for @p key from a flat JSON object.
+ *
+ * Handles basic \" and \\ escape sequences. Returns the number of bytes
+ * written to @p out (0 if the key is not found or the value is not a
+ * string).
+ */
+static int prov_json_str(const char *json, const char *key,
+                          char *out, size_t out_size)
+{
+    /* needle = '"' + key + '"'  (max key we ever pass is 8 chars) */
+    char needle[16];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = strstr(json, needle);
+    if (!p) return 0;
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t') p++;
+    if (*p != '"') return 0;
+    p++; /* skip opening quote */
+    size_t i = 0;
+    while (*p && *p != '"' && i < out_size - 1) {
+        if (*p == '\\' && *(p + 1)) p++; /* consume backslash */
+        out[i++] = *p++;
+    }
+    out[i] = '\0';
+    return (int)i;
+}
+
+/* ── Portal: WiFi scan endpoint (GET /api/wifi_scan) ─────────────── */
+
+static esp_err_t portal_scan_handler(httpd_req_t *req)
+{
+    wifi_scan_config_t scan_cfg = {
+        .ssid        = NULL,
+        .bssid       = NULL,
+        .channel     = 0,
+        .show_hidden = false,
+        .scan_type   = WIFI_SCAN_TYPE_ACTIVE,
+    };
+    /* Blocking scan (~2 s). The httpd task is blocked but that is
+     * acceptable here – we are in provisioning mode with a single client. */
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi scan failed: %s", esp_err_to_name(err));
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req, "{\"networks\":[]}", -1);
+    }
+
+    uint16_t count = MAX_SCAN_NETWORKS;
+    wifi_ap_record_t records[MAX_SCAN_NETWORKS];
+    memset(records, 0, sizeof(records));
+    esp_wifi_scan_get_ap_records(&count, records);
+
+    /* Build JSON: {"networks":[{"ssid":"...","rssi":-55,"open":false},...]} */
+    char buf[SCAN_RESPONSE_BUF_SIZE];
+    int  pos = 0;
+    int  added = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "{\"networks\":[");
+    for (int i = 0; i < (int)count && pos < (int)(sizeof(buf) - 100); i++) {
+        if (records[i].ssid[0] == '\0') continue;
+        /* Escape SSID: replace \ → \\ and " → \" */
+        char ssid_esc[WIFI_SSID_ESC_MAX];
+        memset(ssid_esc, 0, sizeof(ssid_esc));
+        int  si = 0;
+        for (int j = 0;
+             records[i].ssid[j] && j < WIFI_SSID_RAW_MAX && si < WIFI_SSID_RAW_MAX * 2;
+             j++) {
+            char c = (char)records[i].ssid[j];
+            if (c == '"' || c == '\\') ssid_esc[si++] = '\\';
+            ssid_esc[si++] = c;
+        }
+        ssid_esc[si] = '\0';
+        bool is_open = (records[i].authmode == WIFI_AUTH_OPEN);
+        if (added > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+            ssid_esc, (int)records[i].rssi, is_open ? "true" : "false");
+        added++;
+    }
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, buf, pos);
+}
+
+/* ── Portal: provision endpoint (POST /api/provision) ───────────── */
+
+/** Timer callback: apply credentials after the HTTP response is sent. */
+static void prov_apply_cb(void *arg)
+{
+    (void)arg;
+    wifi_manager_set_credentials(s_prov_ssid, s_prov_password);
+}
+
+static esp_err_t portal_provision_handler(httpd_req_t *req)
+{
+    char body[512] = {0};
+    int  received  = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req,
+            "{\"status\":\"error\",\"msg\":\"empty body\"}", -1);
+    }
+    body[received] = '\0';
+
+    char new_ssid[WIFI_SSID_MAX]         = {0};
+    char new_password[WIFI_PASSWORD_MAX] = {0};
+    char new_mdns[WIFI_MDNS_HOST_MAX]    = {0};
+
+    prov_json_str(body, "ssid",     new_ssid,     sizeof(new_ssid));
+    prov_json_str(body, "password", new_password, sizeof(new_password));
+    prov_json_str(body, "mdns",     new_mdns,     sizeof(new_mdns));
+
+    if (new_ssid[0] == '\0') {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req,
+            "{\"status\":\"error\",\"msg\":\"ssid required\"}", -1);
+    }
+
+    if (new_mdns[0] != '\0') {
+        wifi_manager_set_mdns_hostname(new_mdns);
+    }
+
+    ESP_LOGI(TAG, "Provision: SSID='%s'  mDNS='%s'", new_ssid, new_mdns);
+
+    /* Send the success response BEFORE switching WiFi mode, because
+     * wifi_manager_set_credentials() stops the AP which drops the link.
+     * We use a deferred timer (500 ms) so TCP has time to deliver the reply. */
+    strncpy(s_prov_ssid,     new_ssid,     sizeof(s_prov_ssid)     - 1);
+    strncpy(s_prov_password, new_password, sizeof(s_prov_password) - 1);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t send_err = httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
+
+    if (s_prov_timer != NULL) {
+        esp_timer_start_once(s_prov_timer, 500000ULL); /* 500 ms */
+    }
+
+    return send_err;
 }
 
 /* ── Captive portal HTML ─────────────────────────────────────────── */
@@ -399,7 +568,7 @@ static esp_err_t start_ap_mode(void)
         },
     };
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA)); /* APSTA: AP active + STA available for scanning */
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
@@ -437,6 +606,16 @@ esp_err_t wifi_manager_init(void)
         .dispatch_method = ESP_TIMER_TASK,
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &s_reconnect_timer));
+
+    /* Create the one-shot timer used to apply provisioning credentials
+     * after the HTTP response has been delivered to the Android app. */
+    esp_timer_create_args_t prov_timer_args = {
+        .callback        = prov_apply_cb,
+        .arg             = NULL,
+        .name            = "prov_apply",
+        .dispatch_method = ESP_TIMER_TASK,
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&prov_timer_args, &s_prov_timer));
 
     esp_event_handler_instance_t inst_any_wifi;
     esp_event_handler_instance_t inst_got_ip;
@@ -558,7 +737,7 @@ esp_err_t wifi_manager_start_portal(void)
 
     httpd_config_t config  = HTTPD_DEFAULT_CONFIG();
     config.server_port     = 80;
-    config.max_uri_handlers = 4;
+    config.max_uri_handlers = 6;
 
     if (httpd_start(&s_portal_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start portal HTTP server");
@@ -582,6 +761,18 @@ esp_err_t wifi_manager_start_portal(void)
     httpd_register_uri_handler(s_portal_server, &uri_root);
     httpd_register_uri_handler(s_portal_server, &uri_save);
     httpd_register_uri_handler(s_portal_server, &uri_any);
+
+    /* JSON API endpoints used by the Android provisioning wizard */
+    static const httpd_uri_t uri_scan = {
+        .uri = "/api/wifi_scan", .method = HTTP_GET,
+        .handler = portal_scan_handler, .user_ctx = NULL,
+    };
+    static const httpd_uri_t uri_provision = {
+        .uri = "/api/provision", .method = HTTP_POST,
+        .handler = portal_provision_handler, .user_ctx = NULL,
+    };
+    httpd_register_uri_handler(s_portal_server, &uri_scan);
+    httpd_register_uri_handler(s_portal_server, &uri_provision);
 
     ESP_LOGI(TAG, "Captive portal running at http://192.168.4.1");
     return ESP_OK;

@@ -14,8 +14,11 @@ import com.aquarium.controller.ui.login.LoginScreen
 import com.aquarium.controller.ui.settings.SettingsScreen
 import com.aquarium.controller.ui.temperature.TempScreen
 
+import com.aquarium.controller.ui.provision.ProvisionScreen
+
 sealed class Screen(val route: String) {
     object Connect : Screen("connect")
+    object Provision : Screen("provision")
     object Login : Screen("login")
     object Home : Screen("home/{tab}") {
         fun createRoute(tab: Int = 0) = "home/$tab"
@@ -32,6 +35,9 @@ fun AppNavigation() {
     NavHost(navController = navController, startDestination = Screen.Connect.route) {
         composable(Screen.Connect.route) {
             ConnectScreen(navController = navController)
+        }
+        composable(Screen.Provision.route) {
+            ProvisionScreen(navController = navController)
         }
         composable(Screen.Login.route) {
             LoginScreen(navController = navController)

@@ -348,6 +348,18 @@ data class MdnsRequest(val hostname: String? = null, val enabled: Boolean? = nul
 @JsonClass(generateAdapter = true)
 data class OkResponse(val ok: Boolean)
 
+/* ── Provisioning (AP wizard) ────────────────────────────────────── */
+
+@JsonClass(generateAdapter = true)
+data class WifiNetworkInfo(
+    val ssid: String,
+    val rssi: Int,
+    val open: Boolean
+)
+
+@JsonClass(generateAdapter = true)
+data class WifiScanResponse(val networks: List<WifiNetworkInfo>)
+
 data class WsStatus(
     val tempC: Double = 0.0,
     val tempOk: Boolean = true,
