@@ -27,6 +27,16 @@ fun ConnectScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // Auto-redirect to provisioning wizard when no host is saved
+    LaunchedEffect(uiState.navigateToProvision) {
+        if (uiState.navigateToProvision) {
+            viewModel.clearNavigation()
+            navController.navigate(Screen.Provision.route) {
+                popUpTo(Screen.Connect.route) { inclusive = false }
+            }
+        }
+    }
+
     LaunchedEffect(uiState.navigateToLogin) {
         if (uiState.navigateToLogin) {
             viewModel.clearNavigation()
@@ -138,6 +148,15 @@ fun ConnectScreen(
                 ) {
                     Text("Connect")
                 }
+            }
+
+            HorizontalDivider()
+
+            TextButton(
+                onClick = { navController.navigate(Screen.Provision.route) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Prima configurazione / Nuovo dispositivo →")
             }
 
             if (uiState.discoveredHosts.isNotEmpty()) {
