@@ -136,6 +136,13 @@ CONFIG_WEB_AUTH_ENABLE=y
 CONFIG_WEB_AUTH_USERNAME="admin"
 CONFIG_WEB_AUTH_PASSWORD="aquarium"
 
+# ── lwIP socket pool ─────────────────────────────────────────────
+# Default is 10, which is exhausted by: WiFi-internal sockets, MQTT TLS
+# socket (remote_relay), HTTP server + WebSocket connections, NTP and
+# Telegram clients. Raise to 16 to prevent accept() failing with ENFILE
+# (error 23) when the browser connects to the Web UI.
+CONFIG_LWIP_MAX_SOCKETS=16
+
 # ── HTTP server / WebSocket ───────────────────────────────────────
 CONFIG_HTTPD_WS_SUPPORT=y
 
