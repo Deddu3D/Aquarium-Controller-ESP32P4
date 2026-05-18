@@ -259,7 +259,7 @@ fun HomeScreen(
                                 Text("Feeding Mode", style = MaterialTheme.typography.titleMedium)
                                 if (state.feeding.active) {
                                     Text(
-                                        if (state.isRemote) "Attivo"
+                                        if (state.isRemote) "Active"
                                         else "Active - ${state.feeding.remainingS}s remaining",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.secondary

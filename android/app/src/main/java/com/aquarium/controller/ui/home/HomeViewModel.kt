@@ -103,7 +103,7 @@ class HomeViewModel @Inject constructor(
     fun toggleRelay(index: Int, currentOn: Boolean) {
         if (isRemoteMode()) {
             repository.mqttRemoteManager.sendRelayToggle(index, !currentOn)
-            _snackbarMessage.value = "Comando inviato via MQTT"
+            _snackbarMessage.value = "Relay ${index + 1} toggle sent via MQTT"
         } else {
             viewModelScope.launch {
                 repository.toggleRelay(index, !currentOn).fold(
@@ -117,7 +117,7 @@ class HomeViewModel @Inject constructor(
     fun startFeeding() {
         if (isRemoteMode()) {
             repository.mqttRemoteManager.sendFeedingStart()
-            _snackbarMessage.value = "Comando inviato via MQTT"
+            _snackbarMessage.value = "Feeding start sent via MQTT"
         } else {
             viewModelScope.launch {
                 repository.postFeeding(FeedingRequest(action = "start")).fold(
@@ -131,7 +131,7 @@ class HomeViewModel @Inject constructor(
     fun stopFeeding() {
         if (isRemoteMode()) {
             repository.mqttRemoteManager.sendFeedingStop()
-            _snackbarMessage.value = "Comando inviato via MQTT"
+            _snackbarMessage.value = "Feeding stop sent via MQTT"
         } else {
             viewModelScope.launch {
                 repository.postFeeding(FeedingRequest(action = "stop")).fold(
@@ -149,6 +149,13 @@ class HomeViewModel @Inject constructor(
     private fun isRemoteMode(): Boolean =
         (_uiState.value as? HomeUiState.Success)?.isRemote == true
 
+    companion object {
+        /** Placeholder used for text fields not available via MQTT. */
+        private const val REMOTE_PLACEHOLDER_STR = "--"
+        /** Placeholder used for integer fields not available via MQTT. */
+        private const val REMOTE_PLACEHOLDER_INT = 0
+    }
+
     /**
      * Build a [HomeUiState.Success] from live MQTT data.
      * Fields that are unavailable via MQTT are filled with neutral placeholders.
@@ -157,15 +164,15 @@ class HomeViewModel @Inject constructor(
         HomeUiState.Success(
             status = StatusResponse(
                 connected     = mqttSt.connected,
-                ip            = "--",
-                ssid          = "--",
-                rssi          = 0,
+                ip            = REMOTE_PLACEHOLDER_STR,
+                ssid          = REMOTE_PLACEHOLDER_STR,
+                rssi          = REMOTE_PLACEHOLDER_INT,
                 freeHeap      = mqttSt.freeHeap,
                 uptimeS       = mqttSt.uptimeS,
                 ntpOk         = true,
-                partition     = "--",
-                bootCount     = 0,
-                restartReason = "--"
+                partition     = REMOTE_PLACEHOLDER_STR,
+                bootCount     = REMOTE_PLACEHOLDER_INT,
+                restartReason = REMOTE_PLACEHOLDER_STR
             ),
             health = HealthResponse(
                 healthy            = true,
@@ -175,7 +182,7 @@ class HomeViewModel @Inject constructor(
                 ledScheduleEnabled = false,
                 tempC              = mqttSt.tempC,
                 freeHeap           = mqttSt.freeHeap,
-                minFreeHeap        = 0,
+                minFreeHeap        = REMOTE_PLACEHOLDER_INT.toLong(),
                 uptimeS            = mqttSt.uptimeS
             ),
             relays = RelaysResponse(
@@ -188,12 +195,12 @@ class HomeViewModel @Inject constructor(
                 )
             ),
             feeding = FeedingResponse(
-                active       = mqttSt.feedingActive,
-                remainingS   = 0,
-                relayIndex   = 0,
-                durationMin  = 0,
-                dimLights    = false,
-                dimBrightness = 0
+                active        = mqttSt.feedingActive,
+                remainingS    = REMOTE_PLACEHOLDER_INT,
+                relayIndex    = REMOTE_PLACEHOLDER_INT,
+                durationMin   = REMOTE_PLACEHOLDER_INT,
+                dimLights     = false,
+                dimBrightness = REMOTE_PLACEHOLDER_INT
             ),
             isRemote = true
         )

@@ -511,7 +511,6 @@ private fun ReconnectStep(
                 label = { Text("Indirizzo IP del controller") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 placeholder = { Text("192.168.1.100") },
                 supportingText = { Text("Trovi l'IP nel router o sul display del controller.") }
             )
