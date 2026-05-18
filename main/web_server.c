@@ -43,6 +43,7 @@
 #include "led_scenes.h"
 #include "daily_cycle.h"
 #include "event_log.h"
+#include "remote_relay.h"
 #include "cJSON.h"
 
 static const char *TAG = "web_srv";
@@ -3180,6 +3181,44 @@ static const httpd_uri_t uri_api_auth_post = {
 };
 #endif
 
+/* ── Remote relay GET endpoint (/api/remote  GET) ─────────────────── */
+
+static esp_err_t api_remote_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+
+    char device_id[REMOTE_RELAY_DEVICE_ID_LEN] = "";
+    remote_relay_get_device_id(device_id, sizeof(device_id));
+    bool connected = remote_relay_is_connected();
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"device_id\":\"%s\","
+        "\"connected\":%s,"
+        "\"enabled\":%s,"
+        "\"broker_uri\":\"%s\"}",
+        device_id,
+        connected ? "true" : "false",
+#ifdef CONFIG_REMOTE_RELAY_ENABLE
+        "true",
+        CONFIG_REMOTE_RELAY_BROKER_URI
+#else
+        "false",
+        ""
+#endif
+    );
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+static const httpd_uri_t uri_api_remote_get = {
+    .uri      = "/api/remote",
+    .method   = HTTP_GET,
+    .handler  = api_remote_get_handler,
+    .user_ctx = NULL,
+};
+
 /* ── Public API ──────────────────────────────────────────────────── */
 
 /* Embedded TLS certificate and key (built from server.crt / server.key) */
@@ -3286,6 +3325,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_config_import);
     httpd_register_uri_handler(s_server, &uri_api_mdns_get);
     httpd_register_uri_handler(s_server, &uri_api_mdns_post);
+    httpd_register_uri_handler(s_server, &uri_api_remote_get);
     httpd_register_uri_handler(s_server, &uri_ws);
     httpd_register_uri_handler(s_server, &uri_manifest);
     httpd_register_uri_handler(s_server, &uri_sw);
