@@ -236,6 +236,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 /* ── JSON helper for portal API handlers ─────────────────────────── */
 
+/* Maximum number of WiFi networks returned by the scan endpoint */
+#define MAX_SCAN_NETWORKS      24
+/* Response buffer for the scan JSON (24 networks × ~80 chars each) */
+#define SCAN_RESPONSE_BUF_SIZE 2048
+/* Maximum SSID length as per IEEE 802.11 */
+#define WIFI_SSID_RAW_MAX      32
+/* Maximum escaped SSID length (each byte can become 2 chars + NUL) */
+#define WIFI_SSID_ESC_MAX      (WIFI_SSID_RAW_MAX * 2 + 4)
+
 /**
  * @brief Extract a JSON string value for @p key from a flat JSON object.
  *
@@ -246,7 +255,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 static int prov_json_str(const char *json, const char *key,
                           char *out, size_t out_size)
 {
-    char needle[68];
+    /* needle = '"' + key + '"'  (max key we ever pass is 8 chars) */
+    char needle[16];
     snprintf(needle, sizeof(needle), "\"%s\"", key);
     const char *p = strstr(json, needle);
     if (!p) return 0;
@@ -284,22 +294,25 @@ static esp_err_t portal_scan_handler(httpd_req_t *req)
         return httpd_resp_send(req, "{\"networks\":[]}", -1);
     }
 
-    uint16_t count = 24;
-    wifi_ap_record_t records[24];
+    uint16_t count = MAX_SCAN_NETWORKS;
+    wifi_ap_record_t records[MAX_SCAN_NETWORKS];
     memset(records, 0, sizeof(records));
     esp_wifi_scan_get_ap_records(&count, records);
 
     /* Build JSON: {"networks":[{"ssid":"...","rssi":-55,"open":false},...]} */
-    char buf[2048];
+    char buf[SCAN_RESPONSE_BUF_SIZE];
     int  pos = 0;
     int  added = 0;
     pos += snprintf(buf + pos, sizeof(buf) - pos, "{\"networks\":[");
     for (int i = 0; i < (int)count && pos < (int)(sizeof(buf) - 100); i++) {
         if (records[i].ssid[0] == '\0') continue;
         /* Escape SSID: replace \ → \\ and " → \" */
-        char ssid_esc[70] = {0};
+        char ssid_esc[WIFI_SSID_ESC_MAX];
+        memset(ssid_esc, 0, sizeof(ssid_esc));
         int  si = 0;
-        for (int j = 0; records[i].ssid[j] && j < 32 && si < 64; j++) {
+        for (int j = 0;
+             records[i].ssid[j] && j < WIFI_SSID_RAW_MAX && si < WIFI_SSID_RAW_MAX * 2;
+             j++) {
             char c = (char)records[i].ssid[j];
             if (c == '"' || c == '\\') ssid_esc[si++] = '\\';
             ssid_esc[si++] = c;

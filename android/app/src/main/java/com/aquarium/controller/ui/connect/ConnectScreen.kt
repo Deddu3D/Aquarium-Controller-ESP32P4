@@ -156,7 +156,7 @@ fun ConnectScreen(
                 onClick = { navController.navigate(Screen.Provision.route) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Prima configurazione / Nuovo dispositivo →")
+                Text("Prima Configurazione / Nuovo dispositivo →")
             }
 
             if (uiState.discoveredHosts.isNotEmpty()) {

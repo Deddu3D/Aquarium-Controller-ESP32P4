@@ -219,7 +219,9 @@ class ProvisionViewModel @Inject constructor(
                         val resp = checkClient.newCall(
                             Request.Builder().url(url).get().build()
                         ).execute()
-                        resp.code in 200..404 // any HTTP response means the ESP is up
+                        /* Any valid HTTP response (including 4xx/5xx) means the
+                         * ESP is up and listening; we just need reachability. */
+                        resp.code in 100..599
                     } catch (_: Exception) {
                         false
                     }
@@ -254,6 +256,9 @@ class ProvisionViewModel @Inject constructor(
         val state = _uiState.value
         _uiState.value = state.copy(servicesSaving = true)
         viewModelScope.launch {
+            // Login with factory-default credentials (admin / aquarium).
+            // If the user changed credentials during a previous setup attempt
+            // this will fail and we navigate forward anyway so they can re-login.
             val loginResult = repository.login("admin", "aquarium")
             if (loginResult.isSuccess) {
                 if (state.telegramToken.isNotBlank() || state.telegramChatId.isNotBlank()) {
