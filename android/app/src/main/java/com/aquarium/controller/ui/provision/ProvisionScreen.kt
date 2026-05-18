@@ -100,8 +100,10 @@ fun ProvisionScreen(
 
                 ProvisionStep.RECONNECT -> ReconnectStep(
                     mdnsHostname = uiState.mdnsHostname,
+                    manualIp = uiState.manualIp,
                     isLoading = uiState.isLoading,
                     onOpenWifi = { viewModel.openWifiSettings() },
+                    onManualIpChange = { viewModel.updateManualIp(it) },
                     onVerify = { viewModel.verifyConnection() }
                 )
 
@@ -426,10 +428,14 @@ private fun ApplyingStep() {
 @Composable
 private fun ReconnectStep(
     mdnsHostname: String,
+    manualIp: String,
     isLoading: Boolean,
     onOpenWifi: () -> Unit,
+    onManualIpChange: (String) -> Unit,
     onVerify: () -> Unit
 ) {
+    var showIpFallback by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -479,6 +485,35 @@ private fun ReconnectStep(
                 Spacer(Modifier.width(8.dp))
             }
             Text("Verifica connessione")
+        }
+
+        // mDNS fallback: let the user enter a direct IP address
+        HorizontalDivider()
+        TextButton(
+            onClick = { showIpFallback = !showIpFallback },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                if (showIpFallback) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                "mDNS non funziona? Inserisci l'IP manualmente",
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
+        if (showIpFallback) {
+            OutlinedTextField(
+                value = manualIp,
+                onValueChange = onManualIpChange,
+                label = { Text("Indirizzo IP del controller") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("192.168.1.100") },
+                supportingText = { Text("Trovi l'IP nel router o sul display del controller.") }
+            )
         }
     }
 }

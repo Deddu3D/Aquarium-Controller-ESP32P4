@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.aquarium.controller.data.model.FeedingResponse
 import com.aquarium.controller.data.model.FeedingRequest
 import com.aquarium.controller.data.model.HealthResponse
+import com.aquarium.controller.data.model.RelayInfo
 import com.aquarium.controller.data.model.RelaysResponse
+import com.aquarium.controller.data.model.RemoteStatus
 import com.aquarium.controller.data.model.StatusResponse
 import com.aquarium.controller.data.model.WsStatus
 import com.aquarium.controller.repository.AquariumRepository
@@ -22,7 +24,9 @@ sealed class HomeUiState {
         val status: StatusResponse,
         val health: HealthResponse,
         val relays: RelaysResponse,
-        val feeding: FeedingResponse
+        val feeding: FeedingResponse,
+        /** true when data comes from MQTT (no local HTTP connection available) */
+        val isRemote: Boolean = false
     ) : HomeUiState()
     data class Error(val message: String) : HomeUiState()
 }
@@ -42,60 +46,162 @@ class HomeViewModel @Inject constructor(
 
     init {
         load()
+
+        // Collect live MQTT status updates so the UI refreshes automatically:
+        //  • When already in remote mode – keep data current (ESP publishes every 30 s).
+        //  • When in Error/Loading state – auto-transition to remote mode once the
+        //    broker delivers the first status (handles delayed MQTT connect).
+        viewModelScope.launch {
+            repository.mqttRemoteManager.status.collect { mqttSt ->
+                val current = _uiState.value
+                when {
+                    current is HomeUiState.Success && current.isRemote && mqttSt.connected ->
+                        _uiState.value = buildMqttSuccessState(mqttSt)
+
+                    (current is HomeUiState.Error || current is HomeUiState.Loading) && mqttSt.connected ->
+                        _uiState.value = buildMqttSuccessState(mqttSt)
+                }
+            }
+        }
     }
 
     fun load() {
         _uiState.value = HomeUiState.Loading
         viewModelScope.launch {
-            val statusResult = repository.getStatus()
-            val healthResult = repository.getHealth()
-            val relaysResult = repository.getRelays()
+            val statusResult  = repository.getStatus()
+            val healthResult  = repository.getHealth()
+            val relaysResult  = repository.getRelays()
             val feedingResult = repository.getFeeding()
 
             if (statusResult.isSuccess && healthResult.isSuccess &&
                 relaysResult.isSuccess && feedingResult.isSuccess) {
                 _uiState.value = HomeUiState.Success(
-                    status = statusResult.getOrThrow(),
-                    health = healthResult.getOrThrow(),
-                    relays = relaysResult.getOrThrow(),
-                    feeding = feedingResult.getOrThrow()
+                    status  = statusResult.getOrThrow(),
+                    health  = healthResult.getOrThrow(),
+                    relays  = relaysResult.getOrThrow(),
+                    feeding = feedingResult.getOrThrow(),
+                    isRemote = false
                 )
             } else {
-                val err = statusResult.exceptionOrNull()
-                    ?: healthResult.exceptionOrNull()
-                    ?: relaysResult.exceptionOrNull()
-                    ?: feedingResult.exceptionOrNull()
-                _uiState.value = HomeUiState.Error(err?.message ?: "Unknown error")
+                // HTTP unreachable – fall back to MQTT if a status has been received
+                val mqttSt = repository.mqttRemoteManager.status.value
+                if (repository.mqttRemoteManager.isConnected() && mqttSt.connected) {
+                    _uiState.value = buildMqttSuccessState(mqttSt)
+                } else {
+                    val err = statusResult.exceptionOrNull()
+                        ?: healthResult.exceptionOrNull()
+                        ?: relaysResult.exceptionOrNull()
+                        ?: feedingResult.exceptionOrNull()
+                    _uiState.value = HomeUiState.Error(err?.message ?: "Unknown error")
+                }
             }
         }
     }
 
+    // ── Commands ─────────────────────────────────────────────────────────
+
     fun toggleRelay(index: Int, currentOn: Boolean) {
-        viewModelScope.launch {
-            repository.toggleRelay(index, !currentOn).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to toggle relay: ${it.message}" }
-            )
+        if (isRemoteMode()) {
+            repository.mqttRemoteManager.sendRelayToggle(index, !currentOn)
+            _snackbarMessage.value = "Relay ${index + 1} toggle sent via MQTT"
+        } else {
+            viewModelScope.launch {
+                repository.toggleRelay(index, !currentOn).fold(
+                    onSuccess = { load() },
+                    onFailure = { _snackbarMessage.value = "Failed to toggle relay: ${it.message}" }
+                )
+            }
         }
     }
 
     fun startFeeding() {
-        viewModelScope.launch {
-            repository.postFeeding(FeedingRequest(action = "start")).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to start feeding: ${it.message}" }
-            )
+        if (isRemoteMode()) {
+            repository.mqttRemoteManager.sendFeedingStart()
+            _snackbarMessage.value = "Feeding start sent via MQTT"
+        } else {
+            viewModelScope.launch {
+                repository.postFeeding(FeedingRequest(action = "start")).fold(
+                    onSuccess = { load() },
+                    onFailure = { _snackbarMessage.value = "Failed to start feeding: ${it.message}" }
+                )
+            }
         }
     }
 
     fun stopFeeding() {
-        viewModelScope.launch {
-            repository.postFeeding(FeedingRequest(action = "stop")).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to stop feeding: ${it.message}" }
-            )
+        if (isRemoteMode()) {
+            repository.mqttRemoteManager.sendFeedingStop()
+            _snackbarMessage.value = "Feeding stop sent via MQTT"
+        } else {
+            viewModelScope.launch {
+                repository.postFeeding(FeedingRequest(action = "stop")).fold(
+                    onSuccess = { load() },
+                    onFailure = { _snackbarMessage.value = "Failed to stop feeding: ${it.message}" }
+                )
+            }
         }
     }
 
     fun clearSnackbar() { _snackbarMessage.value = null }
+
+    // ── Private helpers ───────────────────────────────────────────────────
+
+    private fun isRemoteMode(): Boolean =
+        (_uiState.value as? HomeUiState.Success)?.isRemote == true
+
+    companion object {
+        /** Placeholder used for text fields not available via MQTT. */
+        private const val REMOTE_PLACEHOLDER_STR = "--"
+        /** Placeholder used for integer fields not available via MQTT. */
+        private const val REMOTE_PLACEHOLDER_INT = 0
+    }
+
+    /**
+     * Build a [HomeUiState.Success] from live MQTT data.
+     * Fields that are unavailable via MQTT are filled with neutral placeholders.
+     */
+    private fun buildMqttSuccessState(mqttSt: RemoteStatus): HomeUiState.Success =
+        HomeUiState.Success(
+            status = StatusResponse(
+                connected     = mqttSt.connected,
+                ip            = REMOTE_PLACEHOLDER_STR,
+                ssid          = REMOTE_PLACEHOLDER_STR,
+                rssi          = REMOTE_PLACEHOLDER_INT,
+                freeHeap      = mqttSt.freeHeap,
+                uptimeS       = mqttSt.uptimeS,
+                ntpOk         = true,
+                partition     = REMOTE_PLACEHOLDER_STR,
+                bootCount     = REMOTE_PLACEHOLDER_INT,
+                restartReason = REMOTE_PLACEHOLDER_STR
+            ),
+            health = HealthResponse(
+                healthy            = true,
+                wifi               = true,
+                temperatureSensor  = true,
+                ledStrip           = true,
+                ledScheduleEnabled = false,
+                tempC              = mqttSt.tempC,
+                freeHeap           = mqttSt.freeHeap,
+                minFreeHeap        = REMOTE_PLACEHOLDER_INT.toLong(),
+                uptimeS            = mqttSt.uptimeS
+            ),
+            relays = RelaysResponse(
+                count  = 4,
+                relays = listOf(
+                    RelayInfo(0, mqttSt.relay0, "Relay 1", emptyList()),
+                    RelayInfo(1, mqttSt.relay1, "Relay 2", emptyList()),
+                    RelayInfo(2, mqttSt.relay2, "Relay 3", emptyList()),
+                    RelayInfo(3, mqttSt.relay3, "Relay 4", emptyList())
+                )
+            ),
+            feeding = FeedingResponse(
+                active        = mqttSt.feedingActive,
+                remainingS    = REMOTE_PLACEHOLDER_INT,
+                relayIndex    = REMOTE_PLACEHOLDER_INT,
+                durationMin   = REMOTE_PLACEHOLDER_INT,
+                dimLights     = false,
+                dimBrightness = REMOTE_PLACEHOLDER_INT
+            ),
+            isRemote = true
+        )
 }

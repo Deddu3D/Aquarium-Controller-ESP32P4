@@ -43,6 +43,24 @@ fun HomeScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
+                    // Show remote-mode badge when using MQTT
+                    if (uiState is HomeUiState.Success &&
+                        (uiState as HomeUiState.Success).isRemote) {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text("Remoto", style = MaterialTheme.typography.labelSmall)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.CloudQueue,
+                                    contentDescription = "Modalità remota MQTT",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            },
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                    }
                     IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -111,6 +129,18 @@ fun HomeScreen(
                 }
             }
             is HomeUiState.Success -> {
+                // Temperature source: MQTT data in remote mode, WebSocket otherwise
+                val displayTemp = when {
+                    state.isRemote -> "%.1f°C".format(state.health.tempC)
+                    wsStatus.connected -> "%.1f°C".format(wsStatus.tempC)
+                    else -> "--°C"
+                }
+                val tempOk = when {
+                    state.isRemote -> state.health.tempC in 22.0..28.0
+                    else -> wsStatus.tempOk
+                }
+                val tempConnected = state.isRemote || wsStatus.connected
+
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -119,7 +149,7 @@ fun HomeScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Temperature badge from WebSocket
+                    // Temperature badge (local WebSocket or remote MQTT)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         modifier = Modifier.fillMaxWidth()
@@ -134,11 +164,11 @@ fun HomeScreen(
                             Column {
                                 Text("Temperature", style = MaterialTheme.typography.labelLarge)
                                 Text(
-                                    if (wsStatus.connected) "%.1f°C".format(wsStatus.tempC) else "--°C",
+                                    displayTemp,
                                     style = MaterialTheme.typography.headlineMedium,
                                     color = when {
-                                        !wsStatus.connected -> MaterialTheme.colorScheme.onSurface
-                                        wsStatus.tempC > 28.0 || wsStatus.tempC < 22.0 -> MaterialTheme.colorScheme.error
+                                        !tempConnected -> MaterialTheme.colorScheme.onSurface
+                                        !tempOk -> MaterialTheme.colorScheme.error
                                         else -> MaterialTheme.colorScheme.secondary
                                     }
                                 )
@@ -147,13 +177,20 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Default.Thermostat,
                                     contentDescription = null,
-                                    tint = if (wsStatus.tempOk) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                    tint = if (tempOk) MaterialTheme.colorScheme.secondary
+                                           else MaterialTheme.colorScheme.error
                                 )
                                 Spacer(Modifier.width(8.dp))
+                                // Show Cloud icon in remote mode, WiFi otherwise
                                 Icon(
-                                    imageVector = if (wsStatus.connected) Icons.Default.Wifi else Icons.Default.WifiOff,
+                                    imageVector = when {
+                                        state.isRemote -> Icons.Default.CloudQueue
+                                        tempConnected  -> Icons.Default.Wifi
+                                        else           -> Icons.Default.WifiOff
+                                    },
                                     contentDescription = null,
-                                    tint = if (wsStatus.connected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                    tint = if (tempConnected) MaterialTheme.colorScheme.secondary
+                                           else MaterialTheme.colorScheme.error
                                 )
                             }
                         }
@@ -165,15 +202,30 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("System Status", style = MaterialTheme.typography.titleMedium)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("System Status", style = MaterialTheme.typography.titleMedium)
+                                if (state.isRemote) {
+                                    Text(
+                                        "via MQTT",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             Spacer(Modifier.height(8.dp))
-                            StatusRow("WiFi", state.status.ssid, state.status.connected)
-                            StatusRow("RSSI", "${state.status.rssi} dBm")
-                            StatusRow("IP", state.status.ip)
+                            if (!state.isRemote) {
+                                StatusRow("WiFi", state.status.ssid, state.status.connected)
+                                StatusRow("RSSI", "${state.status.rssi} dBm")
+                                StatusRow("IP", state.status.ip)
+                                StatusRow("Partition", state.status.partition)
+                                StatusRow("NTP", if (state.status.ntpOk) "Synced" else "Not synced", state.status.ntpOk)
+                            }
                             StatusRow("Uptime", formatUptime(state.status.uptimeS))
                             StatusRow("Free Heap", "${state.status.freeHeap / 1024} KB")
-                            StatusRow("Partition", state.status.partition)
-                            StatusRow("NTP", if (state.status.ntpOk) "Synced" else "Not synced", state.status.ntpOk)
                         }
                     }
 
@@ -207,7 +259,8 @@ fun HomeScreen(
                                 Text("Feeding Mode", style = MaterialTheme.typography.titleMedium)
                                 if (state.feeding.active) {
                                     Text(
-                                        "Active - ${state.feeding.remainingS}s remaining",
+                                        if (state.isRemote) "Active"
+                                        else "Active - ${state.feeding.remainingS}s remaining",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.secondary
                                     )

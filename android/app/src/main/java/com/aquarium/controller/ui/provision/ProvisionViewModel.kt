@@ -56,7 +56,9 @@ data class ProvisionUiState(
     /** Whether the user wants to enable zero-config MQTT remote access. */
     val mqttEnabled: Boolean = false,
     val servicesSaving: Boolean = false,
-    val navigateToLogin: Boolean = false
+    val navigateToLogin: Boolean = false,
+    /** Manual IP entered by the user as fallback when mDNS doesn't work. */
+    val manualIp: String = ""
 )
 
 @HiltViewModel
@@ -99,6 +101,10 @@ class ProvisionViewModel @Inject constructor(
 
     fun updateMdns(host: String) {
         _uiState.value = _uiState.value.copy(mdnsHostname = host)
+    }
+
+    fun updateManualIp(ip: String) {
+        _uiState.value = _uiState.value.copy(manualIp = ip)
     }
 
     /** Open Android system WiFi settings so the user can switch networks. */
@@ -205,37 +211,57 @@ class ProvisionViewModel @Inject constructor(
 
     fun verifyConnection() {
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-        val host = _uiState.value.mdnsHostname
+        val hostname = _uiState.value.mdnsHostname   // e.g. "aquarium"
+        val manualIp = _uiState.value.manualIp
+
         viewModelScope.launch {
-            val reachable = withContext(Dispatchers.IO) {
-                // Try plain HTTP first (port 80, no auth required for /api/health on captive portal)
-                // then HTTPS as fallback once the main web_server is up.
-                listOf(
-                    "http://$host.local/api/health",
-                    "http://$host.local/",
-                ).any { url ->
-                    try {
-                        val checkClient = OkHttpClient.Builder()
-                            .connectTimeout(5, TimeUnit.SECONDS)
-                            .readTimeout(5, TimeUnit.SECONDS)
-                            .hostnameVerifier { _, _ -> true }
-                            .build()
-                        val resp = checkClient.newCall(
-                            Request.Builder().url(url).get().build()
-                        ).execute()
-                        /* Any valid HTTP response (including 4xx/5xx) means the
-                         * ESP is up and listening; we just need reachability. */
-                        resp.code in 100..599
-                    } catch (_: Exception) {
-                        false
+            val (reachable, effectiveHost) = withContext(Dispatchers.IO) {
+                val checkClient = OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(5, TimeUnit.SECONDS)
+                    .hostnameVerifier { _, _ -> true }
+                    .build()
+
+                fun ping(url: String): Boolean = try {
+                    val resp = checkClient.newCall(
+                        Request.Builder().url(url).get().build()
+                    ).execute()
+                    /* Any valid HTTP response means the ESP is reachable. */
+                    resp.code in 100..599
+                } catch (_: Exception) { false }
+
+                // 1. Try mDNS resolution first
+                val mdnsHost = "$hostname.local"
+                if (ping("http://$mdnsHost/api/health") || ping("http://$mdnsHost/")) {
+                    return@withContext Pair(true, mdnsHost)
+                }
+
+                // 2. Try the manually-entered IP as fallback
+                if (manualIp.isNotBlank()) {
+                    if (ping("http://$manualIp/api/health") || ping("http://$manualIp/")) {
+                        return@withContext Pair(true, manualIp)
                     }
                 }
+
+                Pair(false, "")
             }
+
             if (reachable) {
-                // Fetch the device ID from the ESP so we can show it in the SERVICES step
-                val deviceId = fetchDeviceId(host)
+                // If we reached the ESP via IP instead of mDNS, persist the IP
+                // so the app connects correctly after the wizard is done.
+                val mdnsHost = "$hostname.local"
+                if (effectiveHost != mdnsHost) {
+                    val settings = ConnectionSettings(
+                        host     = effectiveHost,
+                        port     = 443,
+                        useHttps = true,
+                        username = "admin"
+                    )
+                    repository.saveConnectionSettings(settings)
+                }
+                val deviceId = fetchDeviceId(effectiveHost)
                 _uiState.value = _uiState.value.copy(
-                    step = ProvisionStep.SERVICES,
+                    step     = ProvisionStep.SERVICES,
                     isLoading = false,
                     deviceId = deviceId
                 )
@@ -250,10 +276,11 @@ class ProvisionViewModel @Inject constructor(
 
     /**
      * Attempt to read the device ID from the ESP's /api/remote endpoint.
-     * Returns an empty string if unreachable or not yet available.
+     *
+     * @param host fully-qualified host string, e.g. "aquarium.local" or "192.168.1.100"
      */
     private suspend fun fetchDeviceId(host: String): String = withContext(Dispatchers.IO) {
-        listOf("http://$host.local/api/remote", "https://$host.local/api/remote").forEach { url ->
+        listOf("http://$host/api/remote", "https://$host/api/remote").forEach { url ->
             try {
                 val checkClient = OkHttpClient.Builder()
                     .connectTimeout(5, TimeUnit.SECONDS)
@@ -265,7 +292,6 @@ class ProvisionViewModel @Inject constructor(
                 ).execute()
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: return@withContext ""
-                    // Simple extraction of device_id without full JSON parsing
                     val match = Regex(""""device_id"\s*:\s*"([a-fA-F0-9]{12})"""").find(body)
                     val id = match?.groupValues?.getOrNull(1) ?: ""
                     if (id.isNotBlank()) return@withContext id
