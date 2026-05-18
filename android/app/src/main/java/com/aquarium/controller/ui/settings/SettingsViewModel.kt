@@ -3,11 +3,16 @@ package com.aquarium.controller.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aquarium.controller.data.model.*
+import com.aquarium.controller.data.prefs.ConnectionPreferences
+import com.aquarium.controller.data.prefs.ConnectionSettings
 import com.aquarium.controller.repository.AquariumRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -16,7 +21,8 @@ data class SettingsUiData(
     val duckDns: DuckDnsResponse,
     val timezone: TimezoneResponse,
     val mdns: MdnsResponse,
-    val otaStatus: OtaStatusResponse
+    val otaStatus: OtaStatusResponse,
+    val remote: RemoteResponse? = null
 )
 
 sealed class SettingsUiState {
@@ -27,7 +33,8 @@ sealed class SettingsUiState {
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: AquariumRepository
+    private val repository: AquariumRepository,
+    private val connectionPrefs: ConnectionPreferences
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.Loading)
@@ -39,28 +46,44 @@ class SettingsViewModel @Inject constructor(
     private val _navigateToConnect = MutableStateFlow(false)
     val navigateToConnect: StateFlow<Boolean> = _navigateToConnect.asStateFlow()
 
+    /** Live MQTT connection status for the settings screen. */
+    val mqttConnected: StateFlow<Boolean> = repository.mqttRemoteManager.connected
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** Persisted settings (deviceId, mqttEnabled, etc.) */
+    val connectionSettings: StateFlow<ConnectionSettings> =
+        connectionPrefs.settings
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000),
+                ConnectionSettings())
+
     init { load() }
 
     fun load() {
         _uiState.value = SettingsUiState.Loading
         viewModelScope.launch {
             val telegramResult = repository.getTelegram()
-            val duckDnsResult = repository.getDuckDns()
+            val duckDnsResult  = repository.getDuckDns()
             val timezoneResult = repository.getTimezone()
-            val mdnsResult = repository.getMdns()
-            val otaResult = repository.getOtaStatus()
+            val mdnsResult     = repository.getMdns()
+            val otaResult      = repository.getOtaStatus()
+            val remoteResult   = repository.getRemote()  // may fail on older firmware
 
             if (telegramResult.isSuccess && duckDnsResult.isSuccess &&
                 timezoneResult.isSuccess && mdnsResult.isSuccess && otaResult.isSuccess) {
                 _uiState.value = SettingsUiState.Success(
                     SettingsUiData(
-                        telegram = telegramResult.getOrThrow(),
-                        duckDns = duckDnsResult.getOrThrow(),
-                        timezone = timezoneResult.getOrThrow(),
-                        mdns = mdnsResult.getOrThrow(),
-                        otaStatus = otaResult.getOrThrow()
+                        telegram  = telegramResult.getOrThrow(),
+                        duckDns   = duckDnsResult.getOrThrow(),
+                        timezone  = timezoneResult.getOrThrow(),
+                        mdns      = mdnsResult.getOrThrow(),
+                        otaStatus = otaResult.getOrThrow(),
+                        remote    = remoteResult.getOrNull()
                     )
                 )
+                // Persist device_id fetched from the ESP if it changed
+                remoteResult.getOrNull()?.deviceId?.let { id ->
+                    if (id.isNotBlank()) connectionPrefs.saveDeviceId(id)
+                }
             } else {
                 val err = telegramResult.exceptionOrNull() ?: duckDnsResult.exceptionOrNull()
                     ?: timezoneResult.exceptionOrNull() ?: mdnsResult.exceptionOrNull()
@@ -164,6 +187,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             repository.logout()
             _navigateToConnect.value = true
+        }
+    }
+
+    fun setMqttEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            if (enabled) {
+                val deviceId = connectionPrefs.settings.first().deviceId
+                if (deviceId.isNotBlank()) {
+                    repository.enableRemoteAccess(deviceId)
+                    _snackbarMessage.value = "Remote access enabled"
+                } else {
+                    _snackbarMessage.value = "Device ID not available – check connection"
+                }
+            } else {
+                repository.disableRemoteAccess()
+                _snackbarMessage.value = "Remote access disabled"
+            }
         }
     }
 

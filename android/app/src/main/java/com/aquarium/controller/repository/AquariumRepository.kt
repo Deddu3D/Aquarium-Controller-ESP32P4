@@ -2,6 +2,7 @@ package com.aquarium.controller.repository
 
 import com.aquarium.controller.data.api.AquariumApi
 import com.aquarium.controller.data.model.*
+import com.aquarium.controller.data.network.MqttRemoteManager
 import com.aquarium.controller.data.network.SessionCookieJar
 import com.aquarium.controller.data.network.WebSocketManager
 import com.aquarium.controller.data.prefs.ConnectionPreferences
@@ -23,7 +24,8 @@ class AquariumRepository @Inject constructor(
     private val moshi: Moshi,
     private val cookieJar: SessionCookieJar,
     private val connectionPrefs: ConnectionPreferences,
-    val webSocketManager: WebSocketManager
+    val webSocketManager: WebSocketManager,
+    val mqttRemoteManager: MqttRemoteManager
 ) {
     private var api: AquariumApi = retrofit.create(AquariumApi::class.java)
 
@@ -43,15 +45,39 @@ class AquariumRepository @Inject constructor(
         if (settings.host.isNotBlank()) {
             api = buildApiForUrl(settings.baseUrl)
         }
+        // Reconnect MQTT if it was enabled
+        if (settings.mqttEnabled && settings.deviceId.isNotBlank()) {
+            mqttRemoteManager.connect(settings.deviceId)
+        }
     }
 
     suspend fun saveConnectionSettings(settings: ConnectionSettings) {
         connectionPrefs.saveSettings(settings)
         api = buildApiForUrl(settings.baseUrl)
+        if (settings.mqttEnabled && settings.deviceId.isNotBlank()) {
+            mqttRemoteManager.connect(settings.deviceId)
+        } else if (!settings.mqttEnabled) {
+            mqttRemoteManager.disconnect()
+        }
     }
 
     fun connectWebSocket(baseUrl: String) = webSocketManager.connect(baseUrl)
     fun disconnectWebSocket() = webSocketManager.disconnect()
+
+    // ── Remote MQTT helpers ───────────────────────────────────────────
+
+    /** Connect the MQTT manager to the given device ID and persist the setting. */
+    suspend fun enableRemoteAccess(deviceId: String) {
+        connectionPrefs.saveDeviceId(deviceId)
+        connectionPrefs.saveMqttEnabled(true)
+        mqttRemoteManager.connect(deviceId)
+    }
+
+    /** Disconnect MQTT and persist the disabled state. */
+    suspend fun disableRemoteAccess() {
+        connectionPrefs.saveMqttEnabled(false)
+        mqttRemoteManager.disconnect()
+    }
 
     suspend fun login(username: String, password: String): Result<LoginResponse> =
         safeCall { api.login(LoginRequest(username, password)) }
@@ -121,6 +147,8 @@ class AquariumRepository @Inject constructor(
 
     suspend fun getMdns(): Result<MdnsResponse> = safeCall { api.getMdns() }
     suspend fun postMdns(request: MdnsRequest): Result<OkResponse> = safeCall { api.postMdns(request) }
+
+    suspend fun getRemote(): Result<RemoteResponse> = safeCall { api.getRemote() }
 
     suspend fun factoryReset(): Result<OkResponse> = safeCall { api.factoryReset() }
     suspend fun exportConfig(): Result<okhttp3.ResponseBody> = safeCallRaw { api.exportConfig() }

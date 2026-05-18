@@ -46,6 +46,7 @@
 #include "feeding_mode.h"
 #include "daily_cycle.h"
 #include "event_log.h"
+#include "remote_relay.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -295,6 +296,17 @@ void app_main(void)
         ESP_LOGE(TAG, "DuckDNS init failed (0x%x)", ret);
     } else {
         ESP_LOGI(TAG, "DuckDNS client ready");
+    }
+
+    /* ── 9b. Initialise MQTT zero-config remote relay ─────────────── */
+    esp_task_wdt_reset();
+    ret = remote_relay_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Remote relay init failed (0x%x) – continuing without remote access", ret);
+    } else {
+        char dev_id[REMOTE_RELAY_DEVICE_ID_LEN];
+        remote_relay_get_device_id(dev_id, sizeof(dev_id));
+        ESP_LOGI(TAG, "Remote relay ready – device ID: %s", dev_id);
     }
 
     /* ── 10. Start HTTP status server ─────────────────────────────── */

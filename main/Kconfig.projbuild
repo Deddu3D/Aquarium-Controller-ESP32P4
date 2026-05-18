@@ -330,6 +330,36 @@ menu "Aquarium WebSocket Settings"
 
 endmenu
 
+menu "Aquarium Remote Access (MQTT) Settings"
+
+    config REMOTE_RELAY_ENABLE
+        bool "Enable zero-config MQTT remote access"
+        default y
+        help
+            When enabled, the controller connects to a managed public MQTT
+            broker on startup (outbound TLS, port 8883).  No router
+            port-forwarding or user account is required.  The Android app
+            connects to the same broker and discovers the device via its
+            unique Device ID (derived from the MAC address).
+            Disable to save heap and avoid the background MQTT task.
+
+    config REMOTE_RELAY_BROKER_URI
+        string "MQTT broker URI (TLS)"
+        default "mqtts://broker.hivemq.com:8883"
+        depends on REMOTE_RELAY_ENABLE
+        help
+            Full URI of the MQTT broker used for remote access.
+            The default points to the free public HiveMQ broker which
+            requires no account.  Change to a private broker URI for
+            production deployments:
+              Plain TLS:  mqtts://your.broker.com:8883
+              WebSocket:  wss://your.broker.com:443/mqtt
+            The broker must support TLS (the built-in CA bundle is used
+            for certificate verification, so well-known public CAs work
+            out of the box).
+
+endmenu
+
 menu "Aquarium LED Scene Settings"
 
     config LED_SCENE_SUNRISE_DURATION_MIN

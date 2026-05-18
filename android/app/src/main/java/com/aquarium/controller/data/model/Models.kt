@@ -368,3 +368,33 @@ data class WsStatus(
     val phase: Int = 0,
     val connected: Boolean = false
 )
+
+/* ── Remote relay (MQTT zero-config remote access) ───────────────── */
+
+/** Response from GET /api/remote – describes the MQTT remote relay state. */
+@JsonClass(generateAdapter = true)
+data class RemoteResponse(
+    @Json(name = "device_id") val deviceId: String,
+    val connected: Boolean,
+    val enabled: Boolean,
+    @Json(name = "broker_uri") val brokerUri: String
+)
+
+/**
+ * Live status received from the ESP via MQTT (parsed from the status topic
+ * payload).  Not a Moshi model – deserialized manually from JSON.
+ */
+data class RemoteStatus(
+    val tempC: Double = 0.0,
+    val tempOk: Boolean = true,
+    val uptimeS: Long = 0L,
+    val freeHeap: Long = 0L,
+    val relay0: Boolean = false,
+    val relay1: Boolean = false,
+    val relay2: Boolean = false,
+    val relay3: Boolean = false,
+    val ledOn: Boolean = false,
+    val ledBrightness: Int = 0,
+    val feedingActive: Boolean = false,
+    val connected: Boolean = false
+)
