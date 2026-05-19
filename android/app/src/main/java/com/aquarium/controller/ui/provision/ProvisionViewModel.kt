@@ -9,7 +9,6 @@ import com.aquarium.controller.data.model.DuckDnsRequest
 import com.aquarium.controller.data.model.TelegramRequest
 import com.aquarium.controller.data.model.WifiNetworkInfo
 import com.aquarium.controller.data.model.WifiScanResponse
-import com.aquarium.controller.data.prefs.ConnectionPreferences
 import com.aquarium.controller.data.prefs.ConnectionSettings
 import com.aquarium.controller.repository.AquariumRepository
 import com.squareup.moshi.Moshi
@@ -51,10 +50,6 @@ data class ProvisionUiState(
     val telegramChatId: String = "",
     val duckDnsDomain: String = "",
     val duckDnsToken: String = "",
-    /** Device ID fetched from the ESP after provisioning (12-char hex MAC). */
-    val deviceId: String = "",
-    /** Whether the user wants to enable zero-config MQTT remote access. */
-    val mqttEnabled: Boolean = false,
     val servicesSaving: Boolean = false,
     val navigateToLogin: Boolean = false,
     /** Manual IP entered by the user as fallback when mDNS doesn't work. */
@@ -64,7 +59,6 @@ data class ProvisionUiState(
 @HiltViewModel
 class ProvisionViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val connectionPrefs: ConnectionPreferences,
     private val repository: AquariumRepository,
     private val moshi: Moshi
 ) : ViewModel() {
@@ -259,11 +253,9 @@ class ProvisionViewModel @Inject constructor(
                     )
                     repository.saveConnectionSettings(settings)
                 }
-                val deviceId = fetchDeviceId(effectiveHost)
                 _uiState.value = _uiState.value.copy(
                     step     = ProvisionStep.SERVICES,
-                    isLoading = false,
-                    deviceId = deviceId
+                    isLoading = false
                 )
             } else {
                 _uiState.value = _uiState.value.copy(
@@ -274,40 +266,12 @@ class ProvisionViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Attempt to read the device ID from the ESP's /api/remote endpoint.
-     *
-     * @param host fully-qualified host string, e.g. "aquarium.local" or "192.168.1.100"
-     */
-    private suspend fun fetchDeviceId(host: String): String = withContext(Dispatchers.IO) {
-        listOf("http://$host/api/remote", "https://$host/api/remote").forEach { url ->
-            try {
-                val checkClient = OkHttpClient.Builder()
-                    .connectTimeout(5, TimeUnit.SECONDS)
-                    .readTimeout(5, TimeUnit.SECONDS)
-                    .hostnameVerifier { _, _ -> true }
-                    .build()
-                val resp = checkClient.newCall(
-                    Request.Builder().url(url).get().build()
-                ).execute()
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: return@withContext ""
-                    val match = Regex(""""device_id"\s*:\s*"([a-fA-F0-9]{12})"""").find(body)
-                    val id = match?.groupValues?.getOrNull(1) ?: ""
-                    if (id.isNotBlank()) return@withContext id
-                }
-            } catch (_: Exception) {}
-        }
-        ""
-    }
-
     // ── Step 5: quick-setup optional services ─────────────────────────
 
     fun updateTelegramToken(t: String) { _uiState.value = _uiState.value.copy(telegramToken = t) }
     fun updateTelegramChatId(c: String) { _uiState.value = _uiState.value.copy(telegramChatId = c) }
     fun updateDuckDnsDomain(d: String) { _uiState.value = _uiState.value.copy(duckDnsDomain = d) }
     fun updateDuckDnsToken(t: String) { _uiState.value = _uiState.value.copy(duckDnsToken = t) }
-    fun updateMqttEnabled(enabled: Boolean) { _uiState.value = _uiState.value.copy(mqttEnabled = enabled) }
 
     /**
      * Login with the default credentials, apply Telegram and/or DuckDNS
@@ -343,14 +307,6 @@ class ProvisionViewModel @Inject constructor(
                         )
                     )
                 }
-            }
-            // Persist device ID and MQTT enabled preference
-            if (state.deviceId.isNotBlank()) {
-                connectionPrefs.saveDeviceId(state.deviceId)
-            }
-            connectionPrefs.saveMqttEnabled(state.mqttEnabled)
-            if (state.mqttEnabled && state.deviceId.isNotBlank()) {
-                repository.mqttRemoteManager.connect(state.deviceId)
             }
             _uiState.value = _uiState.value.copy(servicesSaving = false, navigateToLogin = true)
         }

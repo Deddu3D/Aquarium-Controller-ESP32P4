@@ -43,24 +43,6 @@ fun HomeScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    // Show remote-mode badge when using MQTT
-                    if (uiState is HomeUiState.Success &&
-                        (uiState as HomeUiState.Success).isRemote) {
-                        AssistChip(
-                            onClick = {},
-                            label = {
-                                Text("Remoto", style = MaterialTheme.typography.labelSmall)
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.CloudQueue,
-                                    contentDescription = "Modalità remota MQTT",
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            },
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
                     IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
@@ -129,17 +111,12 @@ fun HomeScreen(
                 }
             }
             is HomeUiState.Success -> {
-                // Temperature source: MQTT data in remote mode, WebSocket otherwise
                 val displayTemp = when {
-                    state.isRemote -> "%.1f°C".format(state.health.tempC)
                     wsStatus.connected -> "%.1f°C".format(wsStatus.tempC)
                     else -> "--°C"
                 }
-                val tempOk = when {
-                    state.isRemote -> state.health.tempC in 22.0..28.0
-                    else -> wsStatus.tempOk
-                }
-                val tempConnected = state.isRemote || wsStatus.connected
+                val tempOk = wsStatus.tempOk
+                val tempConnected = wsStatus.connected
 
                 Column(
                     modifier = Modifier
@@ -181,10 +158,9 @@ fun HomeScreen(
                                            else MaterialTheme.colorScheme.error
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                // Show Cloud icon in remote mode, WiFi otherwise
+                                // Show Wifi icon based on connection status
                                 Icon(
                                     imageVector = when {
-                                        state.isRemote -> Icons.Default.CloudQueue
                                         tempConnected  -> Icons.Default.Wifi
                                         else           -> Icons.Default.WifiOff
                                     },
@@ -208,22 +184,13 @@ fun HomeScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("System Status", style = MaterialTheme.typography.titleMedium)
-                                if (state.isRemote) {
-                                    Text(
-                                        "via MQTT",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
                             }
                             Spacer(Modifier.height(8.dp))
-                            if (!state.isRemote) {
-                                StatusRow("WiFi", state.status.ssid, state.status.connected)
-                                StatusRow("RSSI", "${state.status.rssi} dBm")
-                                StatusRow("IP", state.status.ip)
-                                StatusRow("Partition", state.status.partition)
-                                StatusRow("NTP", if (state.status.ntpOk) "Synced" else "Not synced", state.status.ntpOk)
-                            }
+                            StatusRow("WiFi", state.status.ssid, state.status.connected)
+                            StatusRow("RSSI", "${state.status.rssi} dBm")
+                            StatusRow("IP", state.status.ip)
+                            StatusRow("Partition", state.status.partition)
+                            StatusRow("NTP", if (state.status.ntpOk) "Synced" else "Not synced", state.status.ntpOk)
                             StatusRow("Uptime", formatUptime(state.status.uptimeS))
                             StatusRow("Free Heap", "${state.status.freeHeap / 1024} KB")
                         }
@@ -259,8 +226,7 @@ fun HomeScreen(
                                 Text("Feeding Mode", style = MaterialTheme.typography.titleMedium)
                                 if (state.feeding.active) {
                                     Text(
-                                        if (state.isRemote) "Active"
-                                        else "Active - ${state.feeding.remainingS}s remaining",
+                                        "Active - ${state.feeding.remainingS}s remaining",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.secondary
                                     )

@@ -17,7 +17,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.aquarium.controller.data.model.DuckDnsRequest
 import com.aquarium.controller.data.model.MdnsRequest
-import com.aquarium.controller.data.model.RemoteResponse
 import com.aquarium.controller.data.model.TelegramRequest
 import com.aquarium.controller.ui.nav.Screen
 
@@ -102,8 +101,6 @@ fun SettingsScreen(
 
             is SettingsUiState.Success -> {
                 val data = state.data
-                val connSettings by viewModel.connectionSettings.collectAsState()
-                val mqttConnected by viewModel.mqttConnected.collectAsState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -112,17 +109,6 @@ fun SettingsScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Remote Access section
-                    RemoteAccessSection(
-                        remote = data.remote,
-                        deviceId = connSettings.deviceId,
-                        mqttEnabled = connSettings.mqttEnabled,
-                        mqttConnected = mqttConnected,
-                        onToggleMqtt = { viewModel.setMqttEnabled(it) }
-                    )
-
-                    HorizontalDivider()
-
                     // Telegram section
                     TelegramSection(
                         telegram = data.telegram,
@@ -483,65 +469,3 @@ private fun AuthSection(onChangeAuth: (String, String) -> Unit) {
     }
 }
 
-@Composable
-private fun RemoteAccessSection(
-    remote: RemoteResponse?,
-    deviceId: String,
-    mqttEnabled: Boolean,
-    mqttConnected: Boolean,
-    onToggleMqtt: (Boolean) -> Unit
-) {
-    Column {
-        Text("Remote Access (MQTT)", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-
-        val displayDeviceId = remote?.deviceId?.takeIf { it.isNotBlank() }
-            ?: deviceId.takeIf { it.isNotBlank() }
-        if (displayDeviceId != null) {
-            OutlinedTextField(
-                value = displayDeviceId,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Device ID") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                supportingText = { Text("Unique ID for remote pairing – no router config needed") }
-            )
-            Spacer(Modifier.height(4.dp))
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Enable zero-config remote access", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (mqttEnabled && mqttConnected) "MQTT: connected"
-                    else if (mqttEnabled) "MQTT: connecting…"
-                    else "MQTT: disabled",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (mqttEnabled && mqttConnected)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = mqttEnabled,
-                onCheckedChange = onToggleMqtt,
-                enabled = displayDeviceId != null
-            )
-        }
-
-        if (remote?.enabled == false) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Remote relay is disabled in firmware (CONFIG_REMOTE_RELAY_ENABLE=n).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
-        }
-    }
-}

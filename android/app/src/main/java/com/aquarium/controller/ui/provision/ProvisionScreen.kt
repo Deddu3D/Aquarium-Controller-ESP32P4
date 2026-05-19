@@ -112,14 +112,11 @@ fun ProvisionScreen(
                     telegramChatId = uiState.telegramChatId,
                     duckDnsDomain = uiState.duckDnsDomain,
                     duckDnsToken = uiState.duckDnsToken,
-                    deviceId = uiState.deviceId,
-                    mqttEnabled = uiState.mqttEnabled,
                     isSaving = uiState.servicesSaving,
                     onTelegramTokenChange = { viewModel.updateTelegramToken(it) },
                     onTelegramChatIdChange = { viewModel.updateTelegramChatId(it) },
                     onDuckDnsDomainChange = { viewModel.updateDuckDnsDomain(it) },
                     onDuckDnsTokenChange = { viewModel.updateDuckDnsToken(it) },
-                    onMqttEnabledChange = { viewModel.updateMqttEnabled(it) },
                     onSave = { viewModel.saveServicesAndFinish() },
                     onSkip = { viewModel.skipServices() }
                 )
@@ -526,14 +523,11 @@ private fun ServicesStep(
     telegramChatId: String,
     duckDnsDomain: String,
     duckDnsToken: String,
-    deviceId: String,
-    mqttEnabled: Boolean,
     isSaving: Boolean,
     onTelegramTokenChange: (String) -> Unit,
     onTelegramChatIdChange: (String) -> Unit,
     onDuckDnsDomainChange: (String) -> Unit,
     onDuckDnsTokenChange: (String) -> Unit,
-    onMqttEnabledChange: (Boolean) -> Unit,
     onSave: () -> Unit,
     onSkip: () -> Unit
 ) {
@@ -551,56 +545,6 @@ private fun ServicesStep(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-
-        // ── Remote Access (MQTT) ──────────────────────────────────────
-        HorizontalDivider()
-        Text("Accesso Remoto", style = MaterialTheme.typography.titleMedium)
-        if (deviceId.isNotBlank()) {
-            Text(
-                "Device ID del controller (salvalo per accedere da remoto):",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            OutlinedTextField(
-                value = deviceId,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Device ID") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                trailingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Wifi,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            )
-        } else {
-            Text(
-                "Device ID non disponibile – assicurati che il controller sia raggiungibile.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Abilita accesso remoto MQTT", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Raggiunge il controller da qualsiasi rete senza configurare il router.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = mqttEnabled,
-                onCheckedChange = onMqttEnabledChange,
-                enabled = deviceId.isNotBlank()
-            )
-        }
 
         HorizontalDivider()
 
