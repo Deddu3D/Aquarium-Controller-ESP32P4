@@ -26,6 +26,7 @@
 #include "nvs.h"
 #include "wifi_manager.h"
 #include "mdns.h"
+#include "esp_system.h"
 
 /* ── Configuration ───────────────────────────────────────────────── */
 
@@ -76,10 +77,8 @@ static uint32_t           s_backoff_ms;
 static httpd_handle_t     s_portal_server  = NULL;
 static esp_timer_handle_t s_reconnect_timer = NULL;
 
-/* Deferred provisioning: store pending credentials so the HTTP response
- * can be sent before the WiFi mode is switched (which kills the AP). */
-static char               s_prov_ssid[WIFI_SSID_MAX];
-static char               s_prov_password[WIFI_PASSWORD_MAX];
+/* Deferred provisioning timer: fires after the HTTP response is delivered
+ * and calls esp_restart() to reconnect with new credentials from NVS. */
 static esp_timer_handle_t s_prov_timer = NULL;
 
 /* Stored credentials (loaded from NVS, falling back to Kconfig) */
@@ -236,7 +235,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 /* ── JSON helper for portal API handlers ─────────────────────────── */
 
-/* Maximum number of WiFi networks returned by the scan endpoint */
+/* Delay between sending the provisioning response and calling esp_restart().
+ * 500 ms is enough for TCP to deliver the HTTP reply to the client. */
+#define PROV_RESTART_DELAY_US  500000ULL
 #define MAX_SCAN_NETWORKS      24
 /* Response buffer for the scan JSON (24 networks × ~80 chars each) */
 #define SCAN_RESPONSE_BUF_SIZE 2048
@@ -334,11 +335,22 @@ static esp_err_t portal_scan_handler(httpd_req_t *req)
 
 /* ── Portal: provision endpoint (POST /api/provision) ───────────── */
 
-/** Timer callback: apply credentials after the HTTP response is sent. */
+/** Timer callback: restart the device after credentials have been saved.
+ *
+ * We restart instead of performing a live APSTA→STA transition because:
+ *  - The live switch involves blocking calls (httpd_stop, esp_wifi_stop,
+ *    esp_wifi_set_mode …) inside the ESP_TIMER_TASK, which has a small
+ *    stack (~3 KB) and must not block.
+ *  - On ESP32-P4 with esp_hosted (SDIO), the transition can race with
+ *    the C6 coprocessor, causing ESP_ERROR_CHECK failures → abort.
+ *  - Credentials are already persisted to NVS before this timer fires,
+ *    so the device reconnects to the new network on the next boot.
+ */
 static void prov_apply_cb(void *arg)
 {
     (void)arg;
-    wifi_manager_set_credentials(s_prov_ssid, s_prov_password);
+    ESP_LOGI(TAG, "Provisioning complete – restarting to connect to new network …");
+    esp_restart();
 }
 
 static esp_err_t portal_provision_handler(httpd_req_t *req)
@@ -368,24 +380,34 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
             "{\"status\":\"error\",\"msg\":\"ssid required\"}", -1);
     }
 
+    ESP_LOGI(TAG, "Provision: SSID='%s'  mDNS='%s'", new_ssid, new_mdns);
+
+    /* Persist credentials to NVS BEFORE sending the response so they are
+     * guaranteed to survive the imminent restart even if the TCP connection
+     * drops immediately after we send the reply. */
+    esp_err_t save_err = nvs_save_credentials(new_ssid, new_password);
+    if (save_err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS save failed: %s", esp_err_to_name(save_err));
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req,
+            "{\"status\":\"error\",\"msg\":\"storage error\"}", -1);
+    }
+
     if (new_mdns[0] != '\0') {
         wifi_manager_set_mdns_hostname(new_mdns);
     }
-
-    ESP_LOGI(TAG, "Provision: SSID='%s'  mDNS='%s'", new_ssid, new_mdns);
-
-    /* Send the success response BEFORE switching WiFi mode, because
-     * wifi_manager_set_credentials() stops the AP which drops the link.
-     * We use a deferred timer (500 ms) so TCP has time to deliver the reply. */
-    strncpy(s_prov_ssid,     new_ssid,     sizeof(s_prov_ssid)     - 1);
-    strncpy(s_prov_password, new_password, sizeof(s_prov_password) - 1);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     esp_err_t send_err = httpd_resp_send(req, "{\"status\":\"ok\"}", -1);
 
+    /* Schedule a restart (500 ms) so TCP has time to deliver the reply.
+     * prov_apply_cb will call esp_restart(); no WiFi mode switch is needed
+     * because the device simply reboots and reconnects via the new credentials
+     * it just saved to NVS. */
     if (s_prov_timer != NULL) {
-        esp_timer_start_once(s_prov_timer, 500000ULL); /* 500 ms */
+        esp_timer_start_once(s_prov_timer, PROV_RESTART_DELAY_US);
     }
 
     return send_err;
@@ -517,14 +539,23 @@ static esp_err_t portal_save_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Portal: saving credentials for SSID '%s'", new_ssid);
 
-    /* Save and reconnect */
-    esp_err_t err = wifi_manager_set_credentials(new_ssid, new_password);
-    if (err == ESP_OK) {
-        httpd_resp_send(req,
-            "OK: Credenziali salvate. Riconnessione in corso... (5s)", -1);
-    } else {
+    /* Save credentials to NVS.  Do NOT call wifi_manager_set_credentials()
+     * here: that function calls httpd_stop() which would deadlock because we
+     * are currently running inside the very HTTP handler of that server. */
+    esp_err_t err = nvs_save_credentials(new_ssid, new_password);
+    if (err != ESP_OK) {
         httpd_resp_send(req, "ERR: salvataggio fallito", -1);
+        return ESP_OK;
     }
+
+    /* Send the response, then schedule a restart so TCP can deliver it. */
+    httpd_resp_send(req,
+        "OK: Credenziali salvate. Il controller si riavvierà e si connetterà...", -1);
+
+    if (s_prov_timer != NULL) {
+        esp_timer_start_once(s_prov_timer, PROV_RESTART_DELAY_US);
+    }
+
     return ESP_OK;
 }
 
@@ -547,9 +578,22 @@ static esp_err_t start_sta_mode(void)
         wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     }
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_err_t err;
+    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_mode(STA) failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_config(STA) failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_start() failed: %s", esp_err_to_name(err));
+        return err;
+    }
     return ESP_OK;
 }
 
