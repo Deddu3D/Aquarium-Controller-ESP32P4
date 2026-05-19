@@ -46,7 +46,6 @@
 #include "feeding_mode.h"
 #include "daily_cycle.h"
 #include "event_log.h"
-#include "remote_relay.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -298,17 +297,6 @@ void app_main(void)
         ESP_LOGI(TAG, "DuckDNS client ready");
     }
 
-    /* ── 9b. Initialise MQTT zero-config remote relay ─────────────── */
-    esp_task_wdt_reset();
-    ret = remote_relay_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Remote relay init failed (0x%x) – continuing without remote access", ret);
-    } else {
-        char dev_id[REMOTE_RELAY_DEVICE_ID_LEN];
-        remote_relay_get_device_id(dev_id, sizeof(dev_id));
-        ESP_LOGI(TAG, "Remote relay ready – device ID: %s", dev_id);
-    }
-
     /* ── 10. Start HTTP status server ─────────────────────────────── */
     bool web_server_running = false;
     if (wifi_manager_is_connected()) {
@@ -358,7 +346,6 @@ void app_main(void)
     int64_t t_co2        = 0;   /* CO2 valve:     60 s */
     int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
     int64_t t_daily      = 0;   /* Daily cycle:   60 s */
-    int64_t t_mqtt_pub   = 0;   /* MQTT status:   30 s */
 
 #define TICK_INTERVAL_US(sec)  ((int64_t)(sec) * 1000000LL)
 #define SINCE(t)               (esp_timer_get_time() - (t))
@@ -410,12 +397,6 @@ void app_main(void)
         if (SINCE(t_daily) >= TICK_INTERVAL_US(60)) {
             daily_cycle_tick();
             t_daily = now;
-        }
-
-        /* MQTT periodic status: 30 s – keeps the app updated even when idle */
-        if (SINCE(t_mqtt_pub) >= TICK_INTERVAL_US(30)) {
-            remote_relay_publish_status();
-            t_mqtt_pub = now;
         }
 
         esp_task_wdt_reset();

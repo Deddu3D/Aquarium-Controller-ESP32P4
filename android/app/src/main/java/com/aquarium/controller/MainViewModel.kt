@@ -10,10 +10,8 @@ import javax.inject.Inject
 /**
  * Application-scoped ViewModel attached to MainActivity.
  *
- * Restores persisted connection settings (host, MQTT enabled/deviceId) as
- * soon as the app process starts so that:
- *   – The correct base URL is used for all HTTP calls.
- *   – The MQTT remote relay reconnects automatically if it was enabled.
+ * Restores persisted connection settings (host, port, HTTPS) as soon as
+ * the app process starts so that the correct base URL is used for all HTTP calls.
  */
 @HiltViewModel
 class MainViewModel @Inject constructor(

@@ -133,9 +133,6 @@ interface AquariumApi {
     @POST("api/mdns")
     suspend fun postMdns(@Body request: MdnsRequest): Response<OkResponse>
 
-    @GET("api/remote")
-    suspend fun getRemote(): Response<RemoteResponse>
-
     @POST("api/factory_reset")
     suspend fun factoryReset(): Response<OkResponse>
 
