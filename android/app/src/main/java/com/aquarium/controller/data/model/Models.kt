@@ -347,7 +347,7 @@ data class MdnsResponse(val hostname: String = "", val enabled: Boolean = true)
 data class MdnsRequest(val hostname: String? = null, val enabled: Boolean? = null)
 
 @JsonClass(generateAdapter = true)
-data class OkResponse(val ok: Boolean)
+data class OkResponse(val ok: Boolean = false)
 
 /* ── Provisioning (AP wizard) ────────────────────────────────────── */
 
