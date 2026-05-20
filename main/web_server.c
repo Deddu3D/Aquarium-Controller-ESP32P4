@@ -848,8 +848,8 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
         }
     }
 
-    /* Respond with updated state */
-    return api_leds_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── LED Schedule status endpoint (/api/led_schedule  GET) ────────── */
@@ -955,7 +955,8 @@ static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
 
     led_schedule_set_config(&cfg);
 
-    return api_led_schedule_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── LED Presets GET endpoint (/api/led_presets  GET) ────────────── */
@@ -1124,7 +1125,8 @@ static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    return api_led_presets_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 
@@ -1355,7 +1357,8 @@ static esp_err_t api_telegram_post_handler(httpd_req_t *req)
 
     telegram_notify_set_config(&cfg);
 
-    return api_telegram_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Telegram test endpoint (/api/telegram_test  POST) ───────────── */
@@ -1530,7 +1533,8 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     }
 
     /* Respond with full relay state */
-    return api_relays_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── DuckDNS GET endpoint (/api/duckdns  GET) ───────────────────── */
@@ -1597,7 +1601,8 @@ static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
 
     duckdns_set_config(&cfg);
 
-    return api_duckdns_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── DuckDNS update now endpoint (/api/duckdns_update  POST) ─────── */
@@ -1682,7 +1687,8 @@ static esp_err_t api_heater_post_handler(httpd_req_t *req)
 
     auto_heater_set_config(&cfg);
 
-    return api_heater_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── OTA update endpoints ────────────────────────────────────────── */
@@ -1897,7 +1903,8 @@ static esp_err_t api_co2_post_handler(httpd_req_t *req)
 
     co2_controller_set_config(&cfg);
 
-    return api_co2_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Timezone GET endpoint (/api/timezone  GET) ──────────────────── */
@@ -1944,7 +1951,8 @@ static esp_err_t api_timezone_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    return api_timezone_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Feeding mode GET endpoint (/api/feeding  GET) ───────────────── */
@@ -2019,7 +2027,8 @@ static esp_err_t api_feeding_post_handler(httpd_req_t *req)
         feeding_mode_set_config(&cfg);
     }
 
-    return api_feeding_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── LED Scene GET endpoint (/api/scene  GET) ────────────────────── */
@@ -2109,7 +2118,8 @@ static esp_err_t api_scene_post_handler(httpd_req_t *req)
         led_scenes_start((led_scene_t)start_scene);
     }
 
-    return api_scene_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Daily Cycle GET endpoint (/api/daily_cycle  GET) ────────────── */
@@ -2177,7 +2187,8 @@ static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    return api_daily_cycle_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── WebSocket push server (/ws) ─────────────────────────────────── */
@@ -2723,9 +2734,10 @@ static esp_err_t api_mdns_get_handler(httpd_req_t *req)
     char escaped[WIFI_MDNS_HOST_MAX * 2];
     json_escape(host, escaped, sizeof(escaped));
 
-    char buf[128];
+    /* 192: hostname escaped (max 63*2=126) + JSON structure + "enabled":true */
+    char buf[192];
     int len = snprintf(buf, sizeof(buf),
-        "{\"hostname\":\"%s\",\"fqdn\":\"%s.local\"}", escaped, escaped);
+        "{\"hostname\":\"%s\",\"enabled\":true,\"fqdn\":\"%s.local\"}", escaped, escaped);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
@@ -2763,7 +2775,8 @@ static esp_err_t api_mdns_post_handler(httpd_req_t *req)
     }
 
     event_log_add(EVT_SYSTEM, "mDNS hostname changed");
-    return api_mdns_get_handler(req);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Factory reset endpoint (/api/factory_reset  POST) ──────────── */
