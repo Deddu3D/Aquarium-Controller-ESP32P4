@@ -2734,6 +2734,7 @@ static esp_err_t api_mdns_get_handler(httpd_req_t *req)
     char escaped[WIFI_MDNS_HOST_MAX * 2];
     json_escape(host, escaped, sizeof(escaped));
 
+    /* 192: hostname escaped (max 63*2=126) + JSON structure + "enabled":true */
     char buf[192];
     int len = snprintf(buf, sizeof(buf),
         "{\"hostname\":\"%s\",\"enabled\":true,\"fqdn\":\"%s.local\"}", escaped, escaped);
