@@ -82,7 +82,7 @@ class TempViewModel @Inject constructor(
         viewModelScope.launch {
             repository.exportTemperatureCsv().fold(
                 onSuccess = { body ->
-                    _exportData.value = body.string()
+                    body.use { _exportData.value = it.string() }
                     _snackbarMessage.value = "CSV ready"
                 },
                 onFailure = { _snackbarMessage.value = "Export failed: ${it.message}" }

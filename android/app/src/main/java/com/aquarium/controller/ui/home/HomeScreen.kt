@@ -64,19 +64,37 @@ fun HomeScreen(
                 )
                 NavigationBarItem(
                     selected = false,
-                    onClick = { navController.navigate(Screen.Leds.route) },
+                    onClick = {
+                        navController.navigate(Screen.Leds.route) {
+                            popUpTo(Screen.Home.createRoute()) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     icon = { Icon(Icons.Default.Lightbulb, contentDescription = null) },
                     label = { Text("LEDs") }
                 )
                 NavigationBarItem(
                     selected = false,
-                    onClick = { navController.navigate(Screen.Temperature.route) },
+                    onClick = {
+                        navController.navigate(Screen.Temperature.route) {
+                            popUpTo(Screen.Home.createRoute()) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     icon = { Icon(Icons.Default.Thermostat, contentDescription = null) },
                     label = { Text("Temp") }
                 )
                 NavigationBarItem(
                     selected = false,
-                    onClick = { navController.navigate(Screen.Automations.route) },
+                    onClick = {
+                        navController.navigate(Screen.Automations.route) {
+                            popUpTo(Screen.Home.createRoute()) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     icon = { Icon(Icons.Default.AutoMode, contentDescription = null) },
                     label = { Text("Auto") }
                 )

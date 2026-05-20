@@ -142,14 +142,21 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private val _configExportData = MutableStateFlow<ByteArray?>(null)
+    val configExportData: StateFlow<ByteArray?> = _configExportData.asStateFlow()
+
     fun exportConfig() {
         viewModelScope.launch {
             repository.exportConfig().fold(
-                onSuccess = { _snackbarMessage.value = "Config exported" },
+                onSuccess = { body ->
+                    _configExportData.value = body.use { it.bytes() }
+                },
                 onFailure = { _snackbarMessage.value = "Export failed: ${it.message}" }
             )
         }
     }
+
+    fun clearExportConfig() { _configExportData.value = null }
 
     fun factoryReset() {
         viewModelScope.launch {

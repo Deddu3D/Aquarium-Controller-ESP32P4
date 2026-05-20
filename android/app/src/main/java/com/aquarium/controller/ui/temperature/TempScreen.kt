@@ -1,5 +1,6 @@
 package com.aquarium.controller.ui.temperature
 
+import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -16,15 +17,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.aquarium.controller.data.model.HeaterRequest
 import com.aquarium.controller.data.model.TempSample
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -39,6 +43,31 @@ fun TempScreen(
     val wsStatus by viewModel.wsStatus.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val snackMsg by viewModel.snackbarMessage.collectAsState()
+    val exportData by viewModel.exportData.collectAsState()
+    val context = LocalContext.current
+
+    LaunchedEffect(exportData) {
+        val csv = exportData ?: return@LaunchedEffect
+        try {
+            val file = File(context.cacheDir, "temperature_history.csv")
+            file.writeText(csv)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Export CSV"))
+        } catch (_: Exception) {
+            snackbarHostState.showSnackbar("Export failed")
+        } finally {
+            viewModel.clearExportData()
+        }
+    }
 
     LaunchedEffect(snackMsg) {
         snackMsg?.let {

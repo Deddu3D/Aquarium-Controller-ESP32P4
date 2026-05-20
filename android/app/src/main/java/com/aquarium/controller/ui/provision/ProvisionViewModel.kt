@@ -318,4 +318,10 @@ class ProvisionViewModel @Inject constructor(
 
     fun clearError() { _uiState.value = _uiState.value.copy(error = null) }
     fun clearNavigation() { _uiState.value = _uiState.value.copy(navigateToLogin = false) }
+
+    override fun onCleared() {
+        super.onCleared()
+        apClient.dispatcher.executorService.shutdown()
+        apClient.connectionPool.evictAll()
+    }
 }
