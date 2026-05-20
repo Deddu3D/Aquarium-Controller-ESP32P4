@@ -1532,7 +1532,6 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
         relay_controller_set_schedule(idx, slot, &sched);
     }
 
-    /* Respond with full relay state */
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
