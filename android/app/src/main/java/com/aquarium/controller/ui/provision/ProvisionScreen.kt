@@ -368,7 +368,7 @@ private fun NetworkItem(
     val rssiIcon = when {
         network.rssi >= -50 -> Icons.Default.SignalWifi4Bar
         network.rssi >= -70 -> Icons.Default.NetworkWifi
-        else                -> Icons.Default.SignalWifi1Bar
+        else                -> Icons.Default.SignalWifiOff
     }
     ListItem(
         headlineContent = { Text(network.ssid) },
