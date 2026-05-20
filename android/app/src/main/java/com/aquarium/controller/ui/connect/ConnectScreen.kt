@@ -27,16 +27,6 @@ fun ConnectScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Auto-redirect to provisioning wizard when no host is saved
-    LaunchedEffect(uiState.navigateToProvision) {
-        if (uiState.navigateToProvision) {
-            viewModel.clearNavigation()
-            navController.navigate(Screen.Provision.route) {
-                popUpTo(Screen.Connect.route) { inclusive = true }
-            }
-        }
-    }
-
     LaunchedEffect(uiState.navigateToLogin) {
         if (uiState.navigateToLogin) {
             viewModel.clearNavigation()
