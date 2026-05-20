@@ -60,7 +60,7 @@ data class LedRequest(
 
 @JsonClass(generateAdapter = true)
 data class LedScheduleResponse(
-    val enabled: Boolean,
+    val enabled: Boolean = false,
     @Json(name = "on_hour") val onHour: Int,
     @Json(name = "on_minute") val onMinute: Int,
     @Json(name = "ramp_duration_min") val rampDurationMin: Int,
@@ -169,7 +169,7 @@ data class TemperatureHistoryResponse(
 
 @JsonClass(generateAdapter = true)
 data class RelaySchedule(
-    val enabled: Boolean,
+    val enabled: Boolean = false,
     @Json(name = "on_min") val onMin: Int,
     @Json(name = "off_min") val offMin: Int
 )
@@ -193,7 +193,7 @@ data class RelayNameRequest(val index: Int, val name: String)
 
 @JsonClass(generateAdapter = true)
 data class HeaterResponse(
-    val enabled: Boolean,
+    val enabled: Boolean = false,
     @Json(name = "relay_index") val relayIndex: Int,
     @Json(name = "target_temp_c") val targetTempC: Double,
     @Json(name = "hysteresis_c") val hysteresisC: Double,
@@ -213,7 +213,7 @@ data class HeaterRequest(
 
 @JsonClass(generateAdapter = true)
 data class Co2Response(
-    val enabled: Boolean,
+    val enabled: Boolean = false,
     @Json(name = "relay_index") val relayIndex: Int,
     @Json(name = "pre_on_min") val preOnMin: Int,
     @Json(name = "post_off_min") val postOffMin: Int
@@ -248,21 +248,21 @@ data class FeedingRequest(
 
 @JsonClass(generateAdapter = true)
 data class TelegramResponse(
-    @Json(name = "bot_token_set") val botTokenSet: Boolean,
-    @Json(name = "chat_id") val chatId: String,
-    val enabled: Boolean,
-    @Json(name = "temp_alarm_enabled") val tempAlarmEnabled: Boolean,
-    @Json(name = "temp_high_c") val tempHighC: Double,
-    @Json(name = "temp_low_c") val tempLowC: Double,
-    @Json(name = "water_change_enabled") val waterChangeEnabled: Boolean,
-    @Json(name = "water_change_days") val waterChangeDays: Int,
-    @Json(name = "fertilizer_enabled") val fertilizerEnabled: Boolean,
-    @Json(name = "fertilizer_days") val fertilizerDays: Int,
-    @Json(name = "daily_summary_enabled") val dailySummaryEnabled: Boolean,
-    @Json(name = "daily_summary_hour") val dailySummaryHour: Int,
-    @Json(name = "relay_notify_enabled") val relayNotifyEnabled: Boolean,
-    @Json(name = "last_water_change") val lastWaterChange: Long,
-    @Json(name = "last_fertilizer") val lastFertilizer: Long
+    @Json(name = "bot_token_set") val botTokenSet: Boolean = false,
+    @Json(name = "chat_id") val chatId: String = "",
+    val enabled: Boolean = false,
+    @Json(name = "temp_alarm_enabled") val tempAlarmEnabled: Boolean = false,
+    @Json(name = "temp_high_c") val tempHighC: Double = 28.0,
+    @Json(name = "temp_low_c") val tempLowC: Double = 24.0,
+    @Json(name = "water_change_enabled") val waterChangeEnabled: Boolean = false,
+    @Json(name = "water_change_days") val waterChangeDays: Int = 30,
+    @Json(name = "fertilizer_enabled") val fertilizerEnabled: Boolean = false,
+    @Json(name = "fertilizer_days") val fertilizerDays: Int = 14,
+    @Json(name = "daily_summary_enabled") val dailySummaryEnabled: Boolean = false,
+    @Json(name = "daily_summary_hour") val dailySummaryHour: Int = 8,
+    @Json(name = "relay_notify_enabled") val relayNotifyEnabled: Boolean = false,
+    @Json(name = "last_water_change") val lastWaterChange: Long = 0,
+    @Json(name = "last_fertilizer") val lastFertilizer: Long = 0
 )
 
 @JsonClass(generateAdapter = true)
@@ -284,10 +284,10 @@ data class TelegramRequest(
 
 @JsonClass(generateAdapter = true)
 data class DuckDnsResponse(
-    val domain: String,
-    @Json(name = "token_set") val tokenSet: Boolean,
-    val enabled: Boolean,
-    @Json(name = "last_status") val lastStatus: String
+    val domain: String = "",
+    @Json(name = "token_set") val tokenSet: Boolean = false,
+    val enabled: Boolean = false,
+    @Json(name = "last_status") val lastStatus: String = ""
 )
 
 @JsonClass(generateAdapter = true)
@@ -305,7 +305,7 @@ data class TimezoneRequest(val tz: String)
 
 @JsonClass(generateAdapter = true)
 data class DailyCycleResponse(
-    val enabled: Boolean,
+    val enabled: Boolean = false,
     val latitude: Double,
     val longitude: Double,
     val phase: Int,
@@ -340,7 +340,8 @@ data class OtaRequest(val url: String)
 data class OtaStatusResponse(val status: String, val progress: Int, val error: String)
 
 @JsonClass(generateAdapter = true)
-data class MdnsResponse(val hostname: String, val enabled: Boolean)
+// enabled defaults to true because the firmware always returns "enabled":true (mDNS cannot be disabled via API)
+data class MdnsResponse(val hostname: String = "", val enabled: Boolean = true)
 
 @JsonClass(generateAdapter = true)
 data class MdnsRequest(val hostname: String? = null, val enabled: Boolean? = null)

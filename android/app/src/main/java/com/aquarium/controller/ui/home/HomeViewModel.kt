@@ -76,40 +76,96 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    // Refreshes data silently without replacing the current Success state with Loading.
+    private fun silentRefresh() {
+        viewModelScope.launch {
+            val statusResult  = repository.getStatus()
+            val healthResult  = repository.getHealth()
+            val relaysResult  = repository.getRelays()
+            val feedingResult = repository.getFeeding()
+            val ledsResult    = repository.getLeds()
+
+            if (statusResult.isSuccess && healthResult.isSuccess &&
+                relaysResult.isSuccess && feedingResult.isSuccess && ledsResult.isSuccess) {
+                _uiState.value = HomeUiState.Success(
+                    status  = statusResult.getOrThrow(),
+                    health  = healthResult.getOrThrow(),
+                    relays  = relaysResult.getOrThrow(),
+                    feeding = feedingResult.getOrThrow(),
+                    leds    = ledsResult.getOrThrow()
+                )
+            }
+            // On failure during a silent refresh keep the current (optimistic) state visible.
+        }
+    }
+
     // ── Commands ─────────────────────────────────────────────────────────
 
     fun toggleRelay(index: Int, currentOn: Boolean) {
+        val previous = _uiState.value
+        // Optimistic update: flip the relay state immediately so the Switch doesn't snap back.
+        if (previous is HomeUiState.Success) {
+            val updatedRelays = previous.relays.relays.map { relay ->
+                if (relay.index == index) relay.copy(on = !currentOn) else relay
+            }
+            _uiState.value = previous.copy(relays = previous.relays.copy(relays = updatedRelays))
+        }
         viewModelScope.launch {
             repository.toggleRelay(index, !currentOn).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to toggle relay: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed to toggle relay: ${it.message}"
+                }
             )
         }
     }
 
     fun setLedOn(on: Boolean) {
+        val previous = _uiState.value
+        // Optimistic update: flip the LED on/off state immediately.
+        if (previous is HomeUiState.Success) {
+            _uiState.value = previous.copy(leds = previous.leds.copy(on = on))
+        }
         viewModelScope.launch {
             repository.postLeds(LedRequest(on = on)).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to toggle lights: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed to toggle lights: ${it.message}"
+                }
             )
         }
     }
 
     fun startFeeding() {
+        val previous = _uiState.value
+        if (previous is HomeUiState.Success) {
+            _uiState.value = previous.copy(feeding = previous.feeding.copy(active = true))
+        }
         viewModelScope.launch {
             repository.postFeeding(FeedingRequest(action = "start")).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to start feeding: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed to start feeding: ${it.message}"
+                }
             )
         }
     }
 
     fun stopFeeding() {
+        val previous = _uiState.value
+        if (previous is HomeUiState.Success) {
+            _uiState.value = previous.copy(feeding = previous.feeding.copy(active = false, remainingS = 0))
+        }
         viewModelScope.launch {
             repository.postFeeding(FeedingRequest(action = "stop")).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed to stop feeding: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed to stop feeding: ${it.message}"
+                }
             )
         }
     }

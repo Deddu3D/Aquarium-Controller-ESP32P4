@@ -67,11 +67,44 @@ class LedViewModel @Inject constructor(
         }
     }
 
+    // Refreshes data silently without replacing the current Success state with Loading.
+    private fun silentRefresh() {
+        viewModelScope.launch {
+            val ledsResult = repository.getLeds()
+            val scheduleResult = repository.getLedSchedule()
+            val presetsResult = repository.getLedPresets()
+            val sceneResult = repository.getScene()
+            val dailyCycleResult = repository.getDailyCycle()
+
+            if (ledsResult.isSuccess && scheduleResult.isSuccess &&
+                presetsResult.isSuccess && sceneResult.isSuccess && dailyCycleResult.isSuccess) {
+                _uiState.value = LedUiState.Success(
+                    LedUiData(
+                        leds = ledsResult.getOrThrow(),
+                        schedule = scheduleResult.getOrThrow(),
+                        presets = presetsResult.getOrThrow(),
+                        scene = sceneResult.getOrThrow(),
+                        dailyCycle = dailyCycleResult.getOrThrow()
+                    )
+                )
+            }
+            // On failure during a silent refresh keep the current (optimistic) state visible.
+        }
+    }
+
     fun setOn(on: Boolean) {
+        val previous = _uiState.value
+        // Optimistic update: flip the LED on/off state immediately so the Switch doesn't snap back.
+        if (previous is LedUiState.Success) {
+            _uiState.value = previous.copy(data = previous.data.copy(leds = previous.data.leds.copy(on = on)))
+        }
         viewModelScope.launch {
             repository.postLeds(LedRequest(on = on)).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed: ${it.message}"
+                }
             )
         }
     }
@@ -95,10 +128,18 @@ class LedViewModel @Inject constructor(
     }
 
     fun startScene(sceneIndex: Int) {
+        val previous = _uiState.value
+        // Optimistic update: show the selected scene chip as active immediately.
+        if (previous is LedUiState.Success) {
+            _uiState.value = previous.copy(data = previous.data.copy(scene = previous.data.scene.copy(active = sceneIndex)))
+        }
         viewModelScope.launch {
             repository.postScene(sceneIndex).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed: ${it.message}"
+                }
             )
         }
     }
@@ -106,7 +147,7 @@ class LedViewModel @Inject constructor(
     fun savePreset(slot: Int, name: String) {
         viewModelScope.launch {
             repository.postLedPresets(PresetActionRequest("save", slot, name)).fold(
-                onSuccess = { load() },
+                onSuccess = { silentRefresh() },
                 onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
             )
         }
@@ -115,26 +156,46 @@ class LedViewModel @Inject constructor(
     fun loadPreset(slot: Int) {
         viewModelScope.launch {
             repository.postLedPresets(PresetActionRequest("load", slot)).fold(
-                onSuccess = { load() },
+                onSuccess = { silentRefresh() },
                 onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
             )
         }
     }
 
     fun updateSchedule(request: LedScheduleRequest) {
+        val previous = _uiState.value
+        // Optimistic update for the enabled flag so the Schedule Switch doesn't snap back.
+        if (previous is LedUiState.Success && request.enabled != null) {
+            _uiState.value = previous.copy(
+                data = previous.data.copy(schedule = previous.data.schedule.copy(enabled = request.enabled))
+            )
+        }
         viewModelScope.launch {
             repository.postLedSchedule(request).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed: ${it.message}"
+                }
             )
         }
     }
 
     fun setDailyCycleEnabled(enabled: Boolean) {
+        val previous = _uiState.value
+        // Optimistic update: flip the Daily Cycle Switch immediately.
+        if (previous is LedUiState.Success) {
+            _uiState.value = previous.copy(
+                data = previous.data.copy(dailyCycle = previous.data.dailyCycle.copy(enabled = enabled))
+            )
+        }
         viewModelScope.launch {
             repository.postDailyCycle(DailyCycleRequest(enabled = enabled)).fold(
-                onSuccess = { load() },
-                onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
+                onSuccess = { silentRefresh() },
+                onFailure = {
+                    _uiState.value = previous  // revert optimistic update
+                    _snackbarMessage.value = "Failed: ${it.message}"
+                }
             )
         }
     }
