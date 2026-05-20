@@ -9,7 +9,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -190,27 +189,32 @@ fun HomeScreen(
                         }
                     }
 
-                    // Status card
+                    // LED quick control
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("System Status", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Lightbulb,
+                                    contentDescription = null,
+                                    tint = if (state.leds.on) MaterialTheme.colorScheme.secondary
+                                           else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Lights", style = MaterialTheme.typography.titleMedium)
                             }
-                            Spacer(Modifier.height(8.dp))
-                            StatusRow("WiFi", state.status.ssid, state.status.connected)
-                            StatusRow("RSSI", "${state.status.rssi} dBm")
-                            StatusRow("IP", state.status.ip)
-                            StatusRow("Partition", state.status.partition)
-                            StatusRow("NTP", if (state.status.ntpOk) "Synced" else "Not synced", state.status.ntpOk)
-                            StatusRow("Uptime", formatUptime(state.status.uptimeS))
-                            StatusRow("Free Heap", "${state.status.freeHeap / 1024} KB")
+                            Switch(
+                                checked = state.leds.on,
+                                onCheckedChange = { viewModel.setLedOn(it) }
+                            )
                         }
                     }
 
@@ -273,30 +277,6 @@ fun HomeScreen(
 }
 
 @Composable
-private fun StatusRow(label: String, value: String, ok: Boolean? = null) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (ok != null) {
-                Icon(
-                    imageVector = if (ok) Icons.Default.CheckCircle else Icons.Default.Error,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = if (ok) Color(0xFF2ECC71) else MaterialTheme.colorScheme.error
-                )
-                Spacer(Modifier.width(4.dp))
-            }
-            Text(value, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
 private fun RelayToggleRow(relay: RelayInfo, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
@@ -308,11 +288,4 @@ private fun RelayToggleRow(relay: RelayInfo, onToggle: () -> Unit) {
         Text(relay.name.ifBlank { "Relay ${relay.index}" }, style = MaterialTheme.typography.bodyLarge)
         Switch(checked = relay.on, onCheckedChange = { onToggle() })
     }
-}
-
-private fun formatUptime(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    val s = seconds % 60
-    return "%02d:%02d:%02d".format(h, m, s)
 }

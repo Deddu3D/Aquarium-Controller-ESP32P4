@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.aquarium.controller.data.model.FeedingResponse
 import com.aquarium.controller.data.model.FeedingRequest
 import com.aquarium.controller.data.model.HealthResponse
+import com.aquarium.controller.data.model.LedRequest
+import com.aquarium.controller.data.model.LedResponse
 import com.aquarium.controller.data.model.RelaysResponse
 import com.aquarium.controller.data.model.StatusResponse
 import com.aquarium.controller.data.model.WsStatus
@@ -22,7 +24,8 @@ sealed class HomeUiState {
         val status: StatusResponse,
         val health: HealthResponse,
         val relays: RelaysResponse,
-        val feeding: FeedingResponse
+        val feeding: FeedingResponse,
+        val leds: LedResponse
     ) : HomeUiState()
     data class Error(val message: String) : HomeUiState()
 }
@@ -51,20 +54,23 @@ class HomeViewModel @Inject constructor(
             val healthResult  = repository.getHealth()
             val relaysResult  = repository.getRelays()
             val feedingResult = repository.getFeeding()
+            val ledsResult    = repository.getLeds()
 
             if (statusResult.isSuccess && healthResult.isSuccess &&
-                relaysResult.isSuccess && feedingResult.isSuccess) {
+                relaysResult.isSuccess && feedingResult.isSuccess && ledsResult.isSuccess) {
                 _uiState.value = HomeUiState.Success(
                     status  = statusResult.getOrThrow(),
                     health  = healthResult.getOrThrow(),
                     relays  = relaysResult.getOrThrow(),
-                    feeding = feedingResult.getOrThrow()
+                    feeding = feedingResult.getOrThrow(),
+                    leds    = ledsResult.getOrThrow()
                 )
             } else {
                 val err = statusResult.exceptionOrNull()
                     ?: healthResult.exceptionOrNull()
                     ?: relaysResult.exceptionOrNull()
                     ?: feedingResult.exceptionOrNull()
+                    ?: ledsResult.exceptionOrNull()
                 _uiState.value = HomeUiState.Error(err?.message ?: "Unknown error")
             }
         }
@@ -77,6 +83,15 @@ class HomeViewModel @Inject constructor(
             repository.toggleRelay(index, !currentOn).fold(
                 onSuccess = { load() },
                 onFailure = { _snackbarMessage.value = "Failed to toggle relay: ${it.message}" }
+            )
+        }
+    }
+
+    fun setLedOn(on: Boolean) {
+        viewModelScope.launch {
+            repository.postLeds(LedRequest(on = on)).fold(
+                onSuccess = { load() },
+                onFailure = { _snackbarMessage.value = "Failed to toggle lights: ${it.message}" }
             )
         }
     }
