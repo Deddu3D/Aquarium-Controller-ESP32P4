@@ -69,15 +69,6 @@ class ConnectViewModel @Inject constructor(
         val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
         val discovered = mutableListOf<String>()
 
-        val resolveListener = object : NsdManager.ResolveListener {
-            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {}
-            override fun onServiceResolved(info: NsdServiceInfo) {
-                val host = info.host?.hostAddress ?: info.serviceName
-                discovered.add(host)
-                _uiState.value = _uiState.value.copy(discoveredHosts = discovered.toList())
-            }
-        }
-
         val discoveryListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {
@@ -88,7 +79,17 @@ class ConnectViewModel @Inject constructor(
             }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onServiceFound(info: NsdServiceInfo) {
-                try { nsdManager.resolveService(info, resolveListener) } catch (_: Exception) {}
+                try {
+                    // A unique ResolveListener instance is required per resolveService() call
+                    nsdManager.resolveService(info, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(i: NsdServiceInfo, errorCode: Int) {}
+                        override fun onServiceResolved(i: NsdServiceInfo) {
+                            val host = i.host?.hostAddress ?: i.serviceName
+                            discovered.add(host)
+                            _uiState.value = _uiState.value.copy(discoveredHosts = discovered.toList())
+                        }
+                    })
+                } catch (_: Exception) {}
             }
             override fun onServiceLost(info: NsdServiceInfo) {}
         }

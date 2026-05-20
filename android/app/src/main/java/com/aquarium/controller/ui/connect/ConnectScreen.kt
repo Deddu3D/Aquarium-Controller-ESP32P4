@@ -32,7 +32,7 @@ fun ConnectScreen(
         if (uiState.navigateToProvision) {
             viewModel.clearNavigation()
             navController.navigate(Screen.Provision.route) {
-                popUpTo(Screen.Connect.route) { inclusive = false }
+                popUpTo(Screen.Connect.route) { inclusive = true }
             }
         }
     }
@@ -156,7 +156,7 @@ fun ConnectScreen(
                 onClick = { navController.navigate(Screen.Provision.route) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Prima Configurazione / Nuovo dispositivo →")
+                Text("First Setup / New Device →")
             }
 
             if (uiState.discoveredHosts.isNotEmpty()) {

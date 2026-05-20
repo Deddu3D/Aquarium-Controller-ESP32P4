@@ -11,6 +11,7 @@ class SessionCookieJar @Inject constructor() : CookieJar {
 
     private val cookies = mutableListOf<Cookie>()
 
+    @Synchronized
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
         val session = cookies.firstOrNull { it.name == "session" }
         if (session != null) {
@@ -19,11 +20,14 @@ class SessionCookieJar @Inject constructor() : CookieJar {
         }
     }
 
+    @Synchronized
     override fun loadForRequest(url: HttpUrl): List<Cookie> = cookies.toList()
 
+    @Synchronized
     fun clearSession() {
         cookies.clear()
     }
 
+    @Synchronized
     fun hasSession(): Boolean = cookies.any { it.name == "session" }
 }

@@ -107,7 +107,9 @@ class WebSocketManager @Inject constructor(
                         _status.value = newStatus
                         checkTempAlarms(previous.tempC, frame.tempC)
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    android.util.Log.e("WebSocketManager", "onMessage parse error", e)
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
