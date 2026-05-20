@@ -62,7 +62,8 @@ fun TempScreen(
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(Intent.createChooser(intent, "Export CSV"))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("TempScreen", "CSV export failed", e)
             snackbarHostState.showSnackbar("Export failed")
         } finally {
             viewModel.clearExportData()

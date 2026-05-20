@@ -54,7 +54,8 @@ fun SettingsScreen(
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(Intent.createChooser(intent, "Export Config"))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("SettingsScreen", "Config export failed", e)
             snackbarHostState.showSnackbar("Export failed")
         } finally {
             viewModel.clearExportConfig()
