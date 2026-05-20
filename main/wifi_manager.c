@@ -11,6 +11,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -295,17 +296,28 @@ static esp_err_t portal_scan_handler(httpd_req_t *req)
         return httpd_resp_send(req, "{\"networks\":[]}", -1);
     }
 
+    /* Allocate large buffers on the heap to avoid overflowing the httpd
+     * task stack (default ~4 KB).  records[] alone is ~2.3 KB and buf is
+     * 2 KB, which together exceed the stack budget. */
+    wifi_ap_record_t *records = calloc(MAX_SCAN_NETWORKS, sizeof(wifi_ap_record_t));
+    char             *buf     = calloc(1, SCAN_RESPONSE_BUF_SIZE);
+    if (!records || !buf) {
+        free(records);
+        free(buf);
+        ESP_LOGE(TAG, "portal_scan_handler: out of memory");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req, "{\"networks\":[]}", -1);
+    }
+
     uint16_t count = MAX_SCAN_NETWORKS;
-    wifi_ap_record_t records[MAX_SCAN_NETWORKS];
-    memset(records, 0, sizeof(records));
     esp_wifi_scan_get_ap_records(&count, records);
 
     /* Build JSON: {"networks":[{"ssid":"...","rssi":-55,"open":false},...]} */
-    char buf[SCAN_RESPONSE_BUF_SIZE];
     int  pos = 0;
     int  added = 0;
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "{\"networks\":[");
-    for (int i = 0; i < (int)count && pos < (int)(sizeof(buf) - 100); i++) {
+    pos += snprintf(buf + pos, SCAN_RESPONSE_BUF_SIZE - pos, "{\"networks\":[");
+    for (int i = 0; i < (int)count && pos < (int)(SCAN_RESPONSE_BUF_SIZE - 100); i++) {
         if (records[i].ssid[0] == '\0') continue;
         /* Escape SSID: replace \ → \\ and " → \" */
         char ssid_esc[WIFI_SSID_ESC_MAX];
@@ -320,17 +332,20 @@ static esp_err_t portal_scan_handler(httpd_req_t *req)
         }
         ssid_esc[si] = '\0';
         bool is_open = (records[i].authmode == WIFI_AUTH_OPEN);
-        if (added > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-        pos += snprintf(buf + pos, sizeof(buf) - pos,
+        if (added > 0) pos += snprintf(buf + pos, SCAN_RESPONSE_BUF_SIZE - pos, ",");
+        pos += snprintf(buf + pos, SCAN_RESPONSE_BUF_SIZE - pos,
             "{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
             ssid_esc, (int)records[i].rssi, is_open ? "true" : "false");
         added++;
     }
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    pos += snprintf(buf + pos, SCAN_RESPONSE_BUF_SIZE - pos, "]}");
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    return httpd_resp_send(req, buf, pos);
+    esp_err_t ret = httpd_resp_send(req, buf, pos);
+    free(records);
+    free(buf);
+    return ret;
 }
 
 /* ── Portal: provision endpoint (POST /api/provision) ───────────── */
@@ -782,6 +797,7 @@ esp_err_t wifi_manager_start_portal(void)
     httpd_config_t config  = HTTPD_DEFAULT_CONFIG();
     config.server_port     = 80;
     config.max_uri_handlers = 6;
+    config.stack_size      = 6144;   /* default 4096 is too small for scan handler */
 
     if (httpd_start(&s_portal_server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start portal HTTP server");
