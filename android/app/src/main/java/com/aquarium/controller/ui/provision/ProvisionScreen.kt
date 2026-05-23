@@ -35,7 +35,9 @@ fun ProvisionScreen(
     LaunchedEffect(uiState.navigateToLogin) {
         if (uiState.navigateToLogin) {
             viewModel.clearNavigation()
-            navController.navigate(Screen.Login.route) {
+            // After provisioning, navigate to AddDevice so the user can save the DuckDNS domain
+            val domain = uiState.duckDnsDomain
+            navController.navigate(Screen.AddDevice.createRoute(domain)) {
                 popUpTo(Screen.Provision.route) { inclusive = true }
             }
         }

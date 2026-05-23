@@ -2,12 +2,16 @@ package com.aquarium.controller.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aquarium.controller.data.auth.GoogleAuthManager
 import com.aquarium.controller.data.model.*
+import com.aquarium.controller.data.prefs.ConnectionPreferences
 import com.aquarium.controller.repository.AquariumRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -27,7 +31,9 @@ sealed class SettingsUiState {
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val repository: AquariumRepository
+    private val repository: AquariumRepository,
+    private val authManager: GoogleAuthManager,
+    val connectionPrefs: ConnectionPreferences
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.Loading)
@@ -134,12 +140,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun changeAuth(username: String, password: String) {
-        viewModelScope.launch {
-            repository.changeAuth(username, password).fold(
-                onSuccess = { _snackbarMessage.value = "Credentials updated" },
-                onFailure = { _snackbarMessage.value = "Failed: ${it.message}" }
-            )
-        }
+        // Auth removed from ESP - no-op kept for compatibility
     }
 
     private val _configExportData = MutableStateFlow<ByteArray?>(null)
@@ -167,10 +168,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun logout() {
+    fun signOut() {
         viewModelScope.launch {
-            repository.logout()
-            _navigateToConnect.value = true
+            authManager.signOut {
+                viewModelScope.launch {
+                    connectionPrefs.clearGoogleUser()
+                    _navigateToConnect.value = true
+                }
+            }
+        }
+    }
+
+    fun removeDevice(deviceId: String) {
+        viewModelScope.launch {
+            connectionPrefs.removeDevice(deviceId)
         }
     }
 

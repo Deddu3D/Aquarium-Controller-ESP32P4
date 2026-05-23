@@ -19,6 +19,7 @@ import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.aquarium.controller.data.model.DuckDnsRequest
+import com.aquarium.controller.data.model.EspDevice
 import com.aquarium.controller.data.model.MdnsRequest
 import com.aquarium.controller.data.model.TelegramRequest
 import com.aquarium.controller.ui.nav.Screen
@@ -37,6 +38,9 @@ fun SettingsScreen(
     val exportConfigData by viewModel.configExportData.collectAsState()
     var showFactoryResetDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val googleEmail by viewModel.connectionPrefs.googleEmail.collectAsState(initial = null)
+    val googleDisplayName by viewModel.connectionPrefs.googleDisplayName.collectAsState(initial = null)
+    val devices by viewModel.connectionPrefs.devices.collectAsState(initial = emptyList())
 
     LaunchedEffect(exportConfigData) {
         val bytes = exportConfigData ?: return@LaunchedEffect
@@ -65,7 +69,7 @@ fun SettingsScreen(
     LaunchedEffect(navigateToConnect) {
         if (navigateToConnect) {
             viewModel.clearNavigation()
-            navController.navigate(Screen.Connect.route) {
+            navController.navigate(Screen.GoogleSignIn.route) {
                 popUpTo(0) { inclusive = true }
             }
         }
@@ -107,8 +111,8 @@ fun SettingsScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                 actions = {
-                    IconButton(onClick = { viewModel.logout() }) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout")
+                    IconButton(onClick = { viewModel.signOut() }) {
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign Out")
                     }
                 }
             )
@@ -139,6 +143,54 @@ fun SettingsScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Account section
+                    Column {
+                        Text("Account", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        if (!googleDisplayName.isNullOrBlank()) {
+                            Text(googleDisplayName!!, style = MaterialTheme.typography.bodyLarge)
+                        }
+                        if (!googleEmail.isNullOrBlank()) {
+                            Text(
+                                googleEmail!!,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Devices section
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Devices", style = MaterialTheme.typography.titleMedium)
+                            IconButton(onClick = { navController.navigate(Screen.AddDevice.createRoute()) }) {
+                                Icon(Icons.Default.Add, contentDescription = "Add Device")
+                            }
+                        }
+                        if (devices.isEmpty()) {
+                            Text(
+                                "No devices configured.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            devices.forEach { device ->
+                                DeviceRow(
+                                    device = device,
+                                    onRemove = { viewModel.removeDevice(device.id) }
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+
                     // Telegram section
                     TelegramSection(
                         telegram = data.telegram,
@@ -181,11 +233,6 @@ fun SettingsScreen(
 
                     HorizontalDivider()
 
-                    // Auth change section
-                    AuthSection(onChangeAuth = { u, p -> viewModel.changeAuth(u, p) })
-
-                    HorizontalDivider()
-
                     // Config export/import
                     Text("Configuration", style = MaterialTheme.typography.titleMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -212,14 +259,14 @@ fun SettingsScreen(
                         Text("Factory Reset")
                     }
 
-                    // Logout
+                    // Sign Out (Google)
                     OutlinedButton(
-                        onClick = { viewModel.logout() },
+                        onClick = { viewModel.signOut() },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Logout")
+                        Text("Sign Out")
                     }
                 }
             }
@@ -448,54 +495,36 @@ private fun MdnsSection(
 }
 
 @Composable
-private fun AuthSection(onChangeAuth: (String, String) -> Unit) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-
-    Column {
-        Text("Change Credentials", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = username,
-            onValueChange = { username = it },
-            label = { Text("New Username") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
+private fun DeviceRow(
+    device: EspDevice,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Wifi,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary
         )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("New Password") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation()
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = confirmPassword,
-            onValueChange = { confirmPassword = it },
-            label = { Text("Confirm Password") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            isError = confirmPassword.isNotBlank() && confirmPassword != password
-        )
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = {
-                if (username.isNotBlank() && password.isNotBlank() && password == confirmPassword) {
-                    onChangeAuth(username, password)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = username.isNotBlank() && password.isNotBlank() && password == confirmPassword
-        ) {
-            Icon(Icons.Default.Key, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Update Credentials")
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(device.name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "${device.duckDnsDomain}.duckdns.org",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onRemove) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Remove",
+                tint = MaterialTheme.colorScheme.error
+            )
         }
     }
 }
-

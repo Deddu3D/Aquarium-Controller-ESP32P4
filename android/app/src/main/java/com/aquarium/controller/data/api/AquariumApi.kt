@@ -7,15 +7,6 @@ import retrofit2.http.*
 
 interface AquariumApi {
 
-    @POST("api/login")
-    suspend fun login(@Body request: LoginRequest): Response<LoginResponse>
-
-    @POST("api/logout")
-    suspend fun logout(): Response<OkResponse>
-
-    @POST("api/auth")
-    suspend fun changeAuth(@Body request: AuthChangeRequest): Response<OkResponse>
-
     @GET("api/status")
     suspend fun getStatus(): Response<StatusResponse>
 

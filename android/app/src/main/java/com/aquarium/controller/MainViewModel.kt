@@ -10,8 +10,8 @@ import javax.inject.Inject
 /**
  * Application-scoped ViewModel attached to MainActivity.
  *
- * Restores persisted connection settings (host, port, HTTPS) as soon as
- * the app process starts so that the correct base URL is used for all HTTP calls.
+ * Restores the current device's DuckDNS base URL on startup so the correct
+ * endpoint is used for all HTTP calls.
  */
 @HiltViewModel
 class MainViewModel @Inject constructor(

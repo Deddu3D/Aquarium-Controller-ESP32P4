@@ -2,10 +2,8 @@ package com.aquarium.controller.repository
 
 import com.aquarium.controller.data.api.AquariumApi
 import com.aquarium.controller.data.model.*
-import com.aquarium.controller.data.network.SessionCookieJar
 import com.aquarium.controller.data.network.WebSocketManager
 import com.aquarium.controller.data.prefs.ConnectionPreferences
-import com.aquarium.controller.data.prefs.ConnectionSettings
 import com.squareup.moshi.Moshi
 import dagger.hilt.android.scopes.ActivityRetainedScoped
 import kotlinx.coroutines.flow.first
@@ -21,7 +19,6 @@ class AquariumRepository @Inject constructor(
     private val retrofit: Retrofit,
     private val okHttpClient: OkHttpClient,
     private val moshi: Moshi,
-    private val cookieJar: SessionCookieJar,
     private val connectionPrefs: ConnectionPreferences,
     val webSocketManager: WebSocketManager
 ) {
@@ -38,33 +35,16 @@ class AquariumRepository @Inject constructor(
         api = buildApiForUrl(baseUrl)
     }
 
+    /** Load the currently selected device and point the API at its DuckDNS URL. */
     suspend fun initFromPrefs() {
-        val settings = connectionPrefs.settings.first()
-        if (settings.host.isNotBlank()) {
-            api = buildApiForUrl(settings.baseUrl)
+        val device = connectionPrefs.currentDevice.first()
+        if (device != null && device.duckDnsDomain.isNotBlank()) {
+            api = buildApiForUrl(device.baseUrl)
         }
-    }
-
-    suspend fun saveConnectionSettings(settings: ConnectionSettings) {
-        connectionPrefs.saveSettings(settings)
-        api = buildApiForUrl(settings.baseUrl)
     }
 
     fun connectWebSocket(baseUrl: String) = webSocketManager.connect(baseUrl)
     fun disconnectWebSocket() = webSocketManager.disconnect()
-
-    suspend fun login(username: String, password: String): Result<LoginResponse> =
-        safeCall { api.login(LoginRequest(username, password)) }
-
-    suspend fun logout(): Result<OkResponse> {
-        val result = safeCall { api.logout() }
-        cookieJar.clearSession()
-        webSocketManager.disconnect()
-        return result
-    }
-
-    suspend fun changeAuth(username: String, password: String): Result<OkResponse> =
-        safeCall { api.changeAuth(AuthChangeRequest(username, password)) }
 
     suspend fun getStatus(): Result<StatusResponse> = safeCall { api.getStatus() }
     suspend fun getHealth(): Result<HealthResponse> = safeCall { api.getHealth() }

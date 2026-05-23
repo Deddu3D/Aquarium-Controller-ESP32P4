@@ -2,7 +2,6 @@ package com.aquarium.controller.di
 
 import android.content.Context
 import com.aquarium.controller.data.network.SelfSignedTrustManager
-import com.aquarium.controller.data.network.SessionCookieJar
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import dagger.Module
@@ -30,15 +29,13 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(
-        @ApplicationContext context: Context,
-        cookieJar: SessionCookieJar
+        @ApplicationContext context: Context
     ): OkHttpClient {
         val (sslFactory, trustManager) = SelfSignedTrustManager.create(context)
         val logging = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BASIC
         }
         return OkHttpClient.Builder()
-            .cookieJar(cookieJar)
             .sslSocketFactory(sslFactory, trustManager)
             .hostnameVerifier { _, _ -> true }
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -52,7 +49,7 @@ object NetworkModule {
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, moshi: Moshi): Retrofit =
         Retrofit.Builder()
-            .baseUrl("https://aquarium.local/")
+            .baseUrl("https://placeholder.duckdns.org/")
             .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
