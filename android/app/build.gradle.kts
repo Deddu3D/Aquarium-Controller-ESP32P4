@@ -74,6 +74,7 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.accompanist.permissions)
+    implementation(libs.google.auth)
 
     debugImplementation(libs.androidx.ui.tooling)
 }

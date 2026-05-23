@@ -9,7 +9,6 @@ import com.aquarium.controller.data.model.DuckDnsRequest
 import com.aquarium.controller.data.model.TelegramRequest
 import com.aquarium.controller.data.model.WifiNetworkInfo
 import com.aquarium.controller.data.model.WifiScanResponse
-import com.aquarium.controller.data.prefs.ConnectionSettings
 import com.aquarium.controller.repository.AquariumRepository
 import com.squareup.moshi.Moshi
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -182,14 +181,6 @@ class ProvisionViewModel @Inject constructor(
             }
 
             if (success) {
-                // Pre-save connection settings so step 4 can verify them
-                val settings = ConnectionSettings(
-                    host = "${state.mdnsHostname}.local",
-                    port = 443,
-                    useHttps = true,
-                    username = "admin"
-                )
-                repository.saveConnectionSettings(settings)
                 _uiState.value = _uiState.value.copy(step = ProvisionStep.RECONNECT, isLoading = false)
             } else {
                 _uiState.value = _uiState.value.copy(
@@ -241,18 +232,6 @@ class ProvisionViewModel @Inject constructor(
             }
 
             if (reachable) {
-                // If we reached the ESP via IP instead of mDNS, persist the IP
-                // so the app connects correctly after the wizard is done.
-                val mdnsHost = "$hostname.local"
-                if (effectiveHost != mdnsHost) {
-                    val settings = ConnectionSettings(
-                        host     = effectiveHost,
-                        port     = 443,
-                        useHttps = true,
-                        username = "admin"
-                    )
-                    repository.saveConnectionSettings(settings)
-                }
                 _uiState.value = _uiState.value.copy(
                     step     = ProvisionStep.SERVICES,
                     isLoading = false
@@ -274,39 +253,30 @@ class ProvisionViewModel @Inject constructor(
     fun updateDuckDnsToken(t: String) { _uiState.value = _uiState.value.copy(duckDnsToken = t) }
 
     /**
-     * Login with the default credentials, apply Telegram and/or DuckDNS
-     * settings if provided, then navigate to the Login screen.
-     *
-     * If login fails (user may have changed creds during a previous setup)
-     * we still navigate forward – the user will re-login manually.
+     * Apply Telegram and/or DuckDNS settings if provided, then navigate to
+     * the AddDevice screen so the user can save the device by DuckDNS domain.
      */
     fun saveServicesAndFinish() {
         val state = _uiState.value
         _uiState.value = state.copy(servicesSaving = true)
         viewModelScope.launch {
-            // Login with factory-default credentials (admin / aquarium).
-            // If the user changed credentials during a previous setup attempt
-            // this will fail and we navigate forward anyway so they can re-login.
-            val loginResult = repository.login("admin", "aquarium")
-            if (loginResult.isSuccess) {
-                if (state.telegramToken.isNotBlank() || state.telegramChatId.isNotBlank()) {
-                    repository.postTelegram(
-                        TelegramRequest(
-                            botToken = state.telegramToken.ifBlank { null },
-                            chatId    = state.telegramChatId.ifBlank { null },
-                            enabled   = state.telegramToken.isNotBlank()
-                        )
+            if (state.telegramToken.isNotBlank() || state.telegramChatId.isNotBlank()) {
+                repository.postTelegram(
+                    TelegramRequest(
+                        botToken = state.telegramToken.ifBlank { null },
+                        chatId    = state.telegramChatId.ifBlank { null },
+                        enabled   = state.telegramToken.isNotBlank()
                     )
-                }
-                if (state.duckDnsDomain.isNotBlank() || state.duckDnsToken.isNotBlank()) {
-                    repository.postDuckDns(
-                        DuckDnsRequest(
-                            domain  = state.duckDnsDomain.ifBlank { null },
-                            token   = state.duckDnsToken.ifBlank { null },
-                            enabled = state.duckDnsDomain.isNotBlank()
-                        )
+                )
+            }
+            if (state.duckDnsDomain.isNotBlank() || state.duckDnsToken.isNotBlank()) {
+                repository.postDuckDns(
+                    DuckDnsRequest(
+                        domain  = state.duckDnsDomain.ifBlank { null },
+                        token   = state.duckDnsToken.ifBlank { null },
+                        enabled = state.duckDnsDomain.isNotBlank()
                     )
-                }
+                )
             }
             _uiState.value = _uiState.value.copy(servicesSaving = false, navigateToLogin = true)
         }
