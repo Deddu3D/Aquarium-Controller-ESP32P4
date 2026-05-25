@@ -43,9 +43,21 @@
 #include "led_scenes.h"
 #include "daily_cycle.h"
 #include "event_log.h"
+#include "relay_automation.h"
+#include "aquarium_profiles.h"
 #include "cJSON.h"
+#include "esp_http_client.h"
 
 static const char *TAG = "web_srv";
+
+static char *read_request_body_alloc(httpd_req_t *req, size_t max_len);
+static esp_err_t nvs_read_string_value(const char *ns, const char *key, char *out, size_t out_size);
+static esp_err_t nvs_write_string_value(const char *ns, const char *key, const char *value);
+static bool setup_done_get(void);
+static esp_err_t setup_done_set(bool done);
+static const char *relay_trigger_to_str(relay_trig_t trigger);
+static relay_trig_t relay_trigger_from_str(const char *trigger);
+static esp_err_t ota_fetch_latest_tag(const char *url, char *latest_version, size_t latest_version_len);
 
 /* Kconfig fallback for acclimatization ramp duration */
 #ifndef CONFIG_LED_RAMP_DURATION_SEC
@@ -500,7 +512,7 @@ static void get_wifi_status(wifi_status_t *out)
 /* ── HTML status page (/  GET) ───────────────────────────────────── */
 
 /* JSON response buffer sizes */
-#define JSON_STATUS_BUF_SIZE   640   /* enlarged: now includes restart_reason, boot_count */
+#define JSON_STATUS_BUF_SIZE   768   /* enlarged: now includes restart_reason, boot_count, setup_done */
 #define JSON_LEDS_BUF_SIZE     256
 #define JSON_SCHED_BUF_SIZE    768
 #define JSON_TEMP_BUF_SIZE     128
@@ -513,6 +525,8 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_FEEDING_BUF_SIZE  192
 #define JSON_SCENE_BUF_SIZE    320
 #define JSON_DAILY_BUF_SIZE    256
+#define JSON_RELAY_AUTO_BUF_SIZE 2048
+#define JSON_OTA_URL_BUF_SIZE   384
 
 /* HTTP request body receive sizes */
 #define POST_BODY_LED_SIZE      256
@@ -526,6 +540,10 @@ static void get_wifi_status(wifi_status_t *out)
 #define POST_BODY_FEEDING_SIZE  128
 #define POST_BODY_SCENE_SIZE    256
 #define POST_BODY_DAILY_SIZE    192
+#define POST_BODY_PROFILE_SIZE   96
+#define POST_BODY_SETUP_SIZE     64
+#define POST_BODY_RELAY_AUTO_SIZE 4096
+#define POST_BODY_OTA_URL_SIZE   512
 
 /* HTTP server configuration */
 #define HTTP_STACK_SIZE        8192
@@ -622,6 +640,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     /* Restart stats */
     uint32_t boot_count = app_main_get_boot_count();
     esp_reset_reason_t rr = esp_reset_reason();
+    bool setup_done = setup_done_get();
     static const char * const rr_str[] = {
         "unknown", "power_on", "ext_reset", "sw_reset",
         "exception", "int_watchdog", "task_watchdog", "other_watchdog",
@@ -642,7 +661,8 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
         "\"ntp_ok\":%s,"
         "\"partition\":\"%s\","
         "\"boot_count\":%" PRIu32 ","
-        "\"restart_reason\":\"%s\"}",
+        "\"restart_reason\":\"%s\","
+        "\"setup_done\":%s}",
         ws.connected ? "true" : "false",
         ws.connected ? ws.ip : "",
         escaped_ssid,
@@ -652,10 +672,63 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
         ntp_ok ? "true" : "false",
         part_label,
         boot_count,
-        restart_reason);
+        restart_reason,
+        setup_done ? "true" : "false");
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
+}
+
+static esp_err_t api_setup_done_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char *body = read_request_body_alloc(req, POST_BODY_SETUP_SIZE);
+    if (body != NULL) {
+        free(body);
+    }
+
+    esp_err_t err = setup_done_set(true);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save setup flag");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+
+static esp_err_t api_profile_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char *body = read_request_body_alloc(req, POST_BODY_PROFILE_SIZE);
+    if (body == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *type = cJSON_GetObjectItem(root, "type");
+    if (!cJSON_IsString(type) || type->valuestring == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing profile type");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = aquarium_profile_apply(type->valuestring);
+    cJSON_Delete(root);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid profile type");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 /* ── Health check endpoint (/api/health  GET) ────────────────────── */
@@ -803,6 +876,196 @@ static uint16_t clamp_u16(double v, double max)
     if (v < 0.0) return 0;
     if (v > max) return (uint16_t)max;
     return (uint16_t)v;
+}
+
+#define SYS_STATS_NVS_NS      "sys_stats"
+#define SYS_STATS_KEY_SETUP   "setup_done"
+#define OTA_CFG_NVS_NS        "ota_cfg"
+#define OTA_CFG_KEY_CHECK_URL "ota_check_url"
+#define OTA_CFG_KEY_RELEASE   "release_url"
+#define OTA_CFG_KEY_LAST_VER  "last_ver"
+
+static char *read_request_body_alloc(httpd_req_t *req, size_t max_len)
+{
+    if (req->content_len <= 0 || req->content_len > (int)max_len) {
+        return NULL;
+    }
+
+    char *body = malloc((size_t)req->content_len + 1);
+    if (body == NULL) {
+        return NULL;
+    }
+
+    int received = 0;
+    while (received < req->content_len) {
+        int r = httpd_req_recv(req, body + received, req->content_len - received);
+        if (r <= 0) {
+            free(body);
+            return NULL;
+        }
+        received += r;
+    }
+    body[received] = '\0';
+    return body;
+}
+
+static esp_err_t nvs_read_string_value(const char *ns, const char *key, char *out, size_t out_size)
+{
+    if (out == NULL || out_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    out[0] = '\0';
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    size_t len = out_size;
+    err = nvs_get_str(h, key, out, &len);
+    if (err != ESP_OK) {
+        out[0] = '\0';
+    }
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t nvs_write_string_value(const char *ns, const char *key, const char *value)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(ns, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = nvs_set_str(h, key, value ? value : "");
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+static bool setup_done_get(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SYS_STATS_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return false;
+    }
+
+    uint8_t value = 0;
+    esp_err_t err = nvs_get_u8(h, SYS_STATS_KEY_SETUP, &value);
+    nvs_close(h);
+    return err == ESP_OK && value != 0;
+}
+
+static esp_err_t setup_done_set(bool done)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(SYS_STATS_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = nvs_set_u8(h, SYS_STATS_KEY_SETUP, done ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+static const char *relay_trigger_to_str(relay_trig_t trigger)
+{
+    switch (trigger) {
+    case RELAY_TRIG_TEMP_HIGH: return "temp_high";
+    case RELAY_TRIG_TEMP_LOW:  return "temp_low";
+    case RELAY_TRIG_LIGHTS_ON: return "lights_on";
+    case RELAY_TRIG_FEEDING:   return "feeding";
+    default:                   return "temp_high";
+    }
+}
+
+static relay_trig_t relay_trigger_from_str(const char *trigger)
+{
+    if (trigger == NULL) {
+        return RELAY_TRIG_TEMP_HIGH;
+    }
+    if (strcmp(trigger, "temp_low") == 0) {
+        return RELAY_TRIG_TEMP_LOW;
+    }
+    if (strcmp(trigger, "lights_on") == 0) {
+        return RELAY_TRIG_LIGHTS_ON;
+    }
+    if (strcmp(trigger, "feeding") == 0) {
+        return RELAY_TRIG_FEEDING;
+    }
+    return RELAY_TRIG_TEMP_HIGH;
+}
+
+static esp_err_t ota_fetch_latest_tag(const char *url, char *latest_version, size_t latest_version_len)
+{
+    if (url == NULL || latest_version == NULL || latest_version_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    latest_version[0] = '\0';
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = 8000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (client == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    esp_http_client_fetch_headers(client);
+    int status = esp_http_client_get_status_code(client);
+    char body[768];
+    int total = 0;
+    while (total < (int)sizeof(body) - 1) {
+        int r = esp_http_client_read(client, body + total, sizeof(body) - 1 - (size_t)total);
+        if (r < 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        if (r == 0) {
+            break;
+        }
+        total += r;
+    }
+    body[total] = '\0';
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status < 200 || status >= 300) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(body);
+    if (root == NULL) {
+        return ESP_FAIL;
+    }
+
+    cJSON *tag = cJSON_GetObjectItem(root, "tag_name");
+    if (!cJSON_IsString(tag) || tag->valuestring == NULL) {
+        cJSON_Delete(root);
+        return ESP_FAIL;
+    }
+
+    strlcpy(latest_version, tag->valuestring, latest_version_len);
+    cJSON_Delete(root);
+    return ESP_OK;
 }
 
 static esp_err_t api_leds_post_handler(httpd_req_t *req)
@@ -1536,6 +1799,119 @@ static esp_err_t api_relays_post_handler(httpd_req_t *req)
     return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
+/* ── Relay automation GET/POST endpoints (/api/relay_automation) ─── */
+
+static esp_err_t api_relay_automation_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    relay_auto_rule_t rules[RELAY_AUTO_MAX_RULES];
+    relay_auto_get_rules(rules);
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    cJSON *arr = cJSON_AddArrayToObject(root, "rules");
+    if (arr == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_FAIL;
+    }
+    for (int i = 0; i < RELAY_AUTO_MAX_RULES; i++) {
+        cJSON *rule = cJSON_CreateObject();
+        cJSON_AddBoolToObject(rule, "enabled", rules[i].enabled);
+        cJSON_AddStringToObject(rule, "trigger", relay_trigger_to_str(rules[i].trigger));
+        cJSON_AddNumberToObject(rule, "temp_threshold", (double)rules[i].temp_threshold);
+        cJSON_AddNumberToObject(rule, "relay_index", rules[i].relay_index);
+        cJSON_AddBoolToObject(rule, "action_on", rules[i].action_on);
+        cJSON_AddStringToObject(rule, "action", rules[i].action_on ? "on" : "off");
+        cJSON_AddNumberToObject(rule, "duration_min", rules[i].duration_min);
+        cJSON_AddItemToArray(arr, rule);
+    }
+
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "JSON serialisation failed");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_send(req, json, (ssize_t)strlen(json));
+    free(json);
+    return err;
+}
+
+static esp_err_t api_relay_automation_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char *body = read_request_body_alloc(req, POST_BODY_RELAY_AUTO_SIZE);
+    if (body == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *arr = cJSON_IsArray(root) ? root : cJSON_GetObjectItem(root, "rules");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing rules array");
+        return ESP_FAIL;
+    }
+
+    relay_auto_rule_t rules[RELAY_AUTO_MAX_RULES];
+    memset(rules, 0, sizeof(rules));
+    int count = cJSON_GetArraySize(arr);
+    if (count > RELAY_AUTO_MAX_RULES) {
+        count = RELAY_AUTO_MAX_RULES;
+    }
+
+    for (int i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *f;
+        if (!cJSON_IsObject(item)) {
+            continue;
+        }
+        if ((f = cJSON_GetObjectItem(item, "enabled"))) {
+            rules[i].enabled = cJSON_IsTrue(f);
+        }
+        if ((f = cJSON_GetObjectItem(item, "trigger")) && cJSON_IsString(f)) {
+            rules[i].trigger = relay_trigger_from_str(f->valuestring);
+        }
+        if ((f = cJSON_GetObjectItem(item, "temp_threshold")) && cJSON_IsNumber(f)) {
+            rules[i].temp_threshold = (float)f->valuedouble;
+        }
+        if ((f = cJSON_GetObjectItem(item, "relay_index")) && cJSON_IsNumber(f)) {
+            rules[i].relay_index = f->valueint;
+        }
+        if ((f = cJSON_GetObjectItem(item, "action_on"))) {
+            rules[i].action_on = cJSON_IsTrue(f);
+        }
+        if ((f = cJSON_GetObjectItem(item, "action")) && cJSON_IsString(f)) {
+            rules[i].action_on = strcmp(f->valuestring, "off") != 0;
+        }
+        if ((f = cJSON_GetObjectItem(item, "duration_min")) && cJSON_IsNumber(f)) {
+            rules[i].duration_min = f->valueint;
+        }
+    }
+
+    cJSON_Delete(root);
+    if (relay_auto_set_rules(rules, (size_t)count) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save rules");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+
 /* ── DuckDNS GET endpoint (/api/duckdns  GET) ───────────────────── */
 
 static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
@@ -1757,6 +2133,90 @@ static esp_err_t api_ota_status_get_handler(httpd_req_t *req)
         "{\"status\":\"%s\",\"progress\":%d,\"error\":\"%s\"}",
         sn, p.progress_pct, escaped_err);
 
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+static esp_err_t api_ota_release_url_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char url[256];
+    char check_url[256];
+    nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_RELEASE, url, sizeof(url));
+    nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_CHECK_URL, check_url, sizeof(check_url));
+
+    char escaped[512];
+    char escaped_check[512];
+    json_escape(url, escaped, sizeof(escaped));
+    json_escape(check_url, escaped_check, sizeof(escaped_check));
+    char buf[JSON_OTA_URL_BUF_SIZE + 192];
+    int len = snprintf(buf, sizeof(buf), "{\"url\":\"%s\",\"check_url\":\"%s\"}", escaped, escaped_check);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, buf, len);
+}
+
+static esp_err_t api_ota_release_url_post_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char *body = read_request_body_alloc(req, POST_BODY_OTA_URL_SIZE);
+    if (body == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(body);
+    free(body);
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *url = cJSON_GetObjectItem(root, "url");
+    cJSON *check_url = cJSON_GetObjectItem(root, "check_url");
+    if (!cJSON_IsString(url) || url->valuestring == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing url");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = nvs_write_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_RELEASE, url->valuestring);
+    if (err == ESP_OK && cJSON_IsString(check_url) && check_url->valuestring != NULL) {
+        err = nvs_write_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_CHECK_URL, check_url->valuestring);
+    }
+    cJSON_Delete(root);
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to save URL");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+
+static esp_err_t api_ota_check_get_handler(httpd_req_t *req)
+{
+    AUTH_CHECK(req);
+    char check_url[256];
+    char latest_version[64] = {0};
+    char last_known[64] = {0};
+    nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_CHECK_URL, check_url, sizeof(check_url));
+    nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_LAST_VER, last_known, sizeof(last_known));
+
+    bool has_update = false;
+    if (check_url[0] != '\0' && ota_fetch_latest_tag(check_url, latest_version, sizeof(latest_version)) == ESP_OK) {
+        has_update = (last_known[0] != '\0' && strcmp(last_known, latest_version) != 0);
+        nvs_write_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_LAST_VER, latest_version);
+    }
+
+    char escaped_url[512];
+    char escaped_ver[128];
+    json_escape(check_url, escaped_url, sizeof(escaped_url));
+    json_escape(latest_version, escaped_ver, sizeof(escaped_ver));
+
+    char buf[JSON_OTA_URL_BUF_SIZE + 160];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"has_update\":%s,\"latest_version\":\"%s\",\"check_url\":\"%s\"}",
+        has_update ? "true" : "false", escaped_ver, escaped_url);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, len);
 }
@@ -2426,6 +2886,70 @@ static esp_err_t api_config_export_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(o, "dim_brightness", c.dim_brightness);
     }
 
+    /* Telegram */
+    {
+        telegram_config_t c = telegram_notify_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "telegram");
+        cJSON_AddStringToObject(o, "bot_token", c.bot_token);
+        cJSON_AddStringToObject(o, "chat_id", c.chat_id);
+        cJSON_AddBoolToObject(o, "enabled", c.enabled);
+        cJSON_AddBoolToObject(o, "temp_alarm_enabled", c.temp_alarm_enabled);
+        cJSON_AddNumberToObject(o, "temp_high_c", (double)c.temp_high_c);
+        cJSON_AddNumberToObject(o, "temp_low_c", (double)c.temp_low_c);
+        cJSON_AddBoolToObject(o, "water_change_enabled", c.water_change_enabled);
+        cJSON_AddNumberToObject(o, "water_change_days", c.water_change_days);
+        cJSON_AddBoolToObject(o, "fertilizer_enabled", c.fertilizer_enabled);
+        cJSON_AddNumberToObject(o, "fertilizer_days", c.fertilizer_days);
+        cJSON_AddBoolToObject(o, "daily_summary_enabled", c.daily_summary_enabled);
+        cJSON_AddNumberToObject(o, "daily_summary_hour", c.daily_summary_hour);
+        cJSON_AddBoolToObject(o, "relay_notify_enabled", c.relay_notify_enabled);
+    }
+
+    /* DuckDNS */
+    {
+        duckdns_config_t c = duckdns_get_config();
+        cJSON *o = cJSON_AddObjectToObject(root, "duckdns");
+        cJSON_AddStringToObject(o, "domain", c.domain);
+        cJSON_AddStringToObject(o, "token", c.token);
+        cJSON_AddBoolToObject(o, "enabled", c.enabled);
+    }
+
+    /* mDNS */
+    {
+        char host[WIFI_MDNS_HOST_MAX];
+        wifi_manager_get_mdns_hostname(host, sizeof(host));
+        cJSON *o = cJSON_AddObjectToObject(root, "mdns");
+        cJSON_AddStringToObject(o, "hostname", host);
+    }
+
+    /* Relay automation */
+    {
+        relay_auto_rule_t rules[RELAY_AUTO_MAX_RULES];
+        relay_auto_get_rules(rules);
+        cJSON *arr = cJSON_AddArrayToObject(root, "relay_automation");
+        for (int i = 0; i < RELAY_AUTO_MAX_RULES; i++) {
+            cJSON *rule = cJSON_CreateObject();
+            cJSON_AddBoolToObject(rule, "enabled", rules[i].enabled);
+            cJSON_AddStringToObject(rule, "trigger", relay_trigger_to_str(rules[i].trigger));
+            cJSON_AddNumberToObject(rule, "temp_threshold", (double)rules[i].temp_threshold);
+            cJSON_AddNumberToObject(rule, "relay_index", rules[i].relay_index);
+            cJSON_AddBoolToObject(rule, "action_on", rules[i].action_on);
+            cJSON_AddNumberToObject(rule, "duration_min", rules[i].duration_min);
+            cJSON_AddItemToArray(arr, rule);
+        }
+    }
+
+    /* OTA settings */
+    {
+        char release_url[256];
+        char check_url[256];
+        nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_RELEASE, release_url, sizeof(release_url));
+        nvs_read_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_CHECK_URL, check_url, sizeof(check_url));
+        cJSON *o = cJSON_AddObjectToObject(root, "ota_settings");
+        cJSON_AddStringToObject(o, "release_url", release_url);
+        cJSON_AddStringToObject(o, "check_url", check_url);
+    }
+
     char *json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json_str) {
@@ -2451,9 +2975,9 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
 {
     AUTH_CHECK(req);
 
-    /* Limit body to 4 KB */
-    if (req->content_len > 4096) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large (max 4096 bytes)");
+    /* Limit body to 8 KB */
+    if (req->content_len > 8192) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Body too large (max 8192 bytes)");
         return ESP_FAIL;
     }
 
@@ -2588,6 +3112,97 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
         if ((f = cJSON_GetObjectItem(o, "dim_lights")))    c.dim_lights    = cJSON_IsTrue(f);
         if ((f = cJSON_GetObjectItem(o, "dim_brightness")))c.dim_brightness= (uint8_t)f->valueint;
         feeding_mode_set_config(&c);
+        applied++;
+    }
+
+    /* Telegram */
+    o = cJSON_GetObjectItem(root, "telegram");
+    if (o) {
+        telegram_config_t c = telegram_notify_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "bot_token")) && cJSON_IsString(f)) {
+            strlcpy(c.bot_token, f->valuestring, sizeof(c.bot_token));
+        }
+        if ((f = cJSON_GetObjectItem(o, "chat_id")) && cJSON_IsString(f)) {
+            strlcpy(c.chat_id, f->valuestring, sizeof(c.chat_id));
+        }
+        if ((f = cJSON_GetObjectItem(o, "enabled"))) c.enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "temp_alarm_enabled"))) c.temp_alarm_enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "temp_high_c")) && cJSON_IsNumber(f)) c.temp_high_c = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "temp_low_c")) && cJSON_IsNumber(f)) c.temp_low_c = (float)f->valuedouble;
+        if ((f = cJSON_GetObjectItem(o, "water_change_enabled"))) c.water_change_enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "water_change_days")) && cJSON_IsNumber(f)) c.water_change_days = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "fertilizer_enabled"))) c.fertilizer_enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "fertilizer_days")) && cJSON_IsNumber(f)) c.fertilizer_days = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "daily_summary_enabled"))) c.daily_summary_enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "daily_summary_hour")) && cJSON_IsNumber(f)) c.daily_summary_hour = f->valueint;
+        if ((f = cJSON_GetObjectItem(o, "relay_notify_enabled"))) c.relay_notify_enabled = cJSON_IsTrue(f);
+        telegram_notify_set_config(&c);
+        applied++;
+    }
+
+    /* DuckDNS */
+    o = cJSON_GetObjectItem(root, "duckdns");
+    if (o) {
+        duckdns_config_t c = duckdns_get_config();
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "domain")) && cJSON_IsString(f)) {
+            strlcpy(c.domain, f->valuestring, sizeof(c.domain));
+        }
+        if ((f = cJSON_GetObjectItem(o, "token")) && cJSON_IsString(f)) {
+            strlcpy(c.token, f->valuestring, sizeof(c.token));
+        }
+        if ((f = cJSON_GetObjectItem(o, "enabled"))) c.enabled = cJSON_IsTrue(f);
+        duckdns_set_config(&c);
+        applied++;
+    }
+
+    /* mDNS */
+    o = cJSON_GetObjectItem(root, "mdns");
+    if (o) {
+        cJSON *f = cJSON_GetObjectItem(o, "hostname");
+        if (f && cJSON_IsString(f) && f->valuestring[0] != '\0') {
+            wifi_manager_set_mdns_hostname(f->valuestring);
+            applied++;
+        }
+    }
+
+    /* Relay automation */
+    o = cJSON_GetObjectItem(root, "relay_automation");
+    if (cJSON_IsArray(o)) {
+        relay_auto_rule_t rules[RELAY_AUTO_MAX_RULES];
+        memset(rules, 0, sizeof(rules));
+        int count = cJSON_GetArraySize(o);
+        if (count > RELAY_AUTO_MAX_RULES) {
+            count = RELAY_AUTO_MAX_RULES;
+        }
+        for (int i = 0; i < count; i++) {
+            cJSON *item = cJSON_GetArrayItem(o, i);
+            cJSON *f;
+            if (!cJSON_IsObject(item)) {
+                continue;
+            }
+            if ((f = cJSON_GetObjectItem(item, "enabled"))) rules[i].enabled = cJSON_IsTrue(f);
+            if ((f = cJSON_GetObjectItem(item, "trigger")) && cJSON_IsString(f)) rules[i].trigger = relay_trigger_from_str(f->valuestring);
+            if ((f = cJSON_GetObjectItem(item, "temp_threshold")) && cJSON_IsNumber(f)) rules[i].temp_threshold = (float)f->valuedouble;
+            if ((f = cJSON_GetObjectItem(item, "relay_index")) && cJSON_IsNumber(f)) rules[i].relay_index = f->valueint;
+            if ((f = cJSON_GetObjectItem(item, "action_on"))) rules[i].action_on = cJSON_IsTrue(f);
+            if ((f = cJSON_GetObjectItem(item, "duration_min")) && cJSON_IsNumber(f)) rules[i].duration_min = f->valueint;
+        }
+        relay_auto_set_rules(rules, (size_t)count);
+        applied++;
+    }
+
+    /* OTA settings */
+    o = cJSON_GetObjectItem(root, "ota_settings");
+    if (o) {
+        cJSON *f;
+        if ((f = cJSON_GetObjectItem(o, "release_url")) && cJSON_IsString(f)) {
+            nvs_write_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_RELEASE, f->valuestring);
+        }
+        if ((f = cJSON_GetObjectItem(o, "check_url")) && cJSON_IsString(f)) {
+            nvs_write_string_value(OTA_CFG_NVS_NS, OTA_CFG_KEY_CHECK_URL, f->valuestring);
+        }
         applied++;
     }
 
@@ -2857,6 +3472,20 @@ static const httpd_uri_t uri_api_status = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_setup_done = {
+    .uri      = "/api/setup_done",
+    .method   = HTTP_POST,
+    .handler  = api_setup_done_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_profile = {
+    .uri      = "/api/profile",
+    .method   = HTTP_POST,
+    .handler  = api_profile_post_handler,
+    .user_ctx = NULL,
+};
+
 static const httpd_uri_t uri_api_health = {
     .uri      = "/api/health",
     .method   = HTTP_GET,
@@ -2976,6 +3605,20 @@ static const httpd_uri_t uri_api_relays_post = {
     .user_ctx = NULL,
 };
 
+static const httpd_uri_t uri_api_relay_auto_get = {
+    .uri      = "/api/relay_automation",
+    .method   = HTTP_GET,
+    .handler  = api_relay_automation_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_relay_auto_post = {
+    .uri      = "/api/relay_automation",
+    .method   = HTTP_POST,
+    .handler  = api_relay_automation_post_handler,
+    .user_ctx = NULL,
+};
+
 static const httpd_uri_t uri_api_ddns_get = {
     .uri      = "/api/duckdns",
     .method   = HTTP_GET,
@@ -3015,6 +3658,27 @@ static const httpd_uri_t uri_api_ota_upload = {
     .uri      = "/api/ota/upload",
     .method   = HTTP_POST,
     .handler  = api_ota_upload_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ota_release_url_get = {
+    .uri      = "/api/ota/release_url",
+    .method   = HTTP_GET,
+    .handler  = api_ota_release_url_get_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ota_release_url_post = {
+    .uri      = "/api/ota/release_url",
+    .method   = HTTP_POST,
+    .handler  = api_ota_release_url_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ota_check = {
+    .uri      = "/api/ota/check",
+    .method   = HTTP_GET,
+    .handler  = api_ota_check_get_handler,
     .user_ctx = NULL,
 };
 
@@ -3257,6 +3921,8 @@ esp_err_t web_server_start(void)
 
     httpd_register_uri_handler(s_server, &uri_root);
     httpd_register_uri_handler(s_server, &uri_api_status);
+    httpd_register_uri_handler(s_server, &uri_api_setup_done);
+    httpd_register_uri_handler(s_server, &uri_api_profile);
     httpd_register_uri_handler(s_server, &uri_api_health);
     httpd_register_uri_handler(s_server, &uri_api_leds_get);
     httpd_register_uri_handler(s_server, &uri_api_leds_post);
@@ -3274,12 +3940,17 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_tg_fert);
     httpd_register_uri_handler(s_server, &uri_api_relays_get);
     httpd_register_uri_handler(s_server, &uri_api_relays_post);
+    httpd_register_uri_handler(s_server, &uri_api_relay_auto_get);
+    httpd_register_uri_handler(s_server, &uri_api_relay_auto_post);
     httpd_register_uri_handler(s_server, &uri_api_ddns_get);
     httpd_register_uri_handler(s_server, &uri_api_ddns_post);
     httpd_register_uri_handler(s_server, &uri_api_ddns_update);
     httpd_register_uri_handler(s_server, &uri_api_ota_post);
     httpd_register_uri_handler(s_server, &uri_api_ota_status);
     httpd_register_uri_handler(s_server, &uri_api_ota_upload);
+    httpd_register_uri_handler(s_server, &uri_api_ota_release_url_get);
+    httpd_register_uri_handler(s_server, &uri_api_ota_release_url_post);
+    httpd_register_uri_handler(s_server, &uri_api_ota_check);
     httpd_register_uri_handler(s_server, &uri_api_heater_get);
     httpd_register_uri_handler(s_server, &uri_api_heater_post);
     httpd_register_uri_handler(s_server, &uri_api_co2_get);
