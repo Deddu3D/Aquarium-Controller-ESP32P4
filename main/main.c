@@ -46,6 +46,8 @@
 #include "feeding_mode.h"
 #include "daily_cycle.h"
 #include "event_log.h"
+#include "relay_automation.h"
+#include "aquarium_profiles.h"
 
 static const char *TAG = "aquarium";
 static const uint32_t DISPLAY_INIT_TASK_STACK_SIZE = 12 * 1024;
@@ -288,6 +290,15 @@ void app_main(void)
         ESP_LOGI(TAG, "Feeding mode module ready");
     }
 
+    /* ── 8e. Initialise relay automation module ───────────────────── */
+    esp_task_wdt_reset();
+    ret = relay_auto_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Relay automation init failed (0x%x)", ret);
+    } else {
+        ESP_LOGI(TAG, "Relay automation module ready");
+    }
+
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
     esp_task_wdt_reset();
     ret = duckdns_init();
@@ -343,6 +354,7 @@ void app_main(void)
     int64_t t_led_sched  = 0;   /* LED schedule:  60 s */
     int64_t t_relay_sched = 0;  /* Relay sched:   60 s */
     int64_t t_heater     = 0;   /* Auto-heater:   30 s */
+    int64_t t_relay_auto = 0;   /* Relay auto:    30 s */
     int64_t t_co2        = 0;   /* CO2 valve:     60 s */
     int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
     int64_t t_daily      = 0;   /* Daily cycle:   60 s */
@@ -373,6 +385,12 @@ void app_main(void)
         if (SINCE(t_heater) >= TICK_INTERVAL_US(30)) {
             auto_heater_tick();
             t_heater = now;
+        }
+
+        /* Relay automation: 30 s */
+        if (SINCE(t_relay_auto) >= TICK_INTERVAL_US(30)) {
+            relay_auto_tick();
+            t_relay_auto = now;
         }
 
         /* LED schedule: 60 s */

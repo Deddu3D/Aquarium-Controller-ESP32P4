@@ -7,6 +7,7 @@ idf_component_register(
          "daily_cycle.c"
          "event_log.c"
          "display_ui.c"
+         "relay_automation.c" "aquarium_profiles.c"
     INCLUDE_DIRS "."
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_https_server
              esp_timer log led_strip driver cjson mdns
