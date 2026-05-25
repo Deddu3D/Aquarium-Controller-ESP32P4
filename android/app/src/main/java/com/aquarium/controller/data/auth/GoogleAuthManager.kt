@@ -6,6 +6,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,11 +41,13 @@ class GoogleAuthManager @Inject constructor(
         GoogleSignIn.getLastSignedInAccount(context)
 
     /** Parse a [GoogleSignInAccount] from the result of the sign-in intent. */
-    fun getAccountFromIntent(data: Intent?): GoogleSignInAccount? {
+    fun getAccountFromIntent(data: Intent?): Result<GoogleSignInAccount> {
         return try {
-            GoogleSignIn.getSignedInAccountFromIntent(data).result
-        } catch (e: Exception) {
-            null
+            val account = GoogleSignIn.getSignedInAccountFromIntent(data)
+                .getResult(ApiException::class.java)
+            Result.success(account)
+        } catch (e: ApiException) {
+            Result.failure(e)
         }
     }
 

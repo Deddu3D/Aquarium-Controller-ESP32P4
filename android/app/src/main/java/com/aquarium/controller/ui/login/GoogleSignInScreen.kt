@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.ui.platform.LocalContext
-import com.google.android.gms.common.api.ApiException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,10 +38,9 @@ fun GoogleSignInScreen(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val account = authManager.getAccountFromIntent(result.data)
-            viewModel.onSignInResult(account)
+            viewModel.onSignInResult(authManager.getAccountFromIntent(result.data))
         } else {
-            viewModel.onSignInResult(null)
+            viewModel.onSignInCancelled()
         }
     }
 
