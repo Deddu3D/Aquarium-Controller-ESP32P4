@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.aquarium.controller.data.auth.GoogleAuthManager
 import com.aquarium.controller.data.prefs.ConnectionPreferences
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,17 +43,30 @@ class GoogleSignInViewModel @Inject constructor(
         }
     }
 
-    fun onSignInResult(account: GoogleSignInAccount?) {
-        if (account == null) {
-            _uiState.value = _uiState.value.copy(
-                isLoading = false,
-                error = "Sign-in cancelled or failed"
-            )
-            return
-        }
-        viewModelScope.launch {
-            handleSignedInAccount(account)
-        }
+    fun onSignInResult(result: Result<GoogleSignInAccount>) {
+        result.fold(
+            onSuccess = { account ->
+                viewModelScope.launch { handleSignedInAccount(account) }
+            },
+            onFailure = { e ->
+                val message = when ((e as? ApiException)?.statusCode) {
+                    CommonStatusCodes.DEVELOPER_ERROR ->
+                        "Sign-in configuration error. Check OAuth client setup."
+                    CommonStatusCodes.NETWORK_ERROR ->
+                        "Network error. Check your internet connection and try again."
+                    CommonStatusCodes.TIMEOUT ->
+                        "Sign-in timed out. Try again."
+                    else ->
+                        "Sign-in failed (code ${(e as? ApiException)?.statusCode ?: "unknown"})."
+                }
+                _uiState.value = _uiState.value.copy(isLoading = false, error = message)
+            }
+        )
+    }
+
+    /** Called when the user explicitly cancels the sign-in dialog. */
+    fun onSignInCancelled() {
+        _uiState.value = _uiState.value.copy(isLoading = false)
     }
 
     private suspend fun handleSignedInAccount(account: GoogleSignInAccount) {
