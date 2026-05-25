@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Permetti HTTP cleartext solo per il dominio DuckDNS (controller acquario) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">duckdns.org</domain>
+    </domain-config>
+</network-security-config>
