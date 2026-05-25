@@ -251,7 +251,7 @@ body {
   max-height: 0; overflow: hidden;
   transition: max-height .35s ease;
 }
-.ccard.open .ccard-body { max-height: 2400px; }
+.ccard.open .ccard-body { max-height: 6000px; }
 .ccard-inner { padding: .2rem 1rem 1rem; }
 
 /* ── Temperature display ────────────────────────────────────────────── */
