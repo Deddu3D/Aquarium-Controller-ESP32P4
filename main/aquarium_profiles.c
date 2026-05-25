@@ -106,7 +106,7 @@ esp_err_t aquarium_profile_apply(const char *type)
     snprintf(notify, sizeof(notify),
              "\xF0\x9F\x90\xA0 <b>Profilo acquario applicato</b>\n"
              "Profilo: %s\n"
-             "Temperatura target: %.1f\xC2\xB0C\n"
+             "Temperatura target: %.1f\xC2\xB0" "C\n"
              "Luci: %02d:%02d-%02d:%02d\n"
              "CO2: %s",
              label,
