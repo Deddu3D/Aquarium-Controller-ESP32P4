@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.AquariumController" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryVariant">@color/colorSurface</item>
+        <item name="colorOnPrimary">@color/colorOnSurface</item>
+        <item name="colorSurface">@color/colorSurface</item>
+        <item name="colorOnSurface">@color/colorOnSurface</item>
+        <item name="android:windowBackground">@color/colorBackground</item>
+        <item name="android:statusBarColor">@color/colorBackground</item>
+        <item name="android:navigationBarColor">@color/colorBackground</item>
+    </style>
+
+    <style name="ThemeOverlay.AquariumController.Popup" parent="ThemeOverlay.MaterialComponents.Dark">
+        <item name="android:colorBackground">@color/colorSurface</item>
+        <item name="android:textColor">@color/colorOnSurface</item>
+    </style>
+
+</resources>

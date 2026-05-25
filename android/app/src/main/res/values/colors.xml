@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Aquarium theme colours (matches the web UI palette) -->
+    <color name="colorBackground">#0B1E2D</color>
+    <color name="colorSurface">#102A3D</color>
+    <color name="colorPrimary">#1FA3FF</color>
+    <color name="colorOnSurface">#E0F0FF</color>
+    <color name="colorSecondary">#7FB8D8</color>
+    <color name="colorSuccess">#2ECC71</color>
+    <color name="colorError">#E74C3C</color>
+</resources>
