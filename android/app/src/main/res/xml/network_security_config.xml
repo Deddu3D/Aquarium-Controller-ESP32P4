@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Permetti HTTP cleartext solo per il dominio DuckDNS (controller acquario) -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">duckdns.org</domain>
-    </domain-config>
+    <!-- Cleartext HTTP is needed for the ESP32 provisioning portal (192.168.4.1)
+         and for the DuckDNS domain used to reach the controller on the LAN. -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

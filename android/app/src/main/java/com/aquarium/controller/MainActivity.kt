@@ -34,9 +34,9 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // First run: go to setup
+        // First run: go to provisioning wizard
         if (prefs.getString(KEY_URL, null).isNullOrBlank()) {
-            startActivity(Intent(this, SetupActivity::class.java))
+            startActivity(Intent(this, WifiProvisioningActivity::class.java))
             finish()
             return
         }
@@ -133,6 +133,10 @@ class MainActivity : AppCompatActivity() {
             }
             R.id.action_settings -> {
                 showChangeUrlDialog()
+                true
+            }
+            R.id.action_provision_wifi -> {
+                startActivity(Intent(this, WifiProvisioningActivity::class.java))
                 true
             }
             else -> super.onOptionsItemSelected(item)
