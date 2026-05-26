@@ -13,4 +13,9 @@
         android:title="@string/action_settings"
         app:showAsAction="never" />
 
+    <item
+        android:id="@+id/action_provision_wifi"
+        android:title="@string/action_provision_wifi"
+        app:showAsAction="never" />
+
 </menu>
