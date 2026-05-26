@@ -25,6 +25,7 @@ typedef enum {
     RELAY_TRIG_TEMP_LOW,
     RELAY_TRIG_LIGHTS_ON,
     RELAY_TRIG_FEEDING,
+    RELAY_TRIG_LIGHTS_OFF,  /* appended last to preserve NVS numeric values */
 } relay_trig_t;
 
 typedef struct {

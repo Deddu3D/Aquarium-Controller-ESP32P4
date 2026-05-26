@@ -38,7 +38,7 @@ static time_t s_restore_deadline[RELAY_AUTO_MAX_RULES];
 
 static relay_auto_rule_t sanitize_rule(relay_auto_rule_t rule)
 {
-    if (rule.trigger < RELAY_TRIG_TEMP_HIGH || rule.trigger > RELAY_TRIG_FEEDING) {
+    if (rule.trigger < RELAY_TRIG_TEMP_HIGH || rule.trigger > RELAY_TRIG_LIGHTS_OFF) {
         rule.trigger = RELAY_TRIG_TEMP_HIGH;
     }
     if (rule.relay_index < 0 || rule.relay_index >= RELAY_COUNT) {
@@ -122,6 +122,8 @@ static bool evaluate_condition(const relay_auto_rule_t *rule,
         return temp_valid && temp_c < rule->temp_threshold;
     case RELAY_TRIG_LIGHTS_ON:
         return lights_on;
+    case RELAY_TRIG_LIGHTS_OFF:
+        return !lights_on;
     case RELAY_TRIG_FEEDING:
         return feeding_active;
     default:
