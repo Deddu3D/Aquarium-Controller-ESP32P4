@@ -982,6 +982,7 @@ static const char *relay_trigger_to_str(relay_trig_t trigger)
     case RELAY_TRIG_TEMP_HIGH: return "temp_high";
     case RELAY_TRIG_TEMP_LOW:  return "temp_low";
     case RELAY_TRIG_LIGHTS_ON: return "lights_on";
+    case RELAY_TRIG_LIGHTS_OFF: return "lights_off";
     case RELAY_TRIG_FEEDING:   return "feeding";
     default:                   return "temp_high";
     }
@@ -997,6 +998,9 @@ static relay_trig_t relay_trigger_from_str(const char *trigger)
     }
     if (strcmp(trigger, "lights_on") == 0) {
         return RELAY_TRIG_LIGHTS_ON;
+    }
+    if (strcmp(trigger, "lights_off") == 0) {
+        return RELAY_TRIG_LIGHTS_OFF;
     }
     if (strcmp(trigger, "feeding") == 0) {
         return RELAY_TRIG_FEEDING;
@@ -2760,11 +2764,38 @@ static esp_err_t ws_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    /* Receive and discard any incoming WS frame (ping / client messages) */
-    httpd_ws_frame_t frame = { .type = HTTPD_WS_TYPE_TEXT };
-    uint8_t buf[64] = {0};
-    frame.payload = buf;
-    httpd_ws_recv_frame(req, &frame, sizeof(buf) - 1);
+    /* Step 1: read just the frame header (max_len = 0 means header only) */
+    httpd_ws_frame_t frame;
+    memset(&frame, 0, sizeof(frame));
+    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGD(TAG, "WS recv header err fd=%d: %s",
+                 httpd_req_to_sockfd(req), esp_err_to_name(ret));
+        return ret;   /* Let httpd close the socket cleanly */
+    }
+
+    /* Step 2: receive and discard payload (if any) */
+    if (frame.len > 0) {
+        uint8_t *buf = calloc(1, frame.len);
+        if (!buf) {
+            return ESP_ERR_NO_MEM;
+        }
+        frame.payload = buf;
+        ret = httpd_ws_recv_frame(req, &frame, frame.len);
+        free(buf);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+    }
+
+    /* Respond to PING with PONG (required by RFC 6455) */
+    if (frame.type == HTTPD_WS_TYPE_PING) {
+        frame.type    = HTTPD_WS_TYPE_PONG;
+        frame.payload = NULL;
+        frame.len     = 0;
+        return httpd_ws_send_frame(req, &frame);
+    }
+
     return ESP_OK;
 }
 
