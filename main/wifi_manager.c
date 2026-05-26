@@ -275,7 +275,7 @@ static int prov_json_str(const char *json, const char *key,
     return (int)i;
 }
 
-/* ── Portal: WiFi scan endpoint (GET /api/wifi_scan) ─────────────── */
+/* ── Portal: WiFi scan endpoint (GET /api/scan) ─────────────── */
 
 static esp_err_t portal_scan_handler(httpd_req_t *req)
 {
@@ -824,7 +824,7 @@ esp_err_t wifi_manager_start_portal(void)
 
     /* JSON API endpoints used by the Android provisioning wizard */
     static const httpd_uri_t uri_scan = {
-        .uri = "/api/wifi_scan", .method = HTTP_GET,
+        .uri = "/api/scan", .method = HTTP_GET,
         .handler = portal_scan_handler, .user_ctx = NULL,
     };
     static const httpd_uri_t uri_provision = {
