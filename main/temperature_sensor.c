@@ -274,9 +274,10 @@ esp_err_t temperature_sensor_init(void)
     }
     ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
 
-    /* 4. Start periodic reading task */
+    /* 4. Start periodic reading task.
+     * Stack sized for RMT/1-Wire driver stack usage + logging + telegram calls. */
     BaseType_t ret = xTaskCreate(temperature_task, "ds18b20",
-                                 3072, NULL, 5, NULL);
+                                 4096, NULL, 5, NULL);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create temperature task");
         return ESP_ERR_NO_MEM;
