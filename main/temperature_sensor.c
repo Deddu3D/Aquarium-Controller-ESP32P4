@@ -18,6 +18,7 @@
 
 #include "esp_log.h"
 
+#include "driver/gpio.h"
 #include "onewire_bus.h"
 #include "ds18b20.h"
 
@@ -146,7 +147,30 @@ esp_err_t temperature_sensor_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* 1. Create the 1-Wire bus using the RMT peripheral */
+    /* 1. Pre-configure GPIO for ESP32-P4 compatibility.
+     *    The RMT RX path requires the input buffer on the pad to be enabled
+     *    before onewire_new_bus_rmt() installs the RX channel.  On ESP32-P4
+     *    the GPIO input is not enabled by default; calling gpio_config() with
+     *    GPIO_MODE_INPUT_OUTPUT_OD enables the input path and also activates
+     *    the internal pull-up as a supplement to the external 4.7 kΩ resistor.
+     */
+    esp_err_t err;
+    {
+        gpio_config_t io_conf = {
+            .pin_bit_mask  = (1ULL << CONFIG_DS18B20_GPIO),
+            .mode          = GPIO_MODE_INPUT_OUTPUT_OD,
+            .pull_up_en    = GPIO_PULLUP_ENABLE,
+            .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+            .intr_type     = GPIO_INTR_DISABLE,
+        };
+        err = gpio_config(&io_conf);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "GPIO pre-config failed: %s", esp_err_to_name(err));
+            return err;
+        }
+    }
+
+    /* 2. Create the 1-Wire bus using the RMT peripheral */
     onewire_bus_config_t bus_cfg = {
         .bus_gpio_num = CONFIG_DS18B20_GPIO,
     };
@@ -154,7 +178,7 @@ esp_err_t temperature_sensor_init(void)
         .max_rx_bytes = 10,   /* ROM cmd + 8-byte address + device cmd */
     };
 
-    esp_err_t err = onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_bus);
+    err = onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_bus);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create 1-Wire bus on GPIO %d: %s",
                  CONFIG_DS18B20_GPIO, esp_err_to_name(err));
@@ -162,7 +186,7 @@ esp_err_t temperature_sensor_init(void)
     }
     ESP_LOGI(TAG, "1-Wire bus created on GPIO %d", CONFIG_DS18B20_GPIO);
 
-    /* 2. Enumerate all DS18B20 devices */
+    /* 3. Enumerate all DS18B20 devices */
     onewire_device_iter_handle_t iter = NULL;
     err = onewire_new_device_iter(s_bus, &iter);
     if (err != ESP_OK) {
@@ -192,7 +216,7 @@ esp_err_t temperature_sensor_init(void)
     }
     ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
 
-    /* 3. Start periodic reading task */
+    /* 4. Start periodic reading task */
     BaseType_t ret = xTaskCreate(temperature_task, "ds18b20",
                                  3072, NULL, 5, NULL);
     if (ret != pdPASS) {
