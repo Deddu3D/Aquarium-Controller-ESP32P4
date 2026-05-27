@@ -111,7 +111,7 @@ static void temperature_task(void *arg)
         /* If bus enumeration has been lost (e.g. sensor disconnected and
          * reconnected), try to re-detect devices before the next read. */
         if (s_device_count == 0) {
-            ESP_LOGW(TAG, "No DS18B20 active – re-scanning bus …");
+            ESP_LOGW(TAG, "No DS18B20 active – re-scanning bus ...");
             scan_devices();
             if (s_device_count == 0) {
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -259,8 +259,8 @@ esp_err_t temperature_sensor_init(void)
      *    milliseconds before its 1-Wire ROM is accessible. */
     for (int attempt = 0; attempt < SENSOR_DETECT_RETRIES; attempt++) {
         if (attempt > 0) {
-            ESP_LOGW(TAG, "No DS18B20 found – retrying in %d ms (attempt %d/%d) …",
-                     SENSOR_DETECT_DELAY_MS, attempt + 1, SENSOR_DETECT_RETRIES);
+            ESP_LOGW(TAG, "No DS18B20 found – retry %d/%d in %d ms ...",
+                     attempt, SENSOR_DETECT_RETRIES - 1, SENSOR_DETECT_DELAY_MS);
             vTaskDelay(pdMS_TO_TICKS(SENSOR_DETECT_DELAY_MS));
         }
         if (scan_devices() > 0) {
