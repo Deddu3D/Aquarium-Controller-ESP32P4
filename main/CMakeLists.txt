@@ -12,7 +12,7 @@ idf_component_register(
     REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_server esp_https_server
              esp_timer log led_strip driver esp_driver_gpio esp_driver_i2c cjson mdns
              onewire_bus ds18b20 esp_http_client esp-tls app_update esp_app_format
-             esp_lcd esp_lcd_touch
+             esp_lcd esp_lcd_touch esp_lcd_touch_gt911 lvgl
     PRIV_REQUIRES esp_lcd_hx8394
     EMBED_TXTFILES
         "telegram_root_cert.pem"
