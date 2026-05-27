@@ -13,6 +13,7 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "freertos/FreeRTOS.h"
@@ -29,7 +30,7 @@
 static const char *TAG = "temp_hist";
 
 /* Task parameters */
-#define HISTORY_TASK_STACK  3072
+#define HISTORY_TASK_STACK  4096
 #define HISTORY_TASK_PRIO   4
 
 /* NVS persistence */
@@ -63,18 +64,25 @@ static void nvs_save_ring(void)
         return;
     }
 
-    temp_hist_nvs_t blob;
-    blob.head  = (int32_t)s_head;
-    blob.count = (int32_t)s_count;
-    memcpy(blob.samples, s_ring, sizeof(s_ring));
+    /* Allocate on the heap: the struct is ~3.5 KB – too large for the task stack. */
+    temp_hist_nvs_t *blob = malloc(sizeof(temp_hist_nvs_t));
+    if (blob == NULL) {
+        ESP_LOGW(TAG, "NVS save: out of heap – skipping");
+        nvs_close(h);
+        return;
+    }
+    blob->head  = (int32_t)s_head;
+    blob->count = (int32_t)s_count;
+    memcpy(blob->samples, s_ring, sizeof(s_ring));
 
-    esp_err_t err = nvs_set_blob(h, HIST_NVS_KEY_DATA, &blob, sizeof(blob));
+    esp_err_t err = nvs_set_blob(h, HIST_NVS_KEY_DATA, blob, sizeof(*blob));
     if (err == ESP_OK) {
         nvs_commit(h);
         ESP_LOGD(TAG, "Saved %d samples to NVS", s_count);
     } else {
         ESP_LOGW(TAG, "NVS blob write failed: %s", esp_err_to_name(err));
     }
+    free(blob);
     nvs_close(h);
 }
 
@@ -87,26 +95,36 @@ static void nvs_load_ring(void)
         return;
     }
 
-    temp_hist_nvs_t blob;
-    size_t blob_size = sizeof(blob);
-    esp_err_t err = nvs_get_blob(h, HIST_NVS_KEY_DATA, &blob, &blob_size);
+    /* Allocate on the heap: the struct is ~3.5 KB – too large for the task stack. */
+    temp_hist_nvs_t *blob = malloc(sizeof(temp_hist_nvs_t));
+    if (blob == NULL) {
+        ESP_LOGW(TAG, "NVS load: out of heap – starting fresh");
+        nvs_close(h);
+        return;
+    }
+
+    size_t blob_size = sizeof(*blob);
+    esp_err_t err = nvs_get_blob(h, HIST_NVS_KEY_DATA, blob, &blob_size);
     nvs_close(h);
 
-    if (err != ESP_OK || blob_size != sizeof(blob)) {
+    if (err != ESP_OK || blob_size != sizeof(*blob)) {
         ESP_LOGI(TAG, "NVS history unreadable – starting fresh");
+        free(blob);
         return;
     }
 
     /* Sanity-check the loaded metadata */
-    if (blob.count < 0 || blob.count > TEMP_HISTORY_MAX_SAMPLES ||
-        blob.head  < 0 || blob.head  >= TEMP_HISTORY_MAX_SAMPLES) {
+    if (blob->count < 0 || blob->count > TEMP_HISTORY_MAX_SAMPLES ||
+        blob->head  < 0 || blob->head  >= TEMP_HISTORY_MAX_SAMPLES) {
         ESP_LOGW(TAG, "NVS history corrupt – discarding");
+        free(blob);
         return;
     }
 
-    s_head  = (int)blob.head;
-    s_count = (int)blob.count;
-    memcpy(s_ring, blob.samples, sizeof(s_ring));
+    s_head  = (int)blob->head;
+    s_count = (int)blob->count;
+    memcpy(s_ring, blob->samples, sizeof(s_ring));
+    free(blob);
     ESP_LOGI(TAG, "Restored %d samples from NVS", s_count);
 }
 
