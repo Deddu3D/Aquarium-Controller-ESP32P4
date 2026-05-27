@@ -37,6 +37,12 @@ static const char *TAG = "ds18b20";
 /* Consecutive failures before a Telegram alert is sent */
 #define TEMP_FAULT_ALERT_THRESHOLD  5
 
+/* Retry parameters – sensor may not be ready immediately after power-on or
+ * soft reset: give it up to SENSOR_DETECT_RETRIES attempts, each separated
+ * by SENSOR_DETECT_DELAY_MS milliseconds. */
+#define SENSOR_DETECT_RETRIES   3
+#define SENSOR_DETECT_DELAY_MS  500
+
 static ds18b20_device_handle_t s_devices[MAX_DS18B20];
 static int                     s_device_count;
 static onewire_bus_handle_t    s_bus;
@@ -55,6 +61,45 @@ static int   s_avg_count;
 static int  s_fail_count   = 0;
 static bool s_alert_sent   = false;
 
+/* ── Device-scan helper ──────────────────────────────────────────── */
+
+/**
+ * @brief Scan the 1-Wire bus and populate s_devices / s_device_count.
+ *
+ * May be called from both temperature_sensor_init() (with retry) and from
+ * temperature_task() when a sensor reconnect is needed.
+ *
+ * @return Number of DS18B20 devices found (≥ 0).
+ */
+static int scan_devices(void)
+{
+    s_device_count = 0;
+
+    onewire_device_iter_handle_t iter = NULL;
+    esp_err_t err = onewire_new_device_iter(s_bus, &iter);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Device iterator creation failed: %s", esp_err_to_name(err));
+        return 0;
+    }
+
+    onewire_device_t next_dev;
+    while (s_device_count < MAX_DS18B20) {
+        err = onewire_device_iter_get_next(iter, &next_dev);
+        if (err != ESP_OK) {
+            break;   /* ESP_ERR_NOT_FOUND = no more devices */
+        }
+        ds18b20_config_t ds_cfg = {};
+        if (ds18b20_new_device_from_enumeration(&next_dev, &ds_cfg,
+                               &s_devices[s_device_count]) == ESP_OK) {
+            ESP_LOGI(TAG, "Found DS18B20 #%d", s_device_count);
+            s_device_count++;
+        }
+    }
+    onewire_del_device_iter(iter);
+
+    return s_device_count;
+}
+
 /* ── Reading task ────────────────────────────────────────────────── */
 
 static void temperature_task(void *arg)
@@ -63,6 +108,24 @@ static void temperature_task(void *arg)
     const TickType_t interval = pdMS_TO_TICKS(CONFIG_DS18B20_READ_INTERVAL_MS);
 
     while (1) {
+        /* If bus enumeration has been lost (e.g. sensor disconnected and
+         * reconnected), try to re-detect devices before the next read. */
+        if (s_device_count == 0) {
+            ESP_LOGW(TAG, "No DS18B20 active – re-scanning bus ...");
+            scan_devices();
+            if (s_device_count == 0) {
+                xSemaphoreTake(s_mutex, portMAX_DELAY);
+                s_valid = false;
+                xSemaphoreGive(s_mutex);
+                vTaskDelay(interval);
+                continue;
+            }
+            ESP_LOGI(TAG, "Re-scan found %d DS18B20 device(s)", s_device_count);
+            /* Reset fault state so alerts can fire again if needed */
+            s_fail_count = 0;
+            s_alert_sent = false;
+        }
+
         /* Trigger conversion on all devices sharing the bus */
         esp_err_t err = ds18b20_trigger_temperature_conversion(s_devices[0]);
         if (err != ESP_OK) {
@@ -79,6 +142,9 @@ static void temperature_task(void *arg)
                     "Controllare il sensore e il cablaggio.");
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 conversion trigger failed repeatedly");
+                /* Force a re-scan on the next cycle so that a reconnected
+                 * sensor is picked up automatically. */
+                s_device_count = 0;
             }
             vTaskDelay(interval);
             continue;
@@ -130,6 +196,8 @@ static void temperature_task(void *arg)
                     "Controllare il sensore e il cablaggio.");
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 read failed repeatedly");
+                /* Force a re-scan on the next cycle. */
+                s_device_count = 0;
             }
         }
 
@@ -186,29 +254,19 @@ esp_err_t temperature_sensor_init(void)
     }
     ESP_LOGI(TAG, "1-Wire bus created on GPIO %d", CONFIG_DS18B20_GPIO);
 
-    /* 3. Enumerate all DS18B20 devices */
-    onewire_device_iter_handle_t iter = NULL;
-    err = onewire_new_device_iter(s_bus, &iter);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create device iterator: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    s_device_count = 0;
-    onewire_device_t next_dev;
-    while (s_device_count < MAX_DS18B20) {
-        err = onewire_device_iter_get_next(iter, &next_dev);
-        if (err != ESP_OK) {
-            break;   /* ESP_ERR_NOT_FOUND = no more devices */
+    /* 3. Enumerate DS18B20 devices – retry if none found immediately.
+     *    After a power-on or soft reset the sensor may need a few hundred
+     *    milliseconds before its 1-Wire ROM is accessible. */
+    for (int attempt = 0; attempt < SENSOR_DETECT_RETRIES; attempt++) {
+        if (attempt > 0) {
+            ESP_LOGW(TAG, "No DS18B20 found – retry %d/%d in %d ms ...",
+                     attempt, SENSOR_DETECT_RETRIES - 1, SENSOR_DETECT_DELAY_MS);
+            vTaskDelay(pdMS_TO_TICKS(SENSOR_DETECT_DELAY_MS));
         }
-        ds18b20_config_t ds_cfg = {};
-        if (ds18b20_new_device_from_enumeration(&next_dev, &ds_cfg,
-                               &s_devices[s_device_count]) == ESP_OK) {
-            ESP_LOGI(TAG, "Found DS18B20 #%d", s_device_count);
-            s_device_count++;
+        if (scan_devices() > 0) {
+            break;
         }
     }
-    onewire_del_device_iter(iter);
 
     if (s_device_count == 0) {
         ESP_LOGE(TAG, "No DS18B20 sensors found on GPIO %d", CONFIG_DS18B20_GPIO);
