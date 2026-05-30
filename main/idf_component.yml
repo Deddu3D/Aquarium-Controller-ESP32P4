@@ -9,10 +9,10 @@ dependencies:
   ## LED Strip: addressable LED driver (WS2812B) via RMT peripheral
   espressif/led_strip:
     version: "^3.0.0"
-  ## OneWire bus driver (required by DS18B20; not bundled in ESP-IDF v6.0)
-  espressif/onewire_bus:
-    version: "^1.1.0"
   ## DS18B20: digital temperature sensor (1-Wire) via RMT peripheral
+  ## Note: onewire_bus is a PUBLIC transitive dependency of ds18b20 and must
+  ## NOT be listed here separately – doing so registers onewire_bus twice and
+  ## prevents temperature_sensor.c from compiling.
   espressif/ds18b20:
     version: "^0.4.0"
   ## LVGL: embedded graphics library for the touch display
