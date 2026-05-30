@@ -7,11 +7,23 @@
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
+ *
+ * Design notes
+ * ────────────
+ * • Uses ds18b20_new_device_from_bus() (Skip ROM mode) – no ROM enumeration
+ *   iterator.  A single sensor is the typical case and Skip ROM avoids the
+ *   iterator's post-search RMT state that caused failures on ESP32-P4.
+ * • Temperature conversion is triggered via ds18b20_trigger_temperature_conversion_for_all()
+ *   then read back with ds18b20_get_temperature(), matching the pattern of
+ *   the official espressif/ds18b20 example.
+ * • No gpio_config() override after bus creation – the onewire_bus driver
+ *   handles all GPIO setup internally (gpio_od_enable + pull mode).
+ * • On any read failure the bus and device handles are destroyed and
+ *   recreated on the next cycle, providing clean-slate recovery.
  */
 
 #include <string.h>
 #include <stdio.h>
-#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,7 +31,6 @@
 
 #include "esp_log.h"
 
-#include "driver/gpio.h"
 #include "onewire_bus.h"
 #include "ds18b20.h"
 
@@ -29,175 +40,93 @@
 
 static const char *TAG = "ds18b20";
 
-/* Maximum number of DS18B20 devices we support on one bus */
-#define MAX_DS18B20  4
-
 /* Moving average window size – smooths out sensor noise */
 #define TEMP_AVG_WINDOW  3
 
 /* Consecutive failures before a Telegram alert is sent */
 #define TEMP_FAULT_ALERT_THRESHOLD  5
 
-/* Retry parameters – sensor may not be ready immediately after power-on or
- * soft reset: give it up to SENSOR_DETECT_RETRIES attempts, each separated
- * by SENSOR_DETECT_DELAY_MS milliseconds. */
-#define SENSOR_DETECT_RETRIES   3
-#define SENSOR_DETECT_DELAY_MS  500
+/* ── Module state ────────────────────────────────────────────────── */
 
-static ds18b20_device_handle_t s_devices[MAX_DS18B20];
-static int                     s_device_count;
-static onewire_bus_handle_t    s_bus;
+static onewire_bus_handle_t    s_bus    = NULL;
+static ds18b20_device_handle_t s_device = NULL;
 
 /* Cached reading – protected by mutex for safe cross-task access */
-static SemaphoreHandle_t s_mutex;
-static float s_temperature;
-static bool  s_valid;
+static SemaphoreHandle_t s_mutex      = NULL;
+static float             s_temperature = 0.0f;
+static bool              s_valid       = false;
 
 /* Moving average ring buffer */
 static float s_avg_buf[TEMP_AVG_WINDOW];
-static int   s_avg_idx;
-static int   s_avg_count;
+static int   s_avg_idx   = 0;
+static int   s_avg_count = 0;
 
 /* Fault alert tracking */
-static int  s_fail_count   = 0;
-static bool s_alert_sent   = false;
+static int  s_fail_count = 0;
+static bool s_alert_sent = false;
 
-/* ── Bus lifecycle helpers ───────────────────────────────────────── */
+/* ── Bus / device lifecycle ──────────────────────────────────────── */
 
 /**
- * @brief Delete the current 1-Wire bus and allocate a fresh one.
- *
- * After any RMT receive timeout the RX channel is left in a disabled state
- * and subsequent calls fail with "channel not in enable state".  The only
- * reliable recovery is to delete the bus handle and create a new one, which
- * resets the RMT channel back to the idle/enabled state.
- *
- * On ESP32-P4, onewire_new_bus_rmt() installs the RMT TX and RX channels and
- * configures the GPIO accordingly, but the final GPIO mode may not have the
- * input path enabled (required by RMT RX to sample the bus and detect the
- * sensor's presence pulse).  Calling gpio_config() with
- * GPIO_MODE_INPUT_OUTPUT_OD *after* bus creation re-enables the input path
- * without disturbing the RMT signal routing through the GPIO matrix.
- *
- * @return ESP_OK on success, error code otherwise.
+ * @brief Release existing bus and device handles (safe to call with NULLs).
  */
-static esp_err_t recreate_bus(void)
+static void destroy_bus_and_device(void)
 {
+    if (s_device) {
+        ds18b20_del_device(s_device);
+        s_device = NULL;
+    }
     if (s_bus) {
         onewire_bus_del(s_bus);
         s_bus = NULL;
     }
+}
+
+/**
+ * @brief Create the 1-Wire bus and a device handle (Skip ROM mode).
+ *
+ * Uses ds18b20_new_device_from_bus() so that a single sensor is addressed
+ * via the Skip ROM command – no ROM enumeration iterator is needed.
+ * The bus is created fresh, relying entirely on the onewire_bus driver for
+ * GPIO setup (gpio_od_enable + floating pull mode when external pull-up
+ * is present on the line).
+ *
+ * @return ESP_OK on success, error code otherwise.
+ */
+static esp_err_t create_bus_and_device(void)
+{
+    destroy_bus_and_device();
 
     onewire_bus_config_t bus_cfg = {
         .bus_gpio_num = CONFIG_DS18B20_GPIO,
+        /* External 4.7 kΩ pull-up is present on the line; leave the weak
+         * internal pull-up disabled so it does not interfere. */
+        .flags = { .en_pull_up = 0 },
     };
     onewire_bus_rmt_config_t rmt_cfg = {
-        .max_rx_bytes = 10,   /* ROM cmd + 8-byte address + device cmd */
+        /* 1 byte ROM cmd + 8 byte address + 1 byte function cmd = 10 bytes */
+        .max_rx_bytes = 10,
     };
 
     esp_err_t err = onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_bus);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to (re)create 1-Wire bus on GPIO %d: %s",
+        ESP_LOGE(TAG, "1-Wire bus creation failed on GPIO %d: %s",
                  CONFIG_DS18B20_GPIO, esp_err_to_name(err));
         return err;
     }
 
-    /* Re-apply open-drain + input-enabled mode AFTER bus creation.
-     * onewire_new_bus_rmt() may configure the GPIO as output-only for the
-     * RMT TX channel; the subsequent gpio_config() restores the input path so
-     * the RMT RX channel can sample the bus (presence pulse detection). */
-    gpio_config_t io_conf = {
-        .pin_bit_mask  = (1ULL << CONFIG_DS18B20_GPIO),
-        .mode          = GPIO_MODE_INPUT_OUTPUT_OD,
-        .pull_up_en    = GPIO_PULLUP_ENABLE,
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
-    };
-    err = gpio_config(&io_conf);
+    ds18b20_config_t ds_cfg = {};
+    err = ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_device);
     if (err != ESP_OK) {
-        /* Non-fatal: the bus handle is valid; log and continue. */
-        ESP_LOGW(TAG, "GPIO re-config after bus creation failed: %s",
+        ESP_LOGE(TAG, "DS18B20 device handle creation failed: %s",
                  esp_err_to_name(err));
+        onewire_bus_del(s_bus);
+        s_bus = NULL;
+        return err;
     }
+
+    ESP_LOGI(TAG, "1-Wire bus ready on GPIO %d (Skip ROM mode)", CONFIG_DS18B20_GPIO);
     return ESP_OK;
-}
-
-/**
- * @brief Recreate the 1-Wire bus and mark devices as needing re-scan.
- *
- * Called whenever a bus operation fails: the RMT channel may have been left
- * in a disabled state by a timeout.  Existing device handles become invalid
- * once the bus is deleted, so s_device_count is zeroed to force scan_devices()
- * on the next task iteration.  If recreate_bus() itself fails the count is
- * still zeroed – the next scan attempt will retry bus creation again.
- */
-static void reset_bus_and_devices(void)
-{
-    esp_err_t err = recreate_bus();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Bus recreation failed (%s) – will retry on next scan",
-                 esp_err_to_name(err));
-    }
-    s_device_count = 0;
-}
-
-/* ── Device-scan helper ──────────────────────────────────────────── */
-
-/**
- * @brief Scan the 1-Wire bus and populate s_devices / s_device_count.
- *
- * May be called from both temperature_sensor_init() (with retry) and from
- * temperature_task() when a sensor reconnect is needed.
- *
- * @return Number of DS18B20 devices found (≥ 0).
- */
-static int scan_devices(void)
-{
-    s_device_count = 0;
-
-    /* Primary path: ROM enumeration – finds all devices on the bus */
-    onewire_device_iter_handle_t iter = NULL;
-    esp_err_t err = onewire_new_device_iter(s_bus, &iter);
-    if (err == ESP_OK) {
-        onewire_device_t next_dev;
-        while (s_device_count < MAX_DS18B20) {
-            err = onewire_device_iter_get_next(iter, &next_dev);
-            if (err != ESP_OK) {
-                break;   /* ESP_ERR_NOT_FOUND = no more devices */
-            }
-            ds18b20_config_t ds_cfg = {};
-            if (ds18b20_new_device_from_enumeration(&next_dev, &ds_cfg,
-                                   &s_devices[s_device_count]) == ESP_OK) {
-                ESP_LOGI(TAG, "Found DS18B20 #%d via ROM search", s_device_count);
-                s_device_count++;
-            }
-        }
-        onewire_del_device_iter(iter);
-    } else {
-        ESP_LOGW(TAG, "Device iterator creation failed: %s", esp_err_to_name(err));
-    }
-
-    /* Fallback: if ROM search found nothing, assume a single device on the bus
-     * and register it without enumeration (mirrors the Arduino DallasTemperature
-     * getTempCByIndex(0) approach used in the working S3 firmware).
-     *
-     * IMPORTANT: the ROM search (onewire_device_iter_get_next) may have ended
-     * with an RMT receive timeout, which leaves the RX channel in a disabled
-     * state.  Any subsequent bus operation will fail with "channel not in
-     * enable state".  Recreate the bus here so that the direct probe – and
-     * every read that follows – gets a fresh, enabled RMT channel. */
-    if (s_device_count == 0) {
-        if (recreate_bus() != ESP_OK) {
-            return 0;   /* bus allocation failed – caller will retry later */
-        }
-        ds18b20_config_t ds_cfg = {};
-        if (ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_devices[0]) == ESP_OK) {
-            ESP_LOGI(TAG, "Found DS18B20 #0 via direct bus probe (no ROM search)");
-            s_device_count = 1;
-        }
-    }
-
-    return s_device_count;
 }
 
 /* ── Reading task ────────────────────────────────────────────────── */
@@ -208,29 +137,23 @@ static void temperature_task(void *arg)
     const TickType_t interval = pdMS_TO_TICKS(CONFIG_DS18B20_READ_INTERVAL_MS);
 
     while (1) {
-        /* If bus enumeration has been lost (e.g. sensor disconnected and
-         * reconnected), try to re-detect devices before the next read. */
-        if (s_device_count == 0) {
-            ESP_LOGW(TAG, "No DS18B20 active – recreating bus and re-scanning ...");
-            /* Recreate the bus first: a previous RMT timeout leaves the RX
-             * channel disabled; a fresh bus handle resets the channel state. */
-            recreate_bus();
-            scan_devices();
-            if (s_device_count == 0) {
+        /* Recreate bus + device if they were torn down after a failure. */
+        if (s_bus == NULL || s_device == NULL) {
+            ESP_LOGW(TAG, "Recreating 1-Wire bus and device handle ...");
+            if (create_bus_and_device() != ESP_OK) {
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_valid = false;
                 xSemaphoreGive(s_mutex);
                 vTaskDelay(interval);
                 continue;
             }
-            ESP_LOGI(TAG, "Re-scan found %d DS18B20 device(s)", s_device_count);
-            /* Reset fault state so alerts can fire again if needed */
-            s_fail_count = 0;
-            s_alert_sent = false;
         }
 
-        /* Trigger conversion on all devices sharing the bus */
-        esp_err_t err = ds18b20_trigger_temperature_conversion(s_devices[0]);
+        /* Step 1 – Trigger temperature conversion for every sensor on the bus.
+         * The driver waits the appropriate conversion time (up to 750 ms for
+         * 12-bit) before returning so ds18b20_get_temperature() can be called
+         * directly afterward. */
+        esp_err_t err = ds18b20_trigger_temperature_conversion_for_all(s_bus);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Conversion trigger failed: %s", esp_err_to_name(err));
             xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -246,24 +169,22 @@ static void temperature_task(void *arg)
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 conversion trigger failed repeatedly");
             }
-            /* Any bus failure (timeout or invalid-state) leaves the RMT RX
-             * channel disabled.  Recreate the bus immediately so the channel
-             * is reset before the next interval.  Set s_device_count = 0 so
-             * the top of the loop re-runs scan_devices() to re-register device
-             * handles against the new bus handle. */
-            reset_bus_and_devices();
+            /* Destroy bus + device so the next iteration starts clean. */
+            destroy_bus_and_device();
             vTaskDelay(interval);
             continue;
         }
 
-        /* Read the first sensor (primary water probe) */
+        /* Step 2 – Read back the scratchpad. The library returns
+         * ESP_ERR_INVALID_STATE when the sensor still holds the 85 °C
+         * power-on reset value; the check below is an additional defensive
+         * guard in case that path is not triggered. */
         float temp = 0.0f;
-        err = ds18b20_get_temperature(s_devices[0], &temp);
+        err = ds18b20_get_temperature(s_device, &temp);
         if (err == ESP_OK) {
-            /* Filter out the DS18B20 power-on reset value (85 °C) which the
-             * sensor outputs before completing its first conversion cycle. */
-            if (fabsf(temp - 85.0f) < 0.01f) {
-                ESP_LOGW(TAG, "Ignoring 85 °C power-on reset value");
+            /* Reject the 85 °C power-on default value */
+            if (temp >= 84.9f && temp <= 85.1f) {
+                ESP_LOGD(TAG, "Discarding 85 °C power-on reset value");
                 vTaskDelay(interval);
                 continue;
             }
@@ -311,9 +232,8 @@ static void temperature_task(void *arg)
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 read failed repeatedly");
             }
-            /* Recreate bus immediately for the same reason as after a
-             * trigger failure: an RMT timeout disables the RX channel. */
-            reset_bus_and_devices();
+            /* Destroy bus + device so the next iteration starts clean. */
+            destroy_bus_and_device();
         }
 
         vTaskDelay(interval);
@@ -330,48 +250,20 @@ esp_err_t temperature_sensor_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* 1. Create the 1-Wire bus using the RMT peripheral.
-     *    recreate_bus() also applies the GPIO_MODE_INPUT_OUTPUT_OD config after
-     *    bus creation so the RMT RX channel can sample the bus on ESP32-P4. */
-    esp_err_t err = recreate_bus();
-    if (err != ESP_OK) {
-        return err;
-    }
-    ESP_LOGI(TAG, "1-Wire bus created on GPIO %d", CONFIG_DS18B20_GPIO);
-
-    /* 2. Enumerate DS18B20 devices – retry if none found immediately.
-     *    After a power-on or soft reset the sensor may need a few hundred
-     *    milliseconds before its 1-Wire ROM is accessible.
-     *    Between attempts the bus is deleted and recreated: a timeout leaves
-     *    the RMT RX channel in a disabled state; only a fresh bus handle
-     *    resets the channel back to enabled. */
-    for (int attempt = 0; attempt < SENSOR_DETECT_RETRIES; attempt++) {
-        if (attempt > 0) {
-            ESP_LOGW(TAG, "No DS18B20 found – retry %d/%d in %d ms ...",
-                     attempt, SENSOR_DETECT_RETRIES - 1, SENSOR_DETECT_DELAY_MS);
-            vTaskDelay(pdMS_TO_TICKS(SENSOR_DETECT_DELAY_MS));
-            recreate_bus();   /* ignore error – scan_devices will also fail and loop continues */
-        }
-        if (scan_devices() > 0) {
-            break;
-        }
+    /* Create the 1-Wire bus and device handle.
+     * The background task will keep retrying if the sensor is not
+     * connected at boot time, so a failure here is non-fatal. */
+    if (create_bus_and_device() != ESP_OK) {
+        ESP_LOGW(TAG, "Initial bus/device setup failed – "
+                 "background task will keep retrying");
     }
 
-    if (s_device_count == 0) {
-        ESP_LOGW(TAG, "No DS18B20 found at startup on GPIO %d – "
-                 "background task will keep retrying", CONFIG_DS18B20_GPIO);
-    } else {
-        ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
-    }
-
-    /* 3. Start periodic reading task.
-     *    Always started so that the reconnection loop inside the task can
-     *    detect a sensor that was absent (or not yet ready) at boot time.
-     * Stack sized for RMT/1-Wire driver stack usage + logging + telegram calls. */
+    /* Start the periodic reading task. */
     BaseType_t ret = xTaskCreate(temperature_task, "ds18b20",
                                  4096, NULL, 5, NULL);
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create temperature task");
+        destroy_bus_and_device();
         return ESP_ERR_NO_MEM;
     }
 
@@ -380,11 +272,7 @@ esp_err_t temperature_sensor_init(void)
 
 bool temperature_sensor_get(float *temp_c)
 {
-    if (temp_c == NULL) {
-        return false;
-    }
-    /* Module not initialised – sensor probe failed at startup. */
-    if (s_mutex == NULL) {
+    if (temp_c == NULL || s_mutex == NULL) {
         return false;
     }
     bool valid;
