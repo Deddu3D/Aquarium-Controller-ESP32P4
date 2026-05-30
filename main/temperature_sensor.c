@@ -150,8 +150,9 @@ static void temperature_task(void *arg)
         }
 
         /* Step 1 – Trigger temperature conversion for every sensor on the bus.
-         * The driver waits the appropriate conversion time (800 ms for 12-bit)
-         * before returning so ds18b20_get_temperature() can be called directly. */
+         * The driver waits the appropriate conversion time (up to 750 ms for
+         * 12-bit) before returning so ds18b20_get_temperature() can be called
+         * directly afterward. */
         esp_err_t err = ds18b20_trigger_temperature_conversion_for_all(s_bus);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "Conversion trigger failed: %s", esp_err_to_name(err));
@@ -174,10 +175,20 @@ static void temperature_task(void *arg)
             continue;
         }
 
-        /* Step 2 – Read back the scratchpad. */
+        /* Step 2 – Read back the scratchpad. The library returns
+         * ESP_ERR_INVALID_STATE when the sensor still holds the 85 °C
+         * power-on reset value; the check below is an additional defensive
+         * guard in case that path is not triggered. */
         float temp = 0.0f;
         err = ds18b20_get_temperature(s_device, &temp);
         if (err == ESP_OK) {
+            /* Reject the 85 °C power-on default value */
+            if (temp >= 84.9f && temp <= 85.1f) {
+                ESP_LOGD(TAG, "Discarding 85 °C power-on reset value");
+                vTaskDelay(interval);
+                continue;
+            }
+
             /* Apply calibration offset from Kconfig */
             temp += ((float)CONFIG_DS18B20_CALIBRATION_OFFSET_CENTI) / 100.0f;
 
