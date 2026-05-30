@@ -198,10 +198,14 @@ static void temperature_task(void *arg)
                     "Controllare il sensore e il cablaggio.");
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 conversion trigger failed repeatedly");
-                /* Force a re-scan on the next cycle so that a reconnected
-                 * sensor is picked up automatically. */
-                s_device_count = 0;
             }
+            /* Any bus failure (timeout or invalid-state) leaves the RMT RX
+             * channel disabled.  Recreate the bus immediately so the channel
+             * is reset before the next interval.  Set s_device_count = 0 so
+             * the top of the loop re-runs scan_devices() to re-register device
+             * handles against the new bus handle. */
+            recreate_bus();
+            s_device_count = 0;
             vTaskDelay(interval);
             continue;
         }
@@ -260,9 +264,11 @@ static void temperature_task(void *arg)
                     "Controllare il sensore e il cablaggio.");
                 event_log_add(EVT_SENSOR_FAULT,
                               "DS18B20 read failed repeatedly");
-                /* Force a re-scan on the next cycle. */
-                s_device_count = 0;
             }
+            /* Recreate bus immediately for the same reason as after a
+             * trigger failure: an RMT timeout disables the RX channel. */
+            recreate_bus();
+            s_device_count = 0;
         }
 
         vTaskDelay(interval);
