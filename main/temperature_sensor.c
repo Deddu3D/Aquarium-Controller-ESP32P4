@@ -11,6 +11,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -109,27 +110,38 @@ static int scan_devices(void)
 {
     s_device_count = 0;
 
+    /* Primary path: ROM enumeration – finds all devices on the bus */
     onewire_device_iter_handle_t iter = NULL;
     esp_err_t err = onewire_new_device_iter(s_bus, &iter);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Device iterator creation failed: %s", esp_err_to_name(err));
-        return 0;
+    if (err == ESP_OK) {
+        onewire_device_t next_dev;
+        while (s_device_count < MAX_DS18B20) {
+            err = onewire_device_iter_get_next(iter, &next_dev);
+            if (err != ESP_OK) {
+                break;   /* ESP_ERR_NOT_FOUND = no more devices */
+            }
+            ds18b20_config_t ds_cfg = {};
+            if (ds18b20_new_device_from_enumeration(&next_dev, &ds_cfg,
+                                   &s_devices[s_device_count]) == ESP_OK) {
+                ESP_LOGI(TAG, "Found DS18B20 #%d via ROM search", s_device_count);
+                s_device_count++;
+            }
+        }
+        onewire_del_device_iter(iter);
+    } else {
+        ESP_LOGW(TAG, "Device iterator creation failed: %s", esp_err_to_name(err));
     }
 
-    onewire_device_t next_dev;
-    while (s_device_count < MAX_DS18B20) {
-        err = onewire_device_iter_get_next(iter, &next_dev);
-        if (err != ESP_OK) {
-            break;   /* ESP_ERR_NOT_FOUND = no more devices */
-        }
+    /* Fallback: if ROM search found nothing, assume a single device on the bus
+     * and register it without enumeration (mirrors the Arduino DallasTemperature
+     * getTempCByIndex(0) approach used in the working S3 firmware). */
+    if (s_device_count == 0) {
         ds18b20_config_t ds_cfg = {};
-        if (ds18b20_new_device_from_enumeration(&next_dev, &ds_cfg,
-                               &s_devices[s_device_count]) == ESP_OK) {
-            ESP_LOGI(TAG, "Found DS18B20 #%d", s_device_count);
-            s_device_count++;
+        if (ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_devices[0]) == ESP_OK) {
+            ESP_LOGI(TAG, "Found DS18B20 #0 via direct bus probe (no ROM search)");
+            s_device_count = 1;
         }
     }
-    onewire_del_device_iter(iter);
 
     return s_device_count;
 }
@@ -191,6 +203,14 @@ static void temperature_task(void *arg)
         float temp = 0.0f;
         err = ds18b20_get_temperature(s_devices[0], &temp);
         if (err == ESP_OK) {
+            /* Filter out the DS18B20 power-on reset value (85 °C) which the
+             * sensor outputs before completing its first conversion cycle. */
+            if (fabsf(temp - 85.0f) < 0.01f) {
+                ESP_LOGW(TAG, "Ignoring 85 °C power-on reset value");
+                vTaskDelay(interval);
+                continue;
+            }
+
             /* Apply calibration offset from Kconfig */
             temp += ((float)CONFIG_DS18B20_CALIBRATION_OFFSET_CENTI) / 100.0f;
 
