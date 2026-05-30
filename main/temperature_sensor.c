@@ -76,7 +76,7 @@ static bool s_alert_sent   = false;
 static esp_err_t recreate_bus(void)
 {
     if (s_bus) {
-        onewire_del_bus(s_bus);
+        onewire_bus_del(s_bus);
         s_bus = NULL;
     }
 
