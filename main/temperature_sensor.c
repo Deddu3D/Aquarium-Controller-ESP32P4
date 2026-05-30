@@ -293,9 +293,7 @@ esp_err_t temperature_sensor_init(void)
             ESP_LOGW(TAG, "No DS18B20 found – retry %d/%d in %d ms ...",
                      attempt, SENSOR_DETECT_RETRIES - 1, SENSOR_DETECT_DELAY_MS);
             vTaskDelay(pdMS_TO_TICKS(SENSOR_DETECT_DELAY_MS));
-            if (recreate_bus() != ESP_OK) {
-                continue;
-            }
+            recreate_bus();   /* ignore error – scan_devices will also fail and loop continues */
         }
         if (scan_devices() > 0) {
             break;
@@ -303,12 +301,15 @@ esp_err_t temperature_sensor_init(void)
     }
 
     if (s_device_count == 0) {
-        ESP_LOGE(TAG, "No DS18B20 sensors found on GPIO %d", CONFIG_DS18B20_GPIO);
-        return ESP_FAIL;
+        ESP_LOGW(TAG, "No DS18B20 found at startup on GPIO %d – "
+                 "background task will keep retrying", CONFIG_DS18B20_GPIO);
+    } else {
+        ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
     }
-    ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
 
     /* 4. Start periodic reading task.
+     *    Always started so that the reconnection loop inside the task can
+     *    detect a sensor that was absent (or not yet ready) at boot time.
      * Stack sized for RMT/1-Wire driver stack usage + logging + telegram calls. */
     BaseType_t ret = xTaskCreate(temperature_task, "ds18b20",
                                  4096, NULL, 5, NULL);
