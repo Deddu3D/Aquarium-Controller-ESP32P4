@@ -134,8 +134,15 @@ static int scan_devices(void)
 
     /* Fallback: if ROM search found nothing, assume a single device on the bus
      * and register it without enumeration (mirrors the Arduino DallasTemperature
-     * getTempCByIndex(0) approach used in the working S3 firmware). */
+     * getTempCByIndex(0) approach used in the working S3 firmware).
+     *
+     * IMPORTANT: the ROM search (onewire_device_iter_get_next) may have ended
+     * with an RMT receive timeout, which leaves the RX channel in a disabled
+     * state.  Any subsequent bus operation will fail with "channel not in
+     * enable state".  Recreate the bus here so that the direct probe – and
+     * every read that follows – gets a fresh, enabled RMT channel. */
     if (s_device_count == 0) {
+        recreate_bus();
         ds18b20_config_t ds_cfg = {};
         if (ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_devices[0]) == ESP_OK) {
             ESP_LOGI(TAG, "Found DS18B20 #0 via direct bus probe (no ROM search)");
