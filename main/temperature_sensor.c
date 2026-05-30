@@ -46,6 +46,10 @@ static const char *TAG = "ds18b20";
 /* Consecutive failures before a Telegram alert is sent */
 #define TEMP_FAULT_ALERT_THRESHOLD  5
 
+/* Exponential back-off: initial delay equals the read interval; doubles on
+ * each consecutive failure up to this cap (milliseconds). */
+#define TEMP_BACKOFF_MAX_MS  60000
+
 /* ── Module state ────────────────────────────────────────────────── */
 
 static onewire_bus_handle_t    s_bus    = NULL;
@@ -64,6 +68,23 @@ static int   s_avg_count = 0;
 /* Fault alert tracking */
 static int  s_fail_count = 0;
 static bool s_alert_sent = false;
+
+/* Back-off state: current delay in ms, doubles on each failure */
+static uint32_t s_backoff_ms = 0;
+
+/* ── Helpers ─────────────────────────────────────────────────────── */
+
+/**
+ * @brief Double the back-off delay, capping it at TEMP_BACKOFF_MAX_MS.
+ */
+static void advance_backoff(void)
+{
+    if (s_backoff_ms < TEMP_BACKOFF_MAX_MS) {
+        s_backoff_ms = (s_backoff_ms * 2 < TEMP_BACKOFF_MAX_MS)
+                       ? s_backoff_ms * 2
+                       : TEMP_BACKOFF_MAX_MS;
+    }
+}
 
 /* ── Bus / device lifecycle ──────────────────────────────────────── */
 
@@ -85,11 +106,11 @@ static void destroy_bus_and_device(void)
 /**
  * @brief Create the 1-Wire bus and a device handle (Skip ROM mode).
  *
- * Uses ds18b20_new_device_from_bus() so that a single sensor is addressed
- * via the Skip ROM command – no ROM enumeration iterator is needed.
- * The bus is created fresh, relying entirely on the onewire_bus driver for
- * GPIO setup (gpio_od_enable + floating pull mode when external pull-up
- * is present on the line).
+ * Tries first without the internal pull-up (assuming an external 4.7 kΩ
+ * resistor is present).  If bus creation succeeds but no device handle can
+ * be obtained, or if any subsequent step fails, the function falls back to
+ * enabling the internal weak pull-up (en_pull_up = 1) and retries once –
+ * this helps when the external resistor is absent or too weak.
  *
  * @return ESP_OK on success, error code otherwise.
  */
@@ -97,36 +118,46 @@ static esp_err_t create_bus_and_device(void)
 {
     destroy_bus_and_device();
 
-    onewire_bus_config_t bus_cfg = {
-        .bus_gpio_num = CONFIG_DS18B20_GPIO,
-        /* External 4.7 kΩ pull-up is present on the line; leave the weak
-         * internal pull-up disabled so it does not interfere. */
-        .flags = { .en_pull_up = 0 },
-    };
     onewire_bus_rmt_config_t rmt_cfg = {
         /* 1 byte ROM cmd + 8 byte address + 1 byte function cmd = 10 bytes */
         .max_rx_bytes = 10,
     };
 
-    esp_err_t err = onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_bus);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "1-Wire bus creation failed on GPIO %d: %s",
-                 CONFIG_DS18B20_GPIO, esp_err_to_name(err));
-        return err;
+    /* Try without internal pull-up first (external 4.7 kΩ assumed), then
+     * fall back to the internal pull-up if the first attempt fails. */
+    static const int pull_up_tries[] = { 0, 1 };
+    esp_err_t err = ESP_FAIL;
+
+    for (int t = 0; t < (int)(sizeof(pull_up_tries) / sizeof(pull_up_tries[0])); t++) {
+        onewire_bus_config_t bus_cfg = {
+            .bus_gpio_num = CONFIG_DS18B20_GPIO,
+            .flags = { .en_pull_up = pull_up_tries[t] },
+        };
+
+        err = onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_bus);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "1-Wire bus creation failed on GPIO %d (pull_up=%d): %s",
+                     CONFIG_DS18B20_GPIO, pull_up_tries[t], esp_err_to_name(err));
+            s_bus = NULL;
+            continue;   /* try next pull-up setting */
+        }
+
+        ds18b20_config_t ds_cfg = {};
+        err = ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_device);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "DS18B20 device handle creation failed (pull_up=%d): %s",
+                     pull_up_tries[t], esp_err_to_name(err));
+            onewire_bus_del(s_bus);
+            s_bus = NULL;
+            continue;   /* try next pull-up setting */
+        }
+
+        ESP_LOGI(TAG, "1-Wire bus ready on GPIO %d (Skip ROM mode, pull_up=%d)",
+                 CONFIG_DS18B20_GPIO, pull_up_tries[t]);
+        return ESP_OK;
     }
 
-    ds18b20_config_t ds_cfg = {};
-    err = ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_device);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "DS18B20 device handle creation failed: %s",
-                 esp_err_to_name(err));
-        onewire_bus_del(s_bus);
-        s_bus = NULL;
-        return err;
-    }
-
-    ESP_LOGI(TAG, "1-Wire bus ready on GPIO %d (Skip ROM mode)", CONFIG_DS18B20_GPIO);
-    return ESP_OK;
+    return err;
 }
 
 /* ── Reading task ────────────────────────────────────────────────── */
@@ -134,7 +165,8 @@ static esp_err_t create_bus_and_device(void)
 static void temperature_task(void *arg)
 {
     (void)arg;
-    const TickType_t interval = pdMS_TO_TICKS(CONFIG_DS18B20_READ_INTERVAL_MS);
+    const uint32_t base_interval_ms = CONFIG_DS18B20_READ_INTERVAL_MS;
+    s_backoff_ms = base_interval_ms;   /* start at the normal interval */
 
     while (1) {
         /* Recreate bus + device if they were torn down after a failure. */
@@ -144,7 +176,9 @@ static void temperature_task(void *arg)
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_valid = false;
                 xSemaphoreGive(s_mutex);
-                vTaskDelay(interval);
+                vTaskDelay(pdMS_TO_TICKS(s_backoff_ms));
+                /* Double the back-off, capped at TEMP_BACKOFF_MAX_MS */
+                advance_backoff();
                 continue;
             }
         }
@@ -171,7 +205,9 @@ static void temperature_task(void *arg)
             }
             /* Destroy bus + device so the next iteration starts clean. */
             destroy_bus_and_device();
-            vTaskDelay(interval);
+            vTaskDelay(pdMS_TO_TICKS(s_backoff_ms));
+            /* Double the back-off, capped at TEMP_BACKOFF_MAX_MS */
+            advance_backoff();
             continue;
         }
 
@@ -185,7 +221,7 @@ static void temperature_task(void *arg)
             /* Reject the 85 °C power-on default value */
             if (temp >= 84.9f && temp <= 85.1f) {
                 ESP_LOGD(TAG, "Discarding 85 °C power-on reset value");
-                vTaskDelay(interval);
+                vTaskDelay(pdMS_TO_TICKS(base_interval_ms));
                 continue;
             }
 
@@ -211,9 +247,10 @@ static void temperature_task(void *arg)
             s_valid = true;
             xSemaphoreGive(s_mutex);
 
-            /* Reset fault counters on success */
+            /* Reset fault counters and back-off on success */
             s_fail_count = 0;
             s_alert_sent = false;
+            s_backoff_ms = base_interval_ms;
 
             ESP_LOGI(TAG, "Water temperature: %.2f °C (avg of %d)",
                      avg, s_avg_count);
@@ -234,9 +271,14 @@ static void temperature_task(void *arg)
             }
             /* Destroy bus + device so the next iteration starts clean. */
             destroy_bus_and_device();
+            /* Double the back-off, capped at TEMP_BACKOFF_MAX_MS */
+            advance_backoff();
         }
 
-        vTaskDelay(interval);
+        /* On the success path s_backoff_ms was already reset to
+         * base_interval_ms above; on the failure path it has been
+         * advanced.  Either way the delay here is correct. */
+        vTaskDelay(pdMS_TO_TICKS(s_backoff_ms));
     }
 }
 
