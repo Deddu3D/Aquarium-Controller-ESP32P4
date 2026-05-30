@@ -72,6 +72,13 @@ static bool s_alert_sent   = false;
  * reliable recovery is to delete the bus handle and create a new one, which
  * resets the RMT channel back to the idle/enabled state.
  *
+ * On ESP32-P4, onewire_new_bus_rmt() installs the RMT TX and RX channels and
+ * configures the GPIO accordingly, but the final GPIO mode may not have the
+ * input path enabled (required by RMT RX to sample the bus and detect the
+ * sensor's presence pulse).  Calling gpio_config() with
+ * GPIO_MODE_INPUT_OUTPUT_OD *after* bus creation re-enables the input path
+ * without disturbing the RMT signal routing through the GPIO matrix.
+ *
  * @return ESP_OK on success, error code otherwise.
  */
 static esp_err_t recreate_bus(void)
@@ -92,8 +99,27 @@ static esp_err_t recreate_bus(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to (re)create 1-Wire bus on GPIO %d: %s",
                  CONFIG_DS18B20_GPIO, esp_err_to_name(err));
+        return err;
     }
-    return err;
+
+    /* Re-apply open-drain + input-enabled mode AFTER bus creation.
+     * onewire_new_bus_rmt() may configure the GPIO as output-only for the
+     * RMT TX channel; the subsequent gpio_config() restores the input path so
+     * the RMT RX channel can sample the bus (presence pulse detection). */
+    gpio_config_t io_conf = {
+        .pin_bit_mask  = (1ULL << CONFIG_DS18B20_GPIO),
+        .mode          = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en    = GPIO_PULLUP_ENABLE,
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        /* Non-fatal: the bus handle is valid; log and continue. */
+        ESP_LOGW(TAG, "GPIO re-config after bus creation failed: %s",
+                 esp_err_to_name(err));
+    }
+    return ESP_OK;
 }
 
 /**
@@ -304,37 +330,16 @@ esp_err_t temperature_sensor_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* 1. Pre-configure GPIO for ESP32-P4 compatibility.
-     *    The RMT RX path requires the input buffer on the pad to be enabled
-     *    before onewire_new_bus_rmt() installs the RX channel.  On ESP32-P4
-     *    the GPIO input is not enabled by default; calling gpio_config() with
-     *    GPIO_MODE_INPUT_OUTPUT_OD enables the input path and also activates
-     *    the internal pull-up as a supplement to the external 4.7 kΩ resistor.
-     */
-    esp_err_t err;
-    {
-        gpio_config_t io_conf = {
-            .pin_bit_mask  = (1ULL << CONFIG_DS18B20_GPIO),
-            .mode          = GPIO_MODE_INPUT_OUTPUT_OD,
-            .pull_up_en    = GPIO_PULLUP_ENABLE,
-            .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-            .intr_type     = GPIO_INTR_DISABLE,
-        };
-        err = gpio_config(&io_conf);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "GPIO pre-config failed: %s", esp_err_to_name(err));
-            return err;
-        }
-    }
-
-    /* 2. Create the 1-Wire bus using the RMT peripheral */
-    err = recreate_bus();
+    /* 1. Create the 1-Wire bus using the RMT peripheral.
+     *    recreate_bus() also applies the GPIO_MODE_INPUT_OUTPUT_OD config after
+     *    bus creation so the RMT RX channel can sample the bus on ESP32-P4. */
+    esp_err_t err = recreate_bus();
     if (err != ESP_OK) {
         return err;
     }
     ESP_LOGI(TAG, "1-Wire bus created on GPIO %d", CONFIG_DS18B20_GPIO);
 
-    /* 3. Enumerate DS18B20 devices – retry if none found immediately.
+    /* 2. Enumerate DS18B20 devices – retry if none found immediately.
      *    After a power-on or soft reset the sensor may need a few hundred
      *    milliseconds before its 1-Wire ROM is accessible.
      *    Between attempts the bus is deleted and recreated: a timeout leaves
@@ -359,7 +364,7 @@ esp_err_t temperature_sensor_init(void)
         ESP_LOGI(TAG, "Total DS18B20 devices: %d", s_device_count);
     }
 
-    /* 4. Start periodic reading task.
+    /* 3. Start periodic reading task.
      *    Always started so that the reconnection loop inside the task can
      *    detect a sensor that was absent (or not yet ready) at boot time.
      * Stack sized for RMT/1-Wire driver stack usage + logging + telegram calls. */
