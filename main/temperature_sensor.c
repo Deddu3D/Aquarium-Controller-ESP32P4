@@ -96,6 +96,25 @@ static esp_err_t recreate_bus(void)
     return err;
 }
 
+/**
+ * @brief Recreate the 1-Wire bus and mark devices as needing re-scan.
+ *
+ * Called whenever a bus operation fails: the RMT channel may have been left
+ * in a disabled state by a timeout.  Existing device handles become invalid
+ * once the bus is deleted, so s_device_count is zeroed to force scan_devices()
+ * on the next task iteration.  If recreate_bus() itself fails the count is
+ * still zeroed – the next scan attempt will retry bus creation again.
+ */
+static void reset_bus_and_devices(void)
+{
+    esp_err_t err = recreate_bus();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Bus recreation failed (%s) – will retry on next scan",
+                 esp_err_to_name(err));
+    }
+    s_device_count = 0;
+}
+
 /* ── Device-scan helper ──────────────────────────────────────────── */
 
 /**
@@ -142,7 +161,9 @@ static int scan_devices(void)
      * enable state".  Recreate the bus here so that the direct probe – and
      * every read that follows – gets a fresh, enabled RMT channel. */
     if (s_device_count == 0) {
-        recreate_bus();
+        if (recreate_bus() != ESP_OK) {
+            return 0;   /* bus allocation failed – caller will retry later */
+        }
         ds18b20_config_t ds_cfg = {};
         if (ds18b20_new_device_from_bus(s_bus, &ds_cfg, &s_devices[0]) == ESP_OK) {
             ESP_LOGI(TAG, "Found DS18B20 #0 via direct bus probe (no ROM search)");
@@ -204,8 +225,7 @@ static void temperature_task(void *arg)
              * is reset before the next interval.  Set s_device_count = 0 so
              * the top of the loop re-runs scan_devices() to re-register device
              * handles against the new bus handle. */
-            recreate_bus();
-            s_device_count = 0;
+            reset_bus_and_devices();
             vTaskDelay(interval);
             continue;
         }
@@ -267,8 +287,7 @@ static void temperature_task(void *arg)
             }
             /* Recreate bus immediately for the same reason as after a
              * trigger failure: an RMT timeout disables the RX channel. */
-            recreate_bus();
-            s_device_count = 0;
+            reset_bus_and_devices();
         }
 
         vTaskDelay(interval);
