@@ -131,14 +131,14 @@ CONFIG_LV_USE_CHART=y
 CONFIG_FEEDING_DEFAULT_RELAY=0
 CONFIG_FEEDING_DEFAULT_DURATION_MIN=10
 
-# ── Web Authentication (disabled – auth handled by Android Google Sign-In) ──
+# ── Web Authentication (disabled by default – enable for internet-exposed installs) ──
 CONFIG_WEB_AUTH_ENABLE=n
 
 # ── lwIP socket pool ─────────────────────────────────────────────
-# Default is 10, which is exhausted by: WiFi-internal sockets, MQTT TLS
-# socket (remote_relay), HTTP server + WebSocket connections, NTP and
-# Telegram clients. Raise to 16 to prevent accept() failing with ENFILE
-# (error 23) when the browser connects to the Web UI.
+# Default is 10, which is exhausted by: WiFi-internal sockets,
+# HTTP server + WebSocket connections, NTP and Telegram clients.
+# Raise to 16 to prevent accept() failing with ENFILE (error 23)
+# when the browser connects to the Web UI.
 CONFIG_LWIP_MAX_SOCKETS=16
 
 # ── HTTP server / WebSocket ───────────────────────────────────────
