@@ -22,7 +22,7 @@ data class SetupWizardState(
     // Step 3 – DuckDNS
     val duckdnsDomain: String = "",
     val duckdnsToken: String = "",
-    val lanPort: String = "443",
+    val lanPort: String = DEFAULT_LAN_PORT.toString(),
 
     // Step 4 – Aquarium type
     val aquariumType: AquariumType = AquariumType.TROPICAL,
@@ -52,3 +52,4 @@ enum class AquariumType(val apiValue: String, val label: String, val description
 }
 
 const val WIZARD_TOTAL_STEPS = 6
+const val DEFAULT_LAN_PORT = 443

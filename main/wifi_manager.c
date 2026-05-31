@@ -387,7 +387,8 @@ static void prov_apply_cb(void *arg)
 static esp_err_t portal_provision_handler(httpd_req_t *req)
 {
     /* Larger body to accommodate all first-run config fields */
-    char *body = calloc(1, 1536);
+#define PORTAL_BODY_SIZE 1536
+    char *body = calloc(1, PORTAL_BODY_SIZE);
     if (!body) {
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -395,7 +396,7 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
             "{\"status\":\"error\",\"msg\":\"out of memory\"}", -1);
     }
 
-    int received = httpd_req_recv(req, body, 1535);
+    int received = httpd_req_recv(req, body, PORTAL_BODY_SIZE - 1);
     if (received <= 0) {
         free(body);
         httpd_resp_set_type(req, "application/json");
@@ -460,15 +461,15 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
     char dd_token[48]  = {0};
     prov_json_str(body, "duckdns_domain", dd_domain, sizeof(dd_domain));
     prov_json_str(body, "duckdns_token",  dd_token,  sizeof(dd_token));
-    int  dd_port = prov_json_int(body, "lan_port");
+    int  lan_port = prov_json_int(body, "lan_port");
     if (dd_domain[0] != '\0' && dd_token[0] != '\0') {
         nvs_handle_t dd_h;
         if (nvs_open("duckdns", NVS_READWRITE, &dd_h) == ESP_OK) {
             nvs_set_str(dd_h, "domain",  dd_domain);
             nvs_set_str(dd_h, "token",   dd_token);
             nvs_set_u8(dd_h,  "enabled", 1);
-            uint16_t port = (dd_port > 0 && dd_port <= 65535)
-                            ? (uint16_t)dd_port : 443;
+            uint16_t port = (lan_port > 0 && lan_port <= 65535)
+                            ? (uint16_t)lan_port : 443;
             nvs_set_u16(dd_h, "lan_port", port);
             nvs_commit(dd_h);
             nvs_close(dd_h);

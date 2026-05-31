@@ -217,10 +217,10 @@ private fun Step2Telegram(state: SetupWizardState, vm: SetupWizardViewModel) {
 
 @Composable
 private fun Step3DuckDns(state: SetupWizardState, vm: SetupWizardViewModel) {
-    val port = state.lanPort.toIntOrNull() ?: 443
+    val port = state.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
     val urlPreview = if (state.duckdnsDomain.isNotBlank()) {
         val domain = "${state.duckdnsDomain.trim()}.duckdns.org"
-        if (port == 443) "https://$domain" else "https://$domain:$port"
+        if (port == DEFAULT_LAN_PORT) "https://$domain" else "https://$domain:$port"
     } else ""
 
     Column(
@@ -387,7 +387,7 @@ private fun Step5Summary(
     // Auto-navigate on polling success
     LaunchedEffect(state.pollingSuccess) {
         if (state.pollingSuccess) {
-            val port = state.lanPort.toIntOrNull() ?: 443
+            val port = state.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
             val url = com.aquarium.controller.data.PrefsRepository.buildUrl(state.duckdnsDomain, port)
             onSetupComplete(url)
         }

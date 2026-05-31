@@ -697,8 +697,11 @@ static esp_err_t api_setup_done_post_handler(httpd_req_t *req)
     return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
-/* ── Ping endpoint (/api/ping  GET) ──────────────────────────────── */
-
+/* ── Ping endpoint (/api/ping  GET) ──────────────────────────────────────────
+ * Intentionally unauthenticated: the Android app polls this endpoint after
+ * provisioning to detect when the ESP has rebooted and rejoined WiFi.
+ * It returns only {"ok":true} — no sensitive data is exposed.
+ * ─────────────────────────────────────────────────────────────────────────── */
 static esp_err_t api_ping_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");

@@ -97,7 +97,7 @@ class SetupWizardViewModel(application: Application) : AndroidViewModel(applicat
 
     fun sendProvision(onSuccess: (String) -> Unit) {
         val s = _state.value
-        val port = s.lanPort.toIntOrNull() ?: 443
+        val port = s.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
 
         _state.value = s.copy(isSending = true, error = null)
         viewModelScope.launch {
@@ -118,7 +118,7 @@ class SetupWizardViewModel(application: Application) : AndroidViewModel(applicat
 
     fun startPolling(onSuccess: (String) -> Unit) {
         val s = _state.value
-        val port = s.lanPort.toIntOrNull() ?: 443
+        val port = s.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
         val baseUrl = PrefsRepository.buildUrl(s.duckdnsDomain, port)
 
         _state.value = _state.value.copy(waitingForReconnect = false, pollingAttempt = 0)
