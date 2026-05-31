@@ -299,6 +299,28 @@ void app_main(void)
         ESP_LOGI(TAG, "Relay automation module ready");
     }
 
+    /* ── 8f. Apply deferred aquarium profile from Android provisioning ── */
+    esp_task_wdt_reset();
+    {
+        nvs_handle_t pr_h;
+        if (nvs_open("provisioning", NVS_READWRITE, &pr_h) == ESP_OK) {
+            char init_profile[16] = {0};
+            size_t plen = sizeof(init_profile);
+            if (nvs_get_str(pr_h, "init_profile", init_profile, &plen) == ESP_OK
+                    && init_profile[0] != '\0') {
+                esp_err_t pret = aquarium_profile_apply(init_profile);
+                if (pret == ESP_OK) {
+                    ESP_LOGI(TAG, "Applied provisioned profile: %s", init_profile);
+                } else {
+                    ESP_LOGW(TAG, "Profile apply failed (0x%x)", pret);
+                }
+                nvs_erase_key(pr_h, "init_profile");
+                nvs_commit(pr_h);
+            }
+            nvs_close(pr_h);
+        }
+    }
+
     /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
     esp_task_wdt_reset();
     ret = duckdns_init();

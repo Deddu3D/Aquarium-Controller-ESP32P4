@@ -33,6 +33,9 @@ static const char *TAG = "duckdns";
 #define NVS_KEY_DOMAIN   "domain"
 #define NVS_KEY_TOKEN    "token"
 #define NVS_KEY_ENABLED  "enabled"
+#define NVS_KEY_LAN_PORT "lan_port"
+
+#define DUCKDNS_LAN_PORT_DEFAULT  443
 
 #define TASK_STACK_SIZE  8192
 #define UPDATE_PERIOD_MS (5 * 60 * 1000)   /* 5 minutes */
@@ -54,6 +57,7 @@ static char              s_last_status[64] = "never";
 static void nvs_load_config(void)
 {
     memset(&s_config, 0, sizeof(s_config));
+    s_config.lan_port = DUCKDNS_LAN_PORT_DEFAULT;
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
@@ -79,6 +83,13 @@ static void nvs_load_config(void)
         s_config.enabled = u8val;
     }
 
+    uint16_t u16val = DUCKDNS_LAN_PORT_DEFAULT;
+    if (nvs_get_u16(h, NVS_KEY_LAN_PORT, &u16val) == ESP_OK && u16val > 0) {
+        s_config.lan_port = u16val;
+    } else {
+        s_config.lan_port = DUCKDNS_LAN_PORT_DEFAULT;
+    }
+
     nvs_close(h);
     ESP_LOGI(TAG, "Config loaded: enabled=%d domain_set=%d",
              s_config.enabled, s_config.domain[0] != '\0');
@@ -96,6 +107,8 @@ static esp_err_t nvs_save_config(void)
     nvs_set_str(h, NVS_KEY_DOMAIN, s_config.domain);
     nvs_set_str(h, NVS_KEY_TOKEN, s_config.token);
     nvs_set_u8(h, NVS_KEY_ENABLED, (uint8_t)s_config.enabled);
+    nvs_set_u16(h, NVS_KEY_LAN_PORT,
+                s_config.lan_port > 0 ? s_config.lan_port : DUCKDNS_LAN_PORT_DEFAULT);
     nvs_commit(h);
     nvs_close(h);
 

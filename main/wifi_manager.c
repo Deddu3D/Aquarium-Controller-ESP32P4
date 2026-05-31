@@ -257,8 +257,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 static int prov_json_str(const char *json, const char *key,
                           char *out, size_t out_size)
 {
-    /* needle = '"' + key + '"'  (max key we ever pass is 8 chars) */
-    char needle[16];
+    /* needle = '"' + key + '"'  (allow keys up to 30 chars) */
+    char needle[36];
     snprintf(needle, sizeof(needle), "\"%s\"", key);
     const char *p = strstr(json, needle);
     if (!p) return 0;
@@ -273,6 +273,22 @@ static int prov_json_str(const char *json, const char *key,
     }
     out[i] = '\0';
     return (int)i;
+}
+
+/**
+ * @brief Extract a JSON integer value for @p key from a flat JSON object.
+ * Returns -1 if the key is not found or the value is not numeric.
+ */
+static int prov_json_int(const char *json, const char *key)
+{
+    char needle[36];
+    snprintf(needle, sizeof(needle), "\"%s\"", key);
+    const char *p = strstr(json, needle);
+    if (!p) return -1;
+    p += strlen(needle);
+    while (*p == ' ' || *p == ':' || *p == '\t') p++;
+    if (*p < '0' || *p > '9') return -1;
+    return atoi(p);
 }
 
 /* ── Portal: WiFi scan endpoint (GET /api/scan) ─────────────── */
@@ -370,9 +386,18 @@ static void prov_apply_cb(void *arg)
 
 static esp_err_t portal_provision_handler(httpd_req_t *req)
 {
-    char body[512] = {0};
-    int  received  = httpd_req_recv(req, body, sizeof(body) - 1);
+    /* Larger body to accommodate all first-run config fields */
+    char *body = calloc(1, 1536);
+    if (!body) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        return httpd_resp_send(req,
+            "{\"status\":\"error\",\"msg\":\"out of memory\"}", -1);
+    }
+
+    int received = httpd_req_recv(req, body, 1535);
     if (received <= 0) {
+        free(body);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
         return httpd_resp_send(req,
@@ -389,6 +414,7 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
     prov_json_str(body, "mdns",     new_mdns,     sizeof(new_mdns));
 
     if (new_ssid[0] == '\0') {
+        free(body);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
         return httpd_resp_send(req,
@@ -397,11 +423,10 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
 
     ESP_LOGI(TAG, "Provision: SSID='%s'  mDNS='%s'", new_ssid, new_mdns);
 
-    /* Persist credentials to NVS BEFORE sending the response so they are
-     * guaranteed to survive the imminent restart even if the TCP connection
-     * drops immediately after we send the reply. */
+    /* ── Persist WiFi credentials ─────────────────────────────────── */
     esp_err_t save_err = nvs_save_credentials(new_ssid, new_password);
     if (save_err != ESP_OK) {
+        free(body);
         ESP_LOGE(TAG, "NVS save failed: %s", esp_err_to_name(save_err));
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -412,6 +437,70 @@ static esp_err_t portal_provision_handler(httpd_req_t *req)
     if (new_mdns[0] != '\0') {
         wifi_manager_set_mdns_hostname(new_mdns);
     }
+
+    /* ── Persist Telegram config (optional) ──────────────────────── */
+    char tg_token[128] = {0};
+    char tg_chat[64]   = {0};
+    prov_json_str(body, "telegram_token",   tg_token, sizeof(tg_token));
+    prov_json_str(body, "telegram_chat_id", tg_chat,  sizeof(tg_chat));
+    if (tg_token[0] != '\0' && tg_chat[0] != '\0') {
+        nvs_handle_t tg_h;
+        if (nvs_open("telegram", NVS_READWRITE, &tg_h) == ESP_OK) {
+            nvs_set_str(tg_h, "token",   tg_token);
+            nvs_set_str(tg_h, "chat_id", tg_chat);
+            nvs_set_u8(tg_h,  "enabled", 1);
+            nvs_commit(tg_h);
+            nvs_close(tg_h);
+            ESP_LOGI(TAG, "Provision: Telegram config saved");
+        }
+    }
+
+    /* ── Persist DuckDNS config (optional) ───────────────────────── */
+    char dd_domain[64] = {0};
+    char dd_token[48]  = {0};
+    prov_json_str(body, "duckdns_domain", dd_domain, sizeof(dd_domain));
+    prov_json_str(body, "duckdns_token",  dd_token,  sizeof(dd_token));
+    int  dd_port = prov_json_int(body, "lan_port");
+    if (dd_domain[0] != '\0' && dd_token[0] != '\0') {
+        nvs_handle_t dd_h;
+        if (nvs_open("duckdns", NVS_READWRITE, &dd_h) == ESP_OK) {
+            nvs_set_str(dd_h, "domain",  dd_domain);
+            nvs_set_str(dd_h, "token",   dd_token);
+            nvs_set_u8(dd_h,  "enabled", 1);
+            uint16_t port = (dd_port > 0 && dd_port <= 65535)
+                            ? (uint16_t)dd_port : 443;
+            nvs_set_u16(dd_h, "lan_port", port);
+            nvs_commit(dd_h);
+            nvs_close(dd_h);
+            ESP_LOGI(TAG, "Provision: DuckDNS config saved (domain=%s port=%u)",
+                     dd_domain, (unsigned)port);
+        }
+    }
+
+    /* ── Persist aquarium profile choice (applied after reboot) ──── */
+    char aq_type[16] = {0};
+    prov_json_str(body, "aquarium_type", aq_type, sizeof(aq_type));
+    if (aq_type[0] != '\0') {
+        nvs_handle_t pr_h;
+        if (nvs_open("provisioning", NVS_READWRITE, &pr_h) == ESP_OK) {
+            nvs_set_str(pr_h, "init_profile", aq_type);
+            nvs_commit(pr_h);
+            nvs_close(pr_h);
+            ESP_LOGI(TAG, "Provision: aquarium profile '%s' scheduled", aq_type);
+        }
+    }
+
+    /* ── Mark setup as complete ───────────────────────────────────── */
+    {
+        nvs_handle_t ss_h;
+        if (nvs_open("sys_stats", NVS_READWRITE, &ss_h) == ESP_OK) {
+            nvs_set_u8(ss_h, "setup_done", 1);
+            nvs_commit(ss_h);
+            nvs_close(ss_h);
+        }
+    }
+
+    free(body);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");

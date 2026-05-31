@@ -697,6 +697,15 @@ static esp_err_t api_setup_done_post_handler(httpd_req_t *req)
     return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
+/* ── Ping endpoint (/api/ping  GET) ──────────────────────────────── */
+
+static esp_err_t api_ping_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, "{\"ok\":true}", -1);
+}
+
 static esp_err_t api_profile_post_handler(httpd_req_t *req)
 {
     AUTH_CHECK(req);
@@ -1936,10 +1945,12 @@ static esp_err_t api_duckdns_get_handler(httpd_req_t *req)
         "{\"domain\":\"%s\","
         "\"token_set\":%s,"
         "\"enabled\":%s,"
+        "\"lan_port\":%u,"
         "\"last_status\":\"%s\"}",
         escaped_domain,
         cfg.token[0] != '\0' ? "true" : "false",
         cfg.enabled ? "true" : "false",
+        (unsigned)cfg.lan_port,
         escaped_status);
 
     httpd_resp_set_type(req, "application/json");
@@ -1976,6 +1987,11 @@ static esp_err_t api_duckdns_post_handler(httpd_req_t *req)
     int bval = json_get_bool(buf, "\"enabled\"");
     if (bval >= 0) {
         cfg.enabled = bval;
+    }
+
+    int port_val = json_get_int(buf, "\"lan_port\"");
+    if (port_val > 0 && port_val <= 65535) {
+        cfg.lan_port = (uint16_t)port_val;
     }
 
     duckdns_set_config(&cfg);
@@ -2943,6 +2959,7 @@ static esp_err_t api_config_export_handler(httpd_req_t *req)
         cJSON_AddStringToObject(o, "domain", c.domain);
         cJSON_AddStringToObject(o, "token", c.token);
         cJSON_AddBoolToObject(o, "enabled", c.enabled);
+        cJSON_AddNumberToObject(o, "lan_port", c.lan_port > 0 ? c.lan_port : 443);
     }
 
     /* mDNS */
@@ -3184,6 +3201,10 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
             strlcpy(c.token, f->valuestring, sizeof(c.token));
         }
         if ((f = cJSON_GetObjectItem(o, "enabled"))) c.enabled = cJSON_IsTrue(f);
+        if ((f = cJSON_GetObjectItem(o, "lan_port")) && cJSON_IsNumber(f) &&
+                f->valueint > 0 && f->valueint <= 65535) {
+            c.lan_port = (uint16_t)f->valueint;
+        }
         duckdns_set_config(&c);
         applied++;
     }
@@ -3507,6 +3528,13 @@ static const httpd_uri_t uri_api_setup_done = {
     .uri      = "/api/setup_done",
     .method   = HTTP_POST,
     .handler  = api_setup_done_post_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_api_ping = {
+    .uri      = "/api/ping",
+    .method   = HTTP_GET,
+    .handler  = api_ping_handler,
     .user_ctx = NULL,
 };
 
@@ -3951,6 +3979,7 @@ esp_err_t web_server_start(void)
 #endif
 
     httpd_register_uri_handler(s_server, &uri_root);
+    httpd_register_uri_handler(s_server, &uri_api_ping);
     httpd_register_uri_handler(s_server, &uri_api_status);
     httpd_register_uri_handler(s_server, &uri_api_setup_done);
     httpd_register_uri_handler(s_server, &uri_api_profile);

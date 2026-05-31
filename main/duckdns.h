@@ -12,6 +12,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -22,9 +23,10 @@ extern "C" {
  * @brief DuckDNS configuration stored in NVS.
  */
 typedef struct {
-    char   domain[64];    /**< DuckDNS sub-domain (e.g. "myaquarium") */
-    char   token[48];     /**< DuckDNS API token (UUID format)        */
-    bool   enabled;       /**< Whether periodic updates are active    */
+    char     domain[64];    /**< DuckDNS sub-domain (e.g. "myaquarium") */
+    char     token[48];     /**< DuckDNS API token (UUID format)        */
+    bool     enabled;       /**< Whether periodic updates are active    */
+    uint16_t lan_port;      /**< HTTPS port forwarded to this device (default 443) */
 } duckdns_config_t;
 
 /**
