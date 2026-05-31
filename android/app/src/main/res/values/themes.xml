@@ -1,0 +1,4 @@
+<resources>
+    <!-- Base application theme (used by AndroidManifest). -->
+    <style name="Theme.AquariumController" parent="android:Theme.Material.NoTitleBar.Fullscreen" />
+</resources>
