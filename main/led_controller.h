@@ -165,6 +165,40 @@ bool led_controller_is_fading(void);
 void led_controller_cancel_fade(void);
 
 /**
+ * @brief Calculate a proportional fade duration.
+ *
+ * Returns a duration proportional to the brightness delta so that a
+ * full 0→255 sweep always takes exactly 30 s (30 000 ms).
+ * Example: 0→128 ≈ 15 s, 200→255 ≈ 6.5 s.
+ *
+ * @param from_br  Starting brightness (0-255).
+ * @param to_br    Target  brightness (0-255).
+ * @return Duration in milliseconds; 0 if @p from_br == @p to_br.
+ */
+uint32_t led_controller_proportional_ms(uint8_t from_br, uint8_t to_br);
+
+/**
+ * @brief Smoothly fade from the current colour/brightness to a new target.
+ *
+ * Simultaneously interpolates the RGB colour and the brightness level
+ * over @p duration_ms milliseconds.  On/off state is managed automatically:
+ * - The strip is turned on at the start of the ramp (even if it was off).
+ * - If @p brightness is 0, the strip is turned off once the ramp finishes.
+ *
+ * Non-blocking – the ramp runs in the background via the existing ramp timer.
+ * Any previously running ramp is cancelled before the new one starts.
+ *
+ * @param r            Target red   component (0-255).
+ * @param g            Target green component (0-255).
+ * @param b            Target blue  component (0-255).
+ * @param brightness   Target brightness (0-255).  0 = fade to off.
+ * @param duration_ms  Ramp duration in milliseconds (0 = instant).
+ * @return ESP_OK on success.
+ */
+esp_err_t led_controller_fade_to(uint8_t r, uint8_t g, uint8_t b,
+                                  uint8_t brightness, uint32_t duration_ms);
+
+/**
  * @brief Acquire the LED controller mutex.
  *
  * Use this together with @ref led_controller_unlock to serialise
