@@ -2,7 +2,9 @@
 <!--
     Network security config for Aquarium Controller.
 
-    1. Plain HTTP is allowed ONLY to the ESP provisioning AP (192.168.4.1).
+    1. Plain HTTP is allowed to the ESP provisioning AP (192.168.4.1) and to
+       all *.duckdns.org domains (the ESP serves plain HTTP on port 80 via
+       router port-forwarding; no valid HTTPS cert is available).
     2. All HTTPS connections trust user-added CAs AND the system CAs, so that
        the ESP's self-signed certificate is accepted in the WebView.
 -->
@@ -11,6 +13,11 @@
     <!-- ESP Access Point provisioning server (plain HTTP on port 80) -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">192.168.4.1</domain>
+    </domain-config>
+
+    <!-- DuckDNS remote access: ESP serves plain HTTP on port 80 via port-forwarding -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">duckdns.org</domain>
     </domain-config>
 
     <!-- Default: trust system CAs + user-installed CAs (needed for
