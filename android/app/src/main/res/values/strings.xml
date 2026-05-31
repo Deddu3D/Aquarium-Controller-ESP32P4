@@ -1,0 +1,91 @@
+<resources>
+    <string name="app_name">Aquarium Controller</string>
+
+    <!-- Welcome screen -->
+    <string name="welcome_title">🐠 Aquarium Controller</string>
+    <string name="welcome_subtitle">Gestisci il tuo acquario da smartphone</string>
+    <string name="btn_first_setup">Prima configurazione</string>
+    <string name="btn_already_configured">Ho già un ESP configurato</string>
+
+    <!-- Connect screen -->
+    <string name="connect_title">Connetti al dispositivo</string>
+    <string name="connect_hint_url">Dominio DuckDNS (es. mioaqua.duckdns.org)</string>
+    <string name="connect_hint_port">Porta LAN (default 443)</string>
+    <string name="btn_connect">Connetti</string>
+    <string name="connect_error_empty">Inserisci il dominio DuckDNS</string>
+    <string name="connect_error_port">Porta non valida (1–65535)</string>
+
+    <!-- Wizard steps -->
+    <string name="wizard_step_of">Passo %1$d di %2$d</string>
+    <string name="btn_next">Avanti</string>
+    <string name="btn_skip">Salta</string>
+    <string name="btn_back">Indietro</string>
+    <string name="btn_configure">Configura ESP</string>
+
+    <!-- Step 0: connect to AP -->
+    <string name="step0_title">Connetti all\'ESP</string>
+    <string name="step0_body">1. Vai nelle Impostazioni WiFi del tuo telefono.\n2. Connettiti alla rete \u201CAquariumSetup\u201D.\n3. Torna qui e tocca \u201CControlla connessione\u201D.</string>
+    <string name="btn_check_connection">Controlla connessione</string>
+    <string name="checking_connection">Verifica in corso\u2026</string>
+    <string name="connection_ok">✅ Connesso all\'ESP</string>
+    <string name="connection_fail">❌ ESP non raggiungibile. Verifica di essere connesso ad AquariumSetup.</string>
+
+    <!-- Step 1: WiFi -->
+    <string name="step1_title">Rete WiFi</string>
+    <string name="step1_subtitle">Seleziona la rete a cui collegare l\'ESP</string>
+    <string name="wifi_scanning">Scansione reti\u2026</string>
+    <string name="wifi_scan_error">Impossibile ottenere la lista reti. Inserisci l\'SSID manualmente.</string>
+    <string name="hint_ssid">Nome rete (SSID)</string>
+    <string name="hint_wifi_password">Password WiFi</string>
+    <string name="btn_rescan">Aggiorna lista</string>
+
+    <!-- Step 2: Telegram -->
+    <string name="step2_title">Telegram (opzionale)</string>
+    <string name="step2_subtitle">Ricevi notifiche su Telegram per allarmi temperatura e promemoria manutenzione.</string>
+    <string name="hint_tg_token">Token Bot Telegram</string>
+    <string name="hint_tg_chat">Chat ID</string>
+    <string name="tg_help">Crea un bot con @BotFather per ottenere il token. Ottieni il Chat ID avviando il bot e usando @userinfobot.</string>
+
+    <!-- Step 3: DuckDNS -->
+    <string name="step3_title">DuckDNS</string>
+    <string name="step3_subtitle">Accedi all\'acquario da remoto tramite un indirizzo fisso.</string>
+    <string name="hint_dd_domain">Sottodominio (es. mioaqua)</string>
+    <string name="hint_dd_token">Token DuckDNS</string>
+    <string name="hint_dd_port">Porta LAN (default 443)</string>
+    <string name="dd_url_preview">URL: https://%1$s.duckdns.org:%2$s</string>
+    <string name="dd_help">Registra un dominio gratuito su duckdns.org. La porta deve corrispondere al port-forwarding configurato nel router (da porta esterna → 443 dell\'ESP).</string>
+
+    <!-- Step 4: Aquarium type -->
+    <string name="step4_title">Tipo di acquario</string>
+    <string name="step4_subtitle">Seleziona il preset più adatto al tuo acquario</string>
+    <string name="profile_tropical">🌴 Tropicale</string>
+    <string name="profile_tropical_desc">26°C · Luci 08:00–18:00 · CO2 disattiva</string>
+    <string name="profile_marine">🐠 Marino</string>
+    <string name="profile_marine_desc">25°C · Luci 08:00–20:00 con pausa · CO2 disattiva</string>
+    <string name="profile_planted">🌿 Piantato</string>
+    <string name="profile_planted_desc">24°C · Luci 09:00–17:00 · CO2 attiva</string>
+
+    <!-- Step 5: Summary & send -->
+    <string name="step5_title">Riepilogo</string>
+    <string name="step5_subtitle">Verifica le impostazioni e avvia la configurazione</string>
+    <string name="summary_wifi">WiFi: %1$s</string>
+    <string name="summary_telegram">Telegram: %1$s</string>
+    <string name="summary_duckdns">DuckDNS: %1$s (porta %2$s)</string>
+    <string name="summary_profile">Profilo: %1$s</string>
+    <string name="sending_config">Invio configurazione\u2026</string>
+    <string name="config_sent">Configurazione inviata! L\'ESP si sta riavviando\u2026</string>
+    <string name="waiting_reconnect">Riconnettiti alla tua rete WiFi, poi attendi che l\'ESP torni online.</string>
+    <string name="btn_im_reconnected">Mi sono ricollegato al WiFi</string>
+    <string name="polling_esp">Connessione all\'acquario\u2026 (%1$d/12)</string>
+    <string name="polling_success">✅ ESP online! Apertura interfaccia\u2026</string>
+    <string name="polling_fail">Timeout: l\'ESP non è raggiungibile. Verifica il dominio DuckDNS e il port-forwarding del router.</string>
+    <string name="btn_retry">Riprova</string>
+    <string name="error_provision">Errore durante la configurazione: %1$s</string>
+
+    <!-- WebView screen -->
+    <string name="webview_loading">Caricamento interfaccia\u2026</string>
+    <string name="webview_error">Impossibile connettersi all\'acquario.\nVerifica la connessione internet e che il dominio DuckDNS sia raggiungibile.</string>
+    <string name="btn_reload">Ricarica</string>
+    <string name="menu_settings">Impostazioni app</string>
+    <string name="change_url">Cambia indirizzo</string>
+</resources>
