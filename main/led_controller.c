@@ -473,8 +473,14 @@ uint32_t led_controller_proportional_ms(uint8_t from_br, uint8_t to_br)
     return 30000u * delta / 255u;
 }
 
-/* ── Helper: ensure the ramp timer exists ────────────────────────── */
-
+/* ── Helper: ensure the ramp timer exists (lazy init) ───────────── */
+/**
+ * @brief Create the ramp timer if it has not been created yet.
+ *
+ * Called by fade_on, fade_off, and fade_to before starting a ramp.
+ *
+ * @return ESP_OK if the timer is ready; error code on failure.
+ */
 static esp_err_t ensure_ramp_timer(void)
 {
     if (s_ramp_timer != NULL) {

@@ -142,6 +142,18 @@ static daily_cycle_phase_t compute_phase(int cur,
 
 /* ── Phase application ───────────────────────────────────────────── */
 
+/**
+ * @brief Stop scenes and fade to a fixed colour/brightness, scaling the
+ *        transition duration proportionally to the brightness change.
+ */
+static void fade_to_daylight(uint8_t r, uint8_t g, uint8_t b, uint8_t target_br)
+{
+    uint8_t  cur_br = led_controller_is_on() ? led_controller_get_brightness() : 0;
+    uint32_t dur_ms = led_controller_proportional_ms(cur_br, target_br);
+    led_scenes_stop();
+    led_controller_fade_to(r, g, b, target_br, dur_ms);
+}
+
 static void apply_phase(daily_cycle_phase_t phase)
 {
     ESP_LOGI(TAG, "Phase → %d", (int)phase);
@@ -163,35 +175,20 @@ static void apply_phase(daily_cycle_phase_t phase)
         }
         break;
 
-    case DAILY_PHASE_MORNING: {
+    case DAILY_PHASE_MORNING:
         /* Warm daylight white – moderate brightness */
-        uint8_t  target_br  = 200;
-        uint8_t  cur_br     = led_controller_is_on() ? led_controller_get_brightness() : 0;
-        uint32_t dur_ms     = led_controller_proportional_ms(cur_br, target_br);
-        led_scenes_stop();
-        led_controller_fade_to(255, 200, 140, target_br, dur_ms);
+        fade_to_daylight(255, 200, 140, 200);
         break;
-    }
 
-    case DAILY_PHASE_NOON: {
+    case DAILY_PHASE_NOON:
         /* Full-intensity cool white – mimics midday sunlight */
-        uint8_t  target_br  = 255;
-        uint8_t  cur_br     = led_controller_is_on() ? led_controller_get_brightness() : 0;
-        uint32_t dur_ms     = led_controller_proportional_ms(cur_br, target_br);
-        led_scenes_stop();
-        led_controller_fade_to(200, 220, 255, target_br, dur_ms);
+        fade_to_daylight(200, 220, 255, 255);
         break;
-    }
 
-    case DAILY_PHASE_AFTERNOON: {
+    case DAILY_PHASE_AFTERNOON:
         /* Warm white, slightly dimmer than noon */
-        uint8_t  target_br  = 220;
-        uint8_t  cur_br     = led_controller_is_on() ? led_controller_get_brightness() : 0;
-        uint32_t dur_ms     = led_controller_proportional_ms(cur_br, target_br);
-        led_scenes_stop();
-        led_controller_fade_to(255, 190, 120, target_br, dur_ms);
+        fade_to_daylight(255, 190, 120, 220);
         break;
-    }
 
     case DAILY_PHASE_SUNSET:
         /* Start the sunset scene only if no scene is currently running */
