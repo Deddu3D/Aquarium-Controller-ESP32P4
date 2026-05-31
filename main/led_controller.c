@@ -99,6 +99,10 @@ static uint32_t s_ramp_elapsed   = 0;   /* elapsed ramp time         */
 static bool     s_ramp_active    = false;
 static bool     s_ramp_off       = false; /* true if ramping to OFF   */
 
+/* ── Forward declarations ────────────────────────────────────────── */
+
+static esp_err_t ensure_ramp_timer(void);
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 /**

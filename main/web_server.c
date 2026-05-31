@@ -1104,26 +1104,33 @@ static esp_err_t api_leds_post_handler(httpd_req_t *req)
     int g_val  = json_get_int(buf, "\"g\"");
     int b_val  = json_get_int(buf, "\"b\"");
 
-    /* Apply color if all three components are present */
-    if (r_val >= 0 && g_val >= 0 && b_val >= 0) {
-        led_controller_set_color(
-            (uint8_t)(r_val > 255 ? 255 : r_val),
-            (uint8_t)(g_val > 255 ? 255 : g_val),
-            (uint8_t)(b_val > 255 ? 255 : b_val));
-    }
+    uint32_t ramp_ms = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000;
 
-    /* Apply brightness */
-    if (br_val >= 0) {
-        led_controller_set_brightness((uint8_t)(br_val > 255 ? 255 : br_val));
-    }
-
-    /* Apply on/off with acclimatization ramp (fade) */
-    {
-        uint32_t ramp_ms = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000;
-        if (on_val == 1) {
-            led_controller_fade_on(ramp_ms);
-        } else if (on_val == 0) {
-            led_controller_fade_off(ramp_ms);
+    if (on_val == 1) {
+        /* Turning on or updating while on: resolve target color/brightness,
+         * then use fade_to so the ramp always starts from the current state.
+         * This prevents the strip from blinking off when only brightness or
+         * color is changed while the LEDs are already on. */
+        uint8_t cur_r, cur_g, cur_b;
+        led_controller_get_color(&cur_r, &cur_g, &cur_b);
+        uint8_t new_r  = (r_val  >= 0) ? (uint8_t)(r_val  > 255 ? 255 : r_val)  : cur_r;
+        uint8_t new_g  = (g_val  >= 0) ? (uint8_t)(g_val  > 255 ? 255 : g_val)  : cur_g;
+        uint8_t new_b  = (b_val  >= 0) ? (uint8_t)(b_val  > 255 ? 255 : b_val)  : cur_b;
+        uint8_t new_br = (br_val >= 0) ? (uint8_t)(br_val > 255 ? 255 : br_val)
+                                        : led_controller_get_brightness();
+        led_controller_fade_to(new_r, new_g, new_b, new_br, ramp_ms);
+    } else if (on_val == 0) {
+        led_controller_fade_off(ramp_ms);
+    } else {
+        /* No on/off change: apply color and brightness instantly */
+        if (r_val >= 0 && g_val >= 0 && b_val >= 0) {
+            led_controller_set_color(
+                (uint8_t)(r_val > 255 ? 255 : r_val),
+                (uint8_t)(g_val > 255 ? 255 : g_val),
+                (uint8_t)(b_val > 255 ? 255 : b_val));
+        }
+        if (br_val >= 0) {
+            led_controller_set_brightness((uint8_t)(br_val > 255 ? 255 : br_val));
         }
     }
 
