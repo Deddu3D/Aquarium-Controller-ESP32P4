@@ -282,11 +282,11 @@ static sched_phase_t compute_phase(int now_min,
 static void enter_phase_on(sched_phase_t prev,
                            const led_schedule_config_t *cfg)
 {
-    led_controller_cancel_fade();
-    led_controller_set_color(cfg->red, cfg->green, cfg->blue);
-    led_controller_set_brightness(cfg->brightness);
-
     if (prev == SCHED_PHASE_OFF) {
+        led_controller_cancel_fade();
+        led_controller_set_color(cfg->red, cfg->green, cfg->blue);
+        led_controller_set_brightness(cfg->brightness);
+
         if (cfg->ramp_duration_min == 0) {
             /* Instant-on: no fade ramp */
             led_controller_on();
@@ -297,35 +297,37 @@ static void enter_phase_on(sched_phase_t prev,
         }
         ESP_LOGI(TAG, "Phase ON (dawn ramp %u min)", cfg->ramp_duration_min);
     } else {
-        /* Returning from pause: strip already on, color+brightness updated */
-        if (!led_controller_is_on()) {
-            led_controller_on();
-        }
-        ESP_LOGI(TAG, "Phase ON (from pause)");
+        /* Returning from pause: fade smoothly to the new colour+brightness */
+        uint8_t cur_br = led_controller_is_on() ? led_controller_get_brightness() : 0;
+        uint32_t dur_ms = led_controller_proportional_ms(cur_br, cfg->brightness);
+        led_controller_fade_to(cfg->red, cfg->green, cfg->blue,
+                               cfg->brightness, dur_ms);
+        ESP_LOGI(TAG, "Phase ON (from pause, fade %lu ms)", (unsigned long)dur_ms);
     }
 }
 
 static void enter_phase_pause(const led_schedule_config_t *cfg)
 {
-    led_controller_cancel_fade();
-    led_controller_set_color(cfg->pause_red,
-                             cfg->pause_green,
-                             cfg->pause_blue);
-    led_controller_set_brightness(cfg->pause_brightness);
-    if (!led_controller_is_on()) {
-        led_controller_on();
-    }
-    ESP_LOGI(TAG, "Phase PAUSE br=%d RGB=(%d,%d,%d)",
+    uint8_t cur_br  = led_controller_is_on() ? led_controller_get_brightness() : 0;
+    uint32_t dur_ms = led_controller_proportional_ms(cur_br, cfg->pause_brightness);
+    led_controller_fade_to(cfg->pause_red,
+                           cfg->pause_green,
+                           cfg->pause_blue,
+                           cfg->pause_brightness,
+                           dur_ms);
+    ESP_LOGI(TAG, "Phase PAUSE br=%d RGB=(%d,%d,%d) fade %lu ms",
              cfg->pause_brightness,
-             cfg->pause_red, cfg->pause_green, cfg->pause_blue);
+             cfg->pause_red, cfg->pause_green, cfg->pause_blue,
+             (unsigned long)dur_ms);
 }
 
 static void enter_phase_off(void)
 {
+    uint8_t cur_br  = led_controller_is_on() ? led_controller_get_brightness() : 0;
+    uint32_t ramp_ms = led_controller_proportional_ms(cur_br, 0);
     led_controller_cancel_fade();
-    uint32_t ramp_ms = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000u;
     led_controller_fade_off(ramp_ms);
-    ESP_LOGI(TAG, "Phase OFF");
+    ESP_LOGI(TAG, "Phase OFF (fade %lu ms)", (unsigned long)ramp_ms);
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */

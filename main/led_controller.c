@@ -88,6 +88,12 @@ static uint8_t             s_blue    = 255;
 static esp_timer_handle_t s_ramp_timer  = NULL;
 static uint8_t  s_ramp_start_br  = 0;   /* brightness at ramp start  */
 static uint8_t  s_ramp_end_br    = 0;   /* brightness at ramp end    */
+static uint8_t  s_ramp_start_r   = 255; /* colour at ramp start      */
+static uint8_t  s_ramp_start_g   = 255;
+static uint8_t  s_ramp_start_b   = 255;
+static uint8_t  s_ramp_end_r     = 255; /* colour at ramp end        */
+static uint8_t  s_ramp_end_g     = 255;
+static uint8_t  s_ramp_end_b     = 255;
 static uint32_t s_ramp_total_ms  = 0;   /* total ramp duration       */
 static uint32_t s_ramp_elapsed   = 0;   /* elapsed ramp time         */
 static bool     s_ramp_active    = false;
@@ -320,9 +326,15 @@ static void ramp_timer_cb(void *arg)
         t = 1.0f;
     }
 
-    /* Linearly interpolate brightness */
+    /* Linearly interpolate brightness and colour */
     s_brightness = (uint8_t)((float)s_ramp_start_br +
                              ((float)s_ramp_end_br - (float)s_ramp_start_br) * t);
+    s_red        = (uint8_t)((float)s_ramp_start_r  +
+                             ((float)s_ramp_end_r   - (float)s_ramp_start_r)  * t);
+    s_green      = (uint8_t)((float)s_ramp_start_g  +
+                             ((float)s_ramp_end_g   - (float)s_ramp_start_g)  * t);
+    s_blue       = (uint8_t)((float)s_ramp_start_b  +
+                             ((float)s_ramp_end_b   - (float)s_ramp_start_b)  * t);
     apply_all();
 
     if (t >= 1.0f) {
@@ -347,18 +359,10 @@ esp_err_t led_controller_fade_on(uint32_t duration_ms)
         return led_controller_on();
     }
 
-    /* Create timer on first use */
-    if (s_ramp_timer == NULL) {
-        const esp_timer_create_args_t args = {
-            .callback = ramp_timer_cb,
-            .name     = "led_ramp",
-        };
-        esp_err_t err = esp_timer_create(&args, &s_ramp_timer);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to create ramp timer: %s",
-                     esp_err_to_name(err));
-            return led_controller_on();   /* fallback to instant */
-        }
+    esp_err_t err = ensure_ramp_timer();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create ramp timer: %s", esp_err_to_name(err));
+        return led_controller_on();   /* fallback to instant */
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -376,6 +380,12 @@ esp_err_t led_controller_fade_on(uint32_t duration_ms)
 
     s_ramp_start_br = 0;
     s_ramp_end_br   = target;
+    s_ramp_start_r  = s_red;
+    s_ramp_start_g  = s_green;
+    s_ramp_start_b  = s_blue;
+    s_ramp_end_r    = s_red;
+    s_ramp_end_g    = s_green;
+    s_ramp_end_b    = s_blue;
     s_ramp_total_ms = duration_ms;
     s_ramp_elapsed  = 0;
     s_ramp_off      = false;
@@ -395,18 +405,10 @@ esp_err_t led_controller_fade_off(uint32_t duration_ms)
         return led_controller_off();
     }
 
-    /* Create timer on first use */
-    if (s_ramp_timer == NULL) {
-        const esp_timer_create_args_t args = {
-            .callback = ramp_timer_cb,
-            .name     = "led_ramp",
-        };
-        esp_err_t err = esp_timer_create(&args, &s_ramp_timer);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to create ramp timer: %s",
-                     esp_err_to_name(err));
-            return led_controller_off();   /* fallback to instant */
-        }
+    esp_err_t err = ensure_ramp_timer();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create ramp timer: %s", esp_err_to_name(err));
+        return led_controller_off();   /* fallback to instant */
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -424,6 +426,12 @@ esp_err_t led_controller_fade_off(uint32_t duration_ms)
 
     s_ramp_start_br = s_brightness;
     s_ramp_end_br   = 0;
+    s_ramp_start_r  = s_red;
+    s_ramp_start_g  = s_green;
+    s_ramp_start_b  = s_blue;
+    s_ramp_end_r    = s_red;
+    s_ramp_end_g    = s_green;
+    s_ramp_end_b    = s_blue;
     s_ramp_total_ms = duration_ms;
     s_ramp_elapsed  = 0;
     s_ramp_off      = true;
@@ -455,6 +463,101 @@ void led_controller_cancel_fade(void)
         ESP_LOGI(TAG, "Fade ramp cancelled");
     }
     xSemaphoreGive(s_mutex);
+}
+
+uint32_t led_controller_proportional_ms(uint8_t from_br, uint8_t to_br)
+{
+    uint32_t delta = (from_br > to_br) ? (uint32_t)(from_br - to_br)
+                                       : (uint32_t)(to_br   - from_br);
+    /* 30 000 ms for a full 0-255 sweep; proportional for smaller deltas */
+    return 30000u * delta / 255u;
+}
+
+/* ── Helper: ensure the ramp timer exists (lazy init) ───────────── */
+/**
+ * @brief Create the ramp timer if it has not been created yet.
+ *
+ * Called by fade_on, fade_off, and fade_to before starting a ramp.
+ *
+ * @return ESP_OK if the timer is ready; error code on failure.
+ */
+static esp_err_t ensure_ramp_timer(void)
+{
+    if (s_ramp_timer != NULL) {
+        return ESP_OK;
+    }
+    const esp_timer_create_args_t args = {
+        .callback = ramp_timer_cb,
+        .name     = "led_ramp",
+    };
+    return esp_timer_create(&args, &s_ramp_timer);
+}
+
+esp_err_t led_controller_fade_to(uint8_t r, uint8_t g, uint8_t b,
+                                  uint8_t brightness, uint32_t duration_ms)
+{
+    /* Instant transition */
+    if (duration_ms == 0) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        if (s_ramp_active && s_ramp_timer != NULL) {
+            esp_timer_stop(s_ramp_timer);
+            s_ramp_active = false;
+        }
+        s_red        = r;
+        s_green      = g;
+        s_blue       = b;
+        s_brightness = brightness;
+        s_is_on      = (brightness > 0);
+        esp_err_t ret = apply_all();
+        xSemaphoreGive(s_mutex);
+        return ret;
+    }
+
+    esp_err_t err = ensure_ramp_timer();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create ramp timer: %s", esp_err_to_name(err));
+        /* Fallback: instant transition */
+        return led_controller_fade_to(r, g, b, brightness, 0);
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    /* Stop any running ramp */
+    if (s_ramp_active) {
+        esp_timer_stop(s_ramp_timer);
+        s_ramp_active = false;
+    }
+
+    /* Start from current state; if strip is off treat start brightness as 0 */
+    s_ramp_start_br = s_is_on ? s_brightness : 0;
+    s_ramp_start_r  = s_red;
+    s_ramp_start_g  = s_green;
+    s_ramp_start_b  = s_blue;
+
+    s_ramp_end_br   = brightness;
+    s_ramp_end_r    = r;
+    s_ramp_end_g    = g;
+    s_ramp_end_b    = b;
+
+    s_ramp_total_ms = duration_ms;
+    s_ramp_elapsed  = 0;
+    s_ramp_off      = (brightness == 0);
+    s_ramp_active   = true;
+
+    /* Enable strip so the ramp is visible from the first tick */
+    s_is_on      = true;
+    s_brightness = s_ramp_start_br;
+    s_red        = s_ramp_start_r;
+    s_green      = s_ramp_start_g;
+    s_blue       = s_ramp_start_b;
+    apply_all();
+
+    ESP_LOGI(TAG, "Fade to RGB(%d,%d,%d) br=%d over %"PRIu32" ms",
+             r, g, b, brightness, duration_ms);
+
+    xSemaphoreGive(s_mutex);
+
+    return esp_timer_start_periodic(s_ramp_timer, (uint64_t)RAMP_TICK_MS * 1000);
 }
 
 void led_controller_lock(void)
