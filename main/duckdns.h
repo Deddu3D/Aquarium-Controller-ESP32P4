@@ -26,7 +26,7 @@ typedef struct {
     char     domain[64];    /**< DuckDNS sub-domain (e.g. "myaquarium") */
     char     token[48];     /**< DuckDNS API token (UUID format)        */
     bool     enabled;       /**< Whether periodic updates are active    */
-    uint16_t lan_port;      /**< HTTPS port forwarded to this device (default 443) */
+    uint16_t lan_port;      /**< Port forwarded to this device on the router (default 80 for HTTP) */
 } duckdns_config_t;
 
 /**
