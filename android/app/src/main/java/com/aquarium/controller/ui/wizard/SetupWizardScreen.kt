@@ -219,8 +219,7 @@ private fun Step2Telegram(state: SetupWizardState, vm: SetupWizardViewModel) {
 private fun Step3DuckDns(state: SetupWizardState, vm: SetupWizardViewModel) {
     val port = state.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
     val urlPreview = if (state.duckdnsDomain.isNotBlank()) {
-        val domain = "${state.duckdnsDomain.trim()}.duckdns.org"
-        if (port == DEFAULT_LAN_PORT) "http://$domain" else "http://$domain:$port"
+        com.aquarium.controller.data.PrefsRepository.buildUrl(state.duckdnsDomain.trim(), port)
     } else ""
 
     Column(

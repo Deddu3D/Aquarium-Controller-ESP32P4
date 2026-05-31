@@ -35,7 +35,7 @@ static const char *TAG = "duckdns";
 #define NVS_KEY_ENABLED  "enabled"
 #define NVS_KEY_LAN_PORT "lan_port"
 
-#define DUCKDNS_LAN_PORT_DEFAULT  443
+#define DUCKDNS_LAN_PORT_DEFAULT  80
 
 #define TASK_STACK_SIZE  8192
 #define UPDATE_PERIOD_MS (5 * 60 * 1000)   /* 5 minutes */
