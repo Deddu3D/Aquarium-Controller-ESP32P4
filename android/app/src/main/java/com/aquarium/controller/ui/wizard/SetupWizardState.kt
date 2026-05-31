@@ -52,4 +52,4 @@ enum class AquariumType(val apiValue: String, val label: String, val description
 }
 
 const val WIZARD_TOTAL_STEPS = 6
-const val DEFAULT_LAN_PORT = 443
+const val DEFAULT_LAN_PORT = 80

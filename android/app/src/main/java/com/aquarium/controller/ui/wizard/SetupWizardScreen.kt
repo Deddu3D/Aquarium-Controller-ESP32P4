@@ -220,7 +220,7 @@ private fun Step3DuckDns(state: SetupWizardState, vm: SetupWizardViewModel) {
     val port = state.lanPort.toIntOrNull() ?: DEFAULT_LAN_PORT
     val urlPreview = if (state.duckdnsDomain.isNotBlank()) {
         val domain = "${state.duckdnsDomain.trim()}.duckdns.org"
-        if (port == DEFAULT_LAN_PORT) "https://$domain" else "https://$domain:$port"
+        if (port == DEFAULT_LAN_PORT) "http://$domain" else "http://$domain:$port"
     } else ""
 
     Column(
@@ -248,7 +248,7 @@ private fun Step3DuckDns(state: SetupWizardState, vm: SetupWizardViewModel) {
             value = state.lanPort,
             onValueChange = { vm.onLanPortChange(it.filter { c -> c.isDigit() }) },
             label = { Text("Porta LAN") },
-            supportingText = { Text("Porta del port-forwarding nel router → porta ESP 443") },
+            supportingText = { Text("Porta del port-forwarding nel router → porta ESP 80") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -261,7 +261,7 @@ private fun Step3DuckDns(state: SetupWizardState, vm: SetupWizardViewModel) {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Text(
                 "Registra un dominio gratuito su duckdns.org.\n" +
-                "Configura il port-forwarding del router: porta esterna → 443 dell'ESP.",
+                "Configura il port-forwarding del router: porta esterna → 80 dell'ESP.",
                 Modifier.padding(12.dp),
                 style = MaterialTheme.typography.bodySmall,
             )

@@ -13,7 +13,7 @@ import com.aquarium.controller.data.PrefsRepository
 
 /**
  * Screen for users who already have a configured ESP.
- * They enter the DuckDNS domain (without https:// and without .duckdns.org) plus
+ * They enter the DuckDNS domain (without http:// and without .duckdns.org) plus
  * the LAN port, then hit Connect.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -23,7 +23,7 @@ fun ConnectScreen(
     onBack: () -> Unit,
 ) {
     var domain by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("443") }
+    var port by remember { mutableStateOf("80") }
     var domainError by remember { mutableStateOf(false) }
     var portError by remember { mutableStateOf(false) }
 
@@ -63,7 +63,7 @@ fun ConnectScreen(
             OutlinedTextField(
                 value = port,
                 onValueChange = { port = it.filter { c -> c.isDigit() }; portError = false },
-                label = { Text("Porta LAN (default 443)") },
+                label = { Text("Porta LAN (default 80)") },
                 isError = portError,
                 supportingText = if (portError) {{ Text("Porta non valida (1–65535)") }} else null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
