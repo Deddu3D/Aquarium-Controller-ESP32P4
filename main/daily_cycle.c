@@ -176,18 +176,18 @@ static void apply_phase(daily_cycle_phase_t phase)
         break;
 
     case DAILY_PHASE_MORNING:
-        /* Warm daylight white – moderate brightness */
-        fade_to_daylight(255, 200, 140, 200);
+        /* Warm daylight – slightly greenish-blue tint typical of aquarium */
+        fade_to_daylight(200, 220, 180, 200);
         break;
 
     case DAILY_PHASE_NOON:
-        /* Full-intensity cool white – mimics midday sunlight */
-        fade_to_daylight(200, 220, 255, 255);
+        /* Full-intensity cool white with slight blue – mimics water depth */
+        fade_to_daylight(180, 210, 255, 255);
         break;
 
     case DAILY_PHASE_AFTERNOON:
-        /* Warm white, slightly dimmer than noon */
-        fade_to_daylight(255, 190, 120, 220);
+        /* Warm white, golden hour feeling through water */
+        fade_to_daylight(240, 200, 150, 220);
         break;
 
     case DAILY_PHASE_SUNSET:

@@ -58,7 +58,7 @@ static float moon_phase_fraction(void)
 
 /* ── Scene task parameters ───────────────────────────────────────── */
 
-#define SCENE_TASK_STACK_SIZE  3072
+#define SCENE_TASK_STACK_SIZE  4096
 #define SCENE_TASK_PRIORITY    3
 #define SCENE_TICK_MS          500    /* update interval */
 
@@ -75,6 +75,8 @@ static float moon_phase_fraction(void)
 #define NVS_KEY_STORM          "storm"
 #define NVS_KEY_CLOUD_D        "cloud_d"
 #define NVS_KEY_CLOUD_P        "cloud_p"
+#define NVS_KEY_SHIMMER_I      "shimmer_i"
+#define NVS_KEY_SHIMMER_S      "shimmer_s"
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -98,6 +100,8 @@ static void nvs_load_config(void)
     s_config.storm_intensity       = 70;
     s_config.clouds_depth          = 40;
     s_config.clouds_period_s       = 120;
+    s_config.shimmer_intensity     = 50;
+    s_config.shimmer_speed         = 5;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
@@ -113,6 +117,8 @@ static void nvs_load_config(void)
     if (nvs_get_u8 (h, NVS_KEY_STORM,     &u8)  == ESP_OK) s_config.storm_intensity        = u8;
     if (nvs_get_u8 (h, NVS_KEY_CLOUD_D,   &u8)  == ESP_OK) s_config.clouds_depth           = u8;
     if (nvs_get_u16(h, NVS_KEY_CLOUD_P,   &u16) == ESP_OK) s_config.clouds_period_s        = u16;
+    if (nvs_get_u8 (h, NVS_KEY_SHIMMER_I, &u8)  == ESP_OK) s_config.shimmer_intensity      = u8;
+    if (nvs_get_u8 (h, NVS_KEY_SHIMMER_S, &u8)  == ESP_OK) s_config.shimmer_speed          = u8;
 
     nvs_close(h);
 }
@@ -133,6 +139,8 @@ static esp_err_t nvs_save_config(void)
     nvs_set_u8 (h, NVS_KEY_STORM,     s_config.storm_intensity);
     nvs_set_u8 (h, NVS_KEY_CLOUD_D,   s_config.clouds_depth);
     nvs_set_u16(h, NVS_KEY_CLOUD_P,   s_config.clouds_period_s);
+    nvs_set_u8 (h, NVS_KEY_SHIMMER_I, s_config.shimmer_intensity);
+    nvs_set_u8 (h, NVS_KEY_SHIMMER_S, s_config.shimmer_speed);
     nvs_commit(h);
     nvs_close(h);
     return ESP_OK;
@@ -293,6 +301,14 @@ static void scene_task(void *arg)
         base_br = led_controller_get_brightness();
         if (base_br < 100) base_br = 200;
         break;
+    case LED_SCENE_SHIMMER:
+        base_br = led_controller_get_brightness();
+        if (base_br == 0) base_br = 200;
+        if (!led_controller_is_on()) {
+            led_controller_set_brightness(base_br);
+            led_controller_on();
+        }
+        break;
     default:
         break;
     }
@@ -389,6 +405,52 @@ static void scene_task(void *arg)
             break;
         }
 
+        case LED_SCENE_SHIMMER: {
+            /*
+             * Water caustics / light ripple effect.
+             * Each pixel gets an independent pseudo-random brightness variation
+             * that simulates light refracting through moving water surface.
+             * Uses multiple overlapping sine waves at different frequencies
+             * per pixel to create organic-looking caustic patterns.
+             */
+            uint16_t num_leds = led_controller_get_num_leds();
+            float intensity = (float)cfg.shimmer_intensity / 100.0f;
+            float speed_mult = (float)cfg.shimmer_speed / 5.0f;
+            float phase_inc = speed_mult * 0.15f;
+
+            uint8_t base_r, base_g, base_b;
+            led_controller_get_color(&base_r, &base_g, &base_b);
+
+            led_controller_lock();
+            for (uint16_t i = 0; i < num_leds; i++) {
+                /* Three overlapping sine waves with different periods per pixel */
+                float p1 = cloud_phase + (float)i * 0.7f;
+                float p2 = cloud_phase * 1.3f + (float)i * 1.1f;
+                float p3 = cloud_phase * 0.7f + (float)i * 0.4f;
+
+                /* Combined wave: range [-1, 1] roughly */
+                float wave = (sinf(p1) * 0.5f + sinf(p2) * 0.3f + sinf(p3) * 0.2f);
+
+                /* Map to brightness modulation [1 - intensity, 1 + intensity*0.3] */
+                float mod = 1.0f + wave * intensity * 0.5f;
+                if (mod < 0.0f) mod = 0.0f;
+
+                uint8_t r = clamp_u8f((float)base_r * mod);
+                uint8_t g = clamp_u8f((float)base_g * mod);
+                uint8_t b = clamp_u8f((float)base_b * mod);
+
+                led_controller_set_pixel(i, r, g, b);
+            }
+            led_controller_refresh();
+            led_controller_unlock();
+
+            cloud_phase += phase_inc;
+            if (cloud_phase > 2.0f * 3.14159f * 100.0f) {
+                cloud_phase -= 2.0f * 3.14159f * 100.0f;
+            }
+            break;
+        }
+
         default:
             break;
         }
@@ -450,6 +512,9 @@ esp_err_t led_scenes_set_config(const led_scenes_config_t *cfg)
     if (safe.clouds_depth         > 80)  safe.clouds_depth           = 80;
     if (safe.clouds_period_s      < 10)  safe.clouds_period_s        = 10;
     if (safe.clouds_period_s      > 600) safe.clouds_period_s        = 600;
+    if (safe.shimmer_intensity    > 100) safe.shimmer_intensity      = 100;
+    if (safe.shimmer_speed        < 1)   safe.shimmer_speed          = 1;
+    if (safe.shimmer_speed        > 10)  safe.shimmer_speed          = 10;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_config = safe;
