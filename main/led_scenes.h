@@ -36,6 +36,7 @@ typedef enum {
     LED_SCENE_MOONLIGHT = 3,  /**< Dim blue/white moonlight              */
     LED_SCENE_STORM     = 4,  /**< Flickering storm effect               */
     LED_SCENE_CLOUDS    = 5,  /**< Slow sinusoidal brightness variation  */
+    LED_SCENE_SHIMMER   = 6,  /**< Water caustics / light ripple effect  */
 } led_scene_t;
 
 /* ── Scene configuration ────────────────────────────────────────── */
@@ -55,6 +56,8 @@ typedef struct {
     uint8_t  storm_intensity;       /**< Storm flicker depth (0–100 %)    */
     uint8_t  clouds_depth;          /**< Cloud dimming depth  (0–80 %)    */
     uint16_t clouds_period_s;       /**< Cloud cycle period (10–600 s)    */
+    uint8_t  shimmer_intensity;     /**< Shimmer caustics depth (0–100 %) */
+    uint8_t  shimmer_speed;         /**< Shimmer speed (1–10, 5=default)  */
 } led_scenes_config_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */

@@ -523,7 +523,7 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_CO2_BUF_SIZE      256
 #define JSON_TZ_BUF_SIZE       128
 #define JSON_FEEDING_BUF_SIZE  192
-#define JSON_SCENE_BUF_SIZE    320
+#define JSON_SCENE_BUF_SIZE    384
 #define JSON_DAILY_BUF_SIZE    256
 #define JSON_RELAY_AUTO_BUF_SIZE 2048
 #define JSON_OTA_URL_BUF_SIZE   384
@@ -2540,6 +2540,8 @@ static esp_err_t api_scene_get_handler(httpd_req_t *req)
         "\"storm_intensity\":%d,"
         "\"clouds_depth\":%d,"
         "\"clouds_period_s\":%d,"
+        "\"shimmer_intensity\":%d,"
+        "\"shimmer_speed\":%d,"
         "\"moon_phase\":%.3f}",
         (int)active,
         cfg.sunrise_duration_min,
@@ -2550,6 +2552,8 @@ static esp_err_t api_scene_get_handler(httpd_req_t *req)
         cfg.storm_intensity,
         cfg.clouds_depth,
         cfg.clouds_period_s,
+        cfg.shimmer_intensity,
+        cfg.shimmer_speed,
         (double)moon_frac);
 
     httpd_resp_set_type(req, "application/json");
@@ -2598,6 +2602,10 @@ static esp_err_t api_scene_post_handler(httpd_req_t *req)
         cfg.clouds_depth = (uint8_t)(dval > 80 ? 80 : dval);
     if (json_get_double(buf, "\"clouds_period_s\"", &dval) == 0)
         cfg.clouds_period_s = (uint16_t)(dval > 600 ? 600 : (dval < 10 ? 10 : dval));
+    if (json_get_double(buf, "\"shimmer_intensity\"", &dval) == 0)
+        cfg.shimmer_intensity = (uint8_t)(dval > 100 ? 100 : dval);
+    if (json_get_double(buf, "\"shimmer_speed\"", &dval) == 0)
+        cfg.shimmer_speed = (uint8_t)(dval > 10 ? 10 : (dval < 1 ? 1 : dval));
 
     led_scenes_set_config(&cfg);
 

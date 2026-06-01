@@ -65,6 +65,25 @@ esp_err_t aquarium_profile_apply(const char *type)
         return ESP_ERR_INVALID_ARG;
     }
 
+    /*
+     * Aquarium-specific LED colours optimised for each setup type.
+     * Tropical: warm 6500K white – natural river/lake daylight
+     * Marine:   actinic blue dominant (14000-20000K) – reef/coral look
+     * Planted:  full spectrum with red boost – promotes plant growth
+     */
+    uint8_t led_r = 200, led_g = 220, led_b = 255;
+    uint8_t led_brightness = 255;
+    if (strcmp(type, "tropical") == 0) {
+        led_r = 255; led_g = 210; led_b = 160;     /* warm white ~6500K */
+        led_brightness = 220;
+    } else if (strcmp(type, "marine") == 0) {
+        led_r = 60; led_g = 100; led_b = 255;      /* actinic blue ~20000K */
+        led_brightness = 240;
+    } else if (strcmp(type, "planted") == 0) {
+        led_r = 255; led_g = 190; led_b = 170;     /* full spectrum + red */
+        led_brightness = 255;
+    }
+
     auto_heater_config_t heater = auto_heater_get_config();
     heater.target_temp_c = target_temp;
 
@@ -73,6 +92,10 @@ esp_err_t aquarium_profile_apply(const char *type)
     set_hhmm(&led.on_hour, &led.on_minute, on_h, on_m);
     set_hhmm(&led.off_hour, &led.off_minute, off_h, off_m);
     led.ramp_duration_min = (uint16_t)ramp_min;
+    led.brightness = led_brightness;
+    led.red = led_r;
+    led.green = led_g;
+    led.blue = led_b;
     led.pause_enabled = pause_enabled;
     if (pause_enabled) {
         set_hhmm(&led.pause_start_hour, &led.pause_start_minute, pause_start_h, pause_start_m);
