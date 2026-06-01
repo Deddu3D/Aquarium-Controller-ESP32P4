@@ -282,8 +282,9 @@ void daily_cycle_tick(void)
     }
 
     struct tm lt, gt;
-    localtime_r(&now, &lt);
-    gmtime_r(&now, &gt);
+    if (localtime_r(&now, &lt) == NULL || gmtime_r(&now, &gt) == NULL) {
+        return;
+    }
 
     /* UTC offset in minutes; handles midnight crossing gracefully */
     int local_tod = lt.tm_hour * 60 + lt.tm_min;

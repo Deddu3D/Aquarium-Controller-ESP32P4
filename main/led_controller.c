@@ -324,6 +324,13 @@ static void ramp_timer_cb(void *arg)
         return;
     }
 
+    if (s_ramp_total_ms == 0) {
+        s_ramp_active = false;
+        esp_timer_stop(s_ramp_timer);
+        xSemaphoreGive(s_mutex);
+        return;
+    }
+
     s_ramp_elapsed += RAMP_TICK_MS;
     float t = (float)s_ramp_elapsed / (float)s_ramp_total_ms;
     if (t >= 1.0f) {

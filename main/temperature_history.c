@@ -143,8 +143,7 @@ static void history_task(void *arg)
             time_t now = time(NULL);
             /* Only record if the system clock looks valid (year >= 2024) */
             struct tm ti;
-            localtime_r(&now, &ti);
-            if (ti.tm_year >= (2024 - 1900)) {
+            if (localtime_r(&now, &ti) != NULL && ti.tm_year >= (2024 - 1900)) {
                 xSemaphoreTake(s_mutex, portMAX_DELAY);
                 s_ring[s_head].timestamp = now;
                 s_ring[s_head].temp_c    = temp_c;

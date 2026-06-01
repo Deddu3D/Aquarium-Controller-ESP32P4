@@ -1913,8 +1913,7 @@ static void ui_refresh_cb(lv_timer_t *timer)
     if (s_status_time_lbl) {
         time_t now = time(NULL);
         struct tm ti;
-        localtime_r(&now, &ti);
-        if (ti.tm_year >= (2024 - 1900))
+        if (localtime_r(&now, &ti) != NULL && ti.tm_year >= (2024 - 1900))
             lv_label_set_text_fmt(s_status_time_lbl, "%02d:%02d",
                                   ti.tm_hour, ti.tm_min);
     }

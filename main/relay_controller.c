@@ -314,10 +314,7 @@ void relay_controller_tick_schedules(void)
 {
     time_t now = time(NULL);
     struct tm ti;
-    localtime_r(&now, &ti);
-
-    /* Skip if clock not synced */
-    if (ti.tm_year < (2024 - 1900)) {
+    if (localtime_r(&now, &ti) == NULL || ti.tm_year < (2024 - 1900)) {
         return;
     }
 

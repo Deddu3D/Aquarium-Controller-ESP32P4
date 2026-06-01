@@ -40,7 +40,7 @@ static float moon_phase_fraction(void)
     time_t now = time(NULL);
     /* Fallback: if clock not synced return a constant half-moon */
     struct tm ti;
-    localtime_r(&now, &ti);
+    if (localtime_r(&now, &ti) == NULL) return 0.5f;
     if (ti.tm_year < (2024 - 1900)) return 0.5f;
 
     /* Days since J2000.0 epoch (2000-01-01 12:00 UTC) */
