@@ -630,8 +630,7 @@ static esp_err_t api_status_get_handler(httpd_req_t *req)
     /* NTP status – time is valid once the year is >= 2024 */
     time_t now_t = time(NULL);
     struct tm ti;
-    localtime_r(&now_t, &ti);
-    bool ntp_ok = (ti.tm_year >= (2024 - 1900));
+    bool ntp_ok = (localtime_r(&now_t, &ti) != NULL && ti.tm_year >= (2024 - 1900));
 
     /* Running OTA partition label */
     const esp_partition_t *part = esp_ota_get_running_partition();

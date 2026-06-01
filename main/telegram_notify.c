@@ -236,11 +236,10 @@ static esp_err_t send_telegram_message(const char *token, const char *chat_id,
      * MBEDTLS_ERR_X509_CERT_VERIFY_FAILED (-0x3000).                   */
     time_t now = time(NULL);
     struct tm ti;
-    localtime_r(&now, &ti);
-    if (ti.tm_year < (2024 - 1900)) {
-        ESP_LOGE(TAG, "System clock not synchronised (year=%d) – "
+    if (localtime_r(&now, &ti) == NULL || ti.tm_year < (2024 - 1900)) {
+        ESP_LOGE(TAG, "System clock not synchronised – "
                  "cannot verify TLS certificates. "
-                 "Waiting for SNTP sync …", ti.tm_year + 1900);
+                 "Waiting for SNTP sync …");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -515,7 +514,7 @@ static void telegram_task(void *arg)
             /* Time-based reminders and daily summary */
             time_t now = time(NULL);
             struct tm ti;
-            localtime_r(&now, &ti);
+            if (localtime_r(&now, &ti) == NULL) continue;
 
             if (ti.tm_year >= (2024 - 1900)) {
                 int today = ti.tm_yday;

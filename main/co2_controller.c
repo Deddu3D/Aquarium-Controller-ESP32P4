@@ -176,8 +176,7 @@ void co2_controller_tick(void)
     /* Require a valid system clock */
     time_t now = time(NULL);
     struct tm ti;
-    localtime_r(&now, &ti);
-    if (ti.tm_year < (2024 - 1900)) {
+    if (localtime_r(&now, &ti) == NULL || ti.tm_year < (2024 - 1900)) {
         return;
     }
 
