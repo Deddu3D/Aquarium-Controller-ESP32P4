@@ -19,7 +19,6 @@
 
 #include "feeding_mode.h"
 #include "relay_controller.h"
-#include "led_controller.h"
 #include "telegram_notify.h"
 
 static const char *TAG = "feeding";
@@ -46,8 +45,6 @@ static feeding_config_t  s_config;
 static bool              s_active        = false;
 static time_t            s_end_time      = 0;    /* UNIX epoch seconds */
 static bool              s_relay_was_on  = false; /* relay state before feeding */
-static uint8_t           s_prev_bright   = 255;   /* LED brightness before feeding */
-static bool              s_prev_led_on   = false;  /* LED on/off state before feeding */
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -107,16 +104,6 @@ static void restore_state(void)
                  s_config.relay_index, s_relay_was_on ? "ON" : "OFF");
     }
 
-    /* Restore LED brightness / state */
-    if (s_config.dim_lights) {
-        led_controller_set_brightness(s_prev_bright);
-        if (!s_prev_led_on) {
-            led_controller_cancel_fade();
-            led_controller_off();
-        }
-        ESP_LOGI(TAG, "LED brightness restored to %d (was_on=%d)",
-                 s_prev_bright, s_prev_led_on);
-    }
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -178,9 +165,6 @@ esp_err_t feeding_mode_start(void)
     if (cfg.relay_index >= 0 && cfg.relay_index < RELAY_COUNT) {
         s_relay_was_on = relay_controller_get(cfg.relay_index);
     }
-    s_prev_bright = led_controller_get_brightness();
-    s_prev_led_on = led_controller_is_on();
-
     /* Start timer */
     s_end_time = time(NULL) + (time_t)cfg.duration_min * 60;
     s_active   = true;
@@ -190,12 +174,6 @@ esp_err_t feeding_mode_start(void)
     if (cfg.relay_index >= 0 && cfg.relay_index < RELAY_COUNT) {
         relay_controller_set(cfg.relay_index, false);
         ESP_LOGI(TAG, "Relay %d paused for feeding", cfg.relay_index);
-    }
-
-    /* Dim lights */
-    if (cfg.dim_lights && led_controller_is_on()) {
-        led_controller_set_brightness(cfg.dim_brightness);
-        ESP_LOGI(TAG, "LED dimmed to %d for feeding", cfg.dim_brightness);
     }
 
     /* Telegram notification */
@@ -237,7 +215,7 @@ void feeding_mode_stop(void)
     /* Telegram notification */
     telegram_notify_send(
         "\xf0\x9f\x90\x9f <b>Alimentazione terminata</b>\n"
-        "Filtro e luci ripristinati.");
+        "Filtro ripristinato.");
 
     ESP_LOGI(TAG, "Feeding mode stopped (manual or expired)");
 }
@@ -288,7 +266,7 @@ void feeding_mode_tick(void)
 
         telegram_notify_send(
             "\xf0\x9f\x90\x9f <b>Alimentazione terminata</b>\n"
-            "Filtro e luci ripristinati automaticamente.");
+            "Filtro ripristinato automaticamente.");
 
         ESP_LOGI(TAG, "Feeding mode expired – state restored");
     }

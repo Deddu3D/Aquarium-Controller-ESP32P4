@@ -21,7 +21,6 @@
 #include "relay_automation.h"
 #include "relay_controller.h"
 #include "temperature_sensor.h"
-#include "led_controller.h"
 #include "feeding_mode.h"
 
 static const char *TAG = "relay_auto";
@@ -214,7 +213,8 @@ void relay_auto_tick(void)
 
     float temp_c = 0.0f;
     bool temp_valid = temperature_sensor_get(&temp_c);
-    bool lights_on = led_controller_is_on();
+    /* Relay 0 is dedicated to aquarium lights. */
+    bool lights_on = relay_controller_get(0);
     bool feeding_active = feeding_mode_is_active();
 
     for (int i = 0; i < RELAY_AUTO_MAX_RULES; i++) {

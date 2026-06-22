@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: MIT
  *
  * Aquarium Controller - Feeding Mode
- * Temporarily pauses the filter/pump relay and optionally dims the LED
- * strip for a configurable number of minutes during feeding.  After the
+ * Temporarily pauses the filter/pump relay for a configurable number of
+ * minutes during feeding. After the
  * timer expires everything returns to its previous state automatically.
  * A Telegram notification is sent at start and end of the feeding window.
  *
@@ -35,8 +35,7 @@ typedef struct {
  * @brief Initialise the feeding mode module.
  *
  * Loads configuration from NVS.
- * Must be called after nvs_flash_init(), relay_controller_init(), and
- * led_controller_init().
+ * Must be called after nvs_flash_init() and relay_controller_init().
  *
  * @return ESP_OK on success.
  */
@@ -59,7 +58,6 @@ esp_err_t feeding_mode_set_config(const feeding_config_t *cfg);
  * @brief Start feeding mode.
  *
  * - Turns off (or pauses) the configured relay.
- * - Dims the LED strip if configured.
  * - Starts the countdown timer.
  * - Sends a Telegram notification if the service is configured.
  *
@@ -72,7 +70,7 @@ esp_err_t feeding_mode_start(void);
 /**
  * @brief Stop feeding mode early (manual cancel).
  *
- * Restores the relay and LED strip state and sends a Telegram notification.
+ * Restores the relay state and sends a Telegram notification.
  */
 void feeding_mode_stop(void);
 
@@ -91,7 +89,7 @@ int feeding_mode_get_remaining_s(void);
  *
  * Call periodically from the main loop (every ~10 s).
  * Automatically deactivates feeding mode when the timer expires and
- * restores the previous relay and LED state.
+ * restores the previous relay state.
  */
 void feeding_mode_tick(void);
 

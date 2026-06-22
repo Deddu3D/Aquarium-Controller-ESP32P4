@@ -31,9 +31,6 @@
 
 #include "wifi_manager.h"
 #include "web_server.h"
-#include "led_controller.h"
-#include "led_schedule.h"
-#include "led_scenes.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -44,7 +41,6 @@
 #include "timezone_manager.h"
 #include "display_ui.h"
 #include "feeding_mode.h"
-#include "daily_cycle.h"
 #include "event_log.h"
 #include "relay_automation.h"
 #include "aquarium_profiles.h"
@@ -194,36 +190,7 @@ void app_main(void)
         }
     }
 
-    /* ── 5. Initialise LED strip ────────────────────────────────── */
-    esp_task_wdt_reset();
-    ret = led_controller_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "LED strip init failed (0x%x)", ret);
-    } else {
-        ESP_LOGI(TAG, "LED strip ready");
-
-        /* Initialise LED schedule module */
-        ret = led_schedule_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "LED schedule init failed (0x%x)", ret);
-        }
-
-        /* Initialise LED scene engine */
-        ret = led_scenes_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "LED scenes init failed (0x%x)", ret);
-        }
-
-        /* Initialise daily lighting cycle module */
-        ret = daily_cycle_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Daily cycle init failed (0x%x)", ret);
-        } else {
-            ESP_LOGI(TAG, "Daily cycle module ready");
-        }
-    }
-
-    /* ── 6. Initialise DS18B20 water temperature sensor ─────────── */
+    /* ── 5. Initialise DS18B20 water temperature sensor ─────────── */
     esp_task_wdt_reset();
     ret = temperature_sensor_init();
     if (ret != ESP_OK) {
@@ -238,7 +205,7 @@ void app_main(void)
         }
     }
 
-    /* ── 7. Initialise Telegram notification service ────────────── */
+    /* ── 6. Initialise Telegram notification service ────────────── */
     esp_task_wdt_reset();
     ret = telegram_notify_init();
     if (ret != ESP_OK) {
@@ -247,7 +214,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Telegram notification service ready");
     }
 
-    /* ── 8. Initialise 4-channel relay controller ────────────────── */
+    /* ── 7. Initialise 4-channel relay controller ────────────────── */
     esp_task_wdt_reset();
     ret = relay_controller_init();
     if (ret != ESP_OK) {
@@ -263,7 +230,7 @@ void app_main(void)
         relay_controller_tick_schedules();
     }
 
-    /* ── 8b. Initialise auto-heater thermostat ───────────────────── */
+    /* ── 7b. Initialise auto-heater thermostat ───────────────────── */
     esp_task_wdt_reset();
     ret = auto_heater_init();
     if (ret != ESP_OK) {
@@ -272,7 +239,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Auto-heater module ready");
     }
 
-    /* ── 8c. Initialise CO2 solenoid controller ──────────────────── */
+    /* ── 7c. Initialise CO2 solenoid controller ──────────────────── */
     esp_task_wdt_reset();
     ret = co2_controller_init();
     if (ret != ESP_OK) {
@@ -281,7 +248,7 @@ void app_main(void)
         ESP_LOGI(TAG, "CO2 controller module ready");
     }
 
-    /* ── 8d. Initialise feeding mode module ──────────────────────── */
+    /* ── 7d. Initialise feeding mode module ──────────────────────── */
     esp_task_wdt_reset();
     ret = feeding_mode_init();
     if (ret != ESP_OK) {
@@ -290,7 +257,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Feeding mode module ready");
     }
 
-    /* ── 8e. Initialise relay automation module ───────────────────── */
+    /* ── 7e. Initialise relay automation module ───────────────────── */
     esp_task_wdt_reset();
     ret = relay_auto_init();
     if (ret != ESP_OK) {
@@ -299,7 +266,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Relay automation module ready");
     }
 
-    /* ── 8f. Apply deferred aquarium profile from Android provisioning ── */
+    /* ── 7f. Apply deferred aquarium profile from Android provisioning ── */
     esp_task_wdt_reset();
     {
         nvs_handle_t pr_h;
@@ -321,7 +288,7 @@ void app_main(void)
         }
     }
 
-    /* ── 9. Initialise DuckDNS dynamic DNS client ────────────────── */
+    /* ── 8. Initialise DuckDNS dynamic DNS client ────────────────── */
     esp_task_wdt_reset();
     ret = duckdns_init();
     if (ret != ESP_OK) {
@@ -330,7 +297,7 @@ void app_main(void)
         ESP_LOGI(TAG, "DuckDNS client ready");
     }
 
-    /* ── 10. Start HTTP status server ─────────────────────────────── */
+    /* ── 9. Start HTTP status server ─────────────────────────────── */
     bool web_server_running = false;
     if (wifi_manager_is_connected()) {
         ret = web_server_start();
@@ -344,7 +311,7 @@ void app_main(void)
         ESP_LOGI(TAG, "Connect to '%s' WiFi to configure credentials", "AquariumSetup");
     }
 
-    /* ── 11. Start touch display UI initialisation task ───────────── */
+    /* ── 10. Start touch display UI initialisation task ───────────── */
     esp_task_wdt_reset();
     BaseType_t task_create_result = xTaskCreatePinnedToCore(
         display_init_task,
@@ -358,7 +325,7 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to start display init task – continuing without display");
     }
 
-    /* ── 12. Confirm OTA firmware as valid (enables auto-rollback) ── */
+    /* ── 11. Confirm OTA firmware as valid (enables auto-rollback) ── */
     {
         const esp_partition_t *running = esp_ota_get_running_partition();
         esp_ota_img_states_t state;
@@ -369,17 +336,15 @@ void app_main(void)
         }
     }
 
-    /* ── 13. Main application loop (adaptive per-module tick) ────── */
+    /* ── 12. Main application loop (adaptive per-module tick) ────── */
     ESP_LOGI(TAG, "Entering main loop …");
 
     /* Per-module last-call timestamps (microseconds via esp_timer_get_time) */
-    int64_t t_led_sched  = 0;   /* LED schedule:  60 s */
     int64_t t_relay_sched = 0;  /* Relay sched:   60 s */
     int64_t t_heater     = 0;   /* Auto-heater:   30 s */
     int64_t t_relay_auto = 0;   /* Relay auto:    30 s */
     int64_t t_co2        = 0;   /* CO2 valve:     60 s */
     int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
-    int64_t t_daily      = 0;   /* Daily cycle:   60 s */
 
 #define TICK_INTERVAL_US(sec)  ((int64_t)(sec) * 1000000LL)
 #define SINCE(t)               (esp_timer_get_time() - (t))
@@ -415,12 +380,6 @@ void app_main(void)
             t_relay_auto = now;
         }
 
-        /* LED schedule: 60 s */
-        if (SINCE(t_led_sched) >= TICK_INTERVAL_US(60)) {
-            led_schedule_tick();
-            t_led_sched = now;
-        }
-
         /* Relay schedule: 60 s */
         if (SINCE(t_relay_sched) >= TICK_INTERVAL_US(60)) {
             relay_controller_tick_schedules();
@@ -431,12 +390,6 @@ void app_main(void)
         if (SINCE(t_co2) >= TICK_INTERVAL_US(60)) {
             co2_controller_tick();
             t_co2 = now;
-        }
-
-        /* Daily lighting cycle: 60 s */
-        if (SINCE(t_daily) >= TICK_INTERVAL_US(60)) {
-            daily_cycle_tick();
-            t_daily = now;
         }
 
         esp_task_wdt_reset();
