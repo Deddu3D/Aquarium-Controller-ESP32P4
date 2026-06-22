@@ -340,9 +340,9 @@ void app_main(void)
     ESP_LOGI(TAG, "Entering main loop …");
 
     /* Per-module last-call timestamps (microseconds via esp_timer_get_time) */
-    int64_t t_relay_sched = 0;  /* Relay sched:   60 s */
+    int64_t t_relay_schedule = 0;  /* Relay sched:   60 s */
     int64_t t_heater     = 0;   /* Auto-heater:   30 s */
-    int64_t t_relay_auto = 0;   /* Relay auto:    30 s */
+    int64_t t_relay_automation = 0;   /* Relay auto:    30 s */
     int64_t t_co2        = 0;   /* CO2 valve:     60 s */
     int64_t t_feeding    = 0;   /* Feeding mode:  10 s */
 
@@ -375,15 +375,15 @@ void app_main(void)
         }
 
         /* Relay automation: 30 s */
-        if (SINCE(t_relay_auto) >= TICK_INTERVAL_US(30)) {
+        if (SINCE(t_relay_automation) >= TICK_INTERVAL_US(30)) {
             relay_auto_tick();
-            t_relay_auto = now;
+            t_relay_automation = now;
         }
 
         /* Relay schedule: 60 s */
-        if (SINCE(t_relay_sched) >= TICK_INTERVAL_US(60)) {
+        if (SINCE(t_relay_schedule) >= TICK_INTERVAL_US(60)) {
             relay_controller_tick_schedules();
-            t_relay_sched = now;
+            t_relay_schedule = now;
         }
 
         /* CO2 valve: 60 s */

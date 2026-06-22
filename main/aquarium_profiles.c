@@ -75,18 +75,6 @@ esp_err_t aquarium_profile_apply(const char *type)
     if (err != ESP_OK) {
         return err;
     }
-    relay_schedule_t lights_main = build_schedule(on_h, on_m, off_h, off_m);
-    err = relay_controller_set_schedule(0, 0, &lights_main);
-    if (err != ESP_OK) return err;
-
-    relay_schedule_t disabled = {0};
-    err = relay_controller_set_schedule(0, 1, &disabled);
-    if (err != ESP_OK) return err;
-    err = relay_controller_set_schedule(0, 2, &disabled);
-    if (err != ESP_OK) return err;
-    err = relay_controller_set_schedule(0, 3, &disabled);
-    if (err != ESP_OK) return err;
-
     if (pause_enabled) {
         relay_schedule_t pause1 = build_schedule(on_h, on_m, pause_start_h, pause_start_m);
         relay_schedule_t pause2 = build_schedule(pause_end_h, pause_end_m, off_h, off_m);
@@ -94,8 +82,21 @@ esp_err_t aquarium_profile_apply(const char *type)
         if (err != ESP_OK) return err;
         err = relay_controller_set_schedule(0, 1, &pause2);
         if (err != ESP_OK) return err;
+    } else {
+        relay_schedule_t lights_main = build_schedule(on_h, on_m, off_h, off_m);
+        err = relay_controller_set_schedule(0, 0, &lights_main);
+        if (err != ESP_OK) return err;
     }
 
+    relay_schedule_t disabled = {0};
+    int first_unused_slot = pause_enabled ? 2 : 1;
+    for (int slot = first_unused_slot; slot < RELAY_SCHEDULE_SLOTS; slot++) {
+        err = relay_controller_set_schedule(0, slot, &disabled);
+        if (err != ESP_OK) return err;
+    }
+
+    /* Force immediate re-evaluation from a known state so the updated
+     * schedule applies deterministically right after profile activation. */
     relay_controller_set(0, false);
     relay_controller_tick_schedules();
     err = co2_controller_set_config(&co2);

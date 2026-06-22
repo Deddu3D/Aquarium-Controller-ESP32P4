@@ -31,6 +31,7 @@ static const char *TAG = "co2";
 #define NVS_KEY_RELAY      "relay_idx"
 #define NVS_KEY_PRE_ON     "pre_on"
 #define NVS_KEY_POST_OFF   "post_off"
+#define MINUTES_PER_DAY    1440
 
 /* ── Private state ───────────────────────────────────────────────── */
 
@@ -39,22 +40,35 @@ static co2_config_t      s_config;
 static bool              s_valve_on = false;   /* last commanded state */
 static const int         s_lights_relay_index = 0;
 
-static bool relay_schedule_active_now(const relay_schedule_t schedules[RELAY_SCHEDULE_SLOTS], int now_min)
+/* Return true when now_min is inside the half-open interval
+ * [start_min, end_min), supporting windows that cross midnight
+ * (start_min > end_min). */
+static bool minute_in_window(int now_min, int start_min, int end_min)
+{
+    if (start_min <= end_min) {
+        return now_min >= start_min && now_min < end_min;
+    }
+    return now_min >= start_min || now_min < end_min;
+}
+
+/* Check whether any enabled schedule slot is active at now_min after applying
+ * pre-on and post-off margins (minutes), with wrap-around at midnight.
+ * When out_start_min/out_end_min are provided, the active adjusted window
+ * is returned for diagnostics. */
+static bool relay_schedule_active_now(const relay_schedule_t relay_schedules[RELAY_SCHEDULE_SLOTS],
+                                      int now_min, int pre_on_min, int post_off_min,
+                                      int *out_start_min, int *out_end_min)
 {
     for (int i = 0; i < RELAY_SCHEDULE_SLOTS; i++) {
-        if (!schedules[i].enabled) {
+        if (!relay_schedules[i].enabled) {
             continue;
         }
-        int on_m = schedules[i].on_min;
-        int off_m = schedules[i].off_min;
-        if (on_m <= off_m) {
-            if (now_min >= on_m && now_min < off_m) {
-                return true;
-            }
-        } else {
-            if (now_min >= on_m || now_min < off_m) {
-                return true;
-            }
+        int on_m = ((int)relay_schedules[i].on_min - pre_on_min + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+        int off_m = ((int)relay_schedules[i].off_min + post_off_min + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+        if (minute_in_window(now_min, on_m, off_m)) {
+            if (out_start_min) *out_start_min = on_m;
+            if (out_end_min) *out_end_min = off_m;
+            return true;
         }
     }
     return false;
@@ -206,9 +220,15 @@ void co2_controller_tick(void)
     relay_state_t relays[RELAY_COUNT];
     relay_controller_get_all(relays);
 
-    bool lights_schedule_active = relay_schedule_active_now(
-        relays[s_lights_relay_index].schedules, now_min);
-    if (!lights_schedule_active) {
+    int active_start_min = -1;
+    int active_end_min = -1;
+    bool should_be_on = relay_schedule_active_now(relays[s_lights_relay_index].schedules,
+                                                  now_min,
+                                                  cfg.pre_on_min,
+                                                  cfg.post_off_min,
+                                                  &active_start_min,
+                                                  &active_end_min);
+    if (!should_be_on) {
         /* No active lights schedule window – close valve and return. */
         if (currently_on) {
             relay_controller_set(cfg.relay_index, false);
@@ -219,26 +239,19 @@ void co2_controller_tick(void)
         }
         return;
     }
-    bool should_be_on = true;
-
-    if (cfg.pre_on_min > 0 || cfg.post_off_min > 0) {
-        /* Optional margin based on current lights relay state, to support
-         * delayed turn-on/off without requiring LED-specific schedules. */
-        bool lights_now = relays[s_lights_relay_index].on;
-        if (!lights_now) {
-            should_be_on = false;
-        }
-    }
-
     if (should_be_on != currently_on) {
         relay_controller_set(cfg.relay_index, should_be_on);
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_valve_on = should_be_on;
         xSemaphoreGive(s_mutex);
-        ESP_LOGI(TAG, "CO2 solenoid %s (relay %d, now=%02d:%02d lights_relay=%s)",
+        ESP_LOGI(TAG, "CO2 solenoid %s (relay %d, now=%02d:%02d window=%02d:%02d–%02d:%02d lights_relay=%s)",
                  should_be_on ? "OPEN" : "CLOSED",
                  cfg.relay_index,
-                 now_min / 60, now_min % 60,
+                 ti.tm_hour, ti.tm_min,
+                 (active_start_min >= 0) ? (active_start_min / 60) : 0,
+                 (active_start_min >= 0) ? (active_start_min % 60) : 0,
+                 (active_end_min >= 0) ? (active_end_min / 60) : 0,
+                 (active_end_min >= 0) ? (active_end_min % 60) : 0,
                  relays[s_lights_relay_index].on ? "ON" : "OFF");
     }
 }
