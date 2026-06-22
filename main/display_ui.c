@@ -64,9 +64,6 @@ void display_ui_clear_alarm(void) {}
 /* Aquarium controller modules */
 #include "temperature_sensor.h"
 #include "temperature_history.h"
-#include "led_controller.h"
-#include "led_schedule.h"
-#include "led_scenes.h"
 #include "relay_controller.h"
 #include "auto_heater.h"
 #include "co2_controller.h"
@@ -106,10 +103,9 @@ static const char *TAG = "display_ui";
 
 /* ── Tab indices ────────────────────────────────────────────────────── */
 #define TAB_HOME        0
-#define TAB_LUCI        1
-#define TAB_TEMPERATURA 2
-#define TAB_AUTOMAZIONI 3
-#define TAB_DATI        4
+#define TAB_TEMPERATURA 1
+#define TAB_AUTOMAZIONI 2
+#define TAB_DATI        3
 
 /* ── Chart ──────────────────────────────────────────────────────────── */
 #define CHART_POINTS    48                /* 48 × 30-min slots = 24 h     */
@@ -156,18 +152,10 @@ static lv_obj_t *s_status_ok_lbl   = NULL;
 /* ─ Home tab cards ────────────────────────────────────────────────── */
 static lv_obj_t *s_home_temp_val   = NULL;   /* "25.3°C"          */
 static lv_obj_t *s_home_temp_badge = NULL;   /* "OK" pill         */
-static lv_obj_t *s_home_led_val    = NULL;   /* "80%"             */
-static lv_obj_t *s_home_led_badge  = NULL;   /* "ON" pill         */
 static lv_obj_t *s_home_co2_val    = NULL;   /* "ON" / "OFF"      */
 static lv_obj_t *s_home_co2_sub    = NULL;   /* "Terminazione: …" */
 static lv_obj_t *s_home_water_val  = NULL;   /* "OK"              */
 static lv_obj_t *s_home_water_sub  = NULL;   /* "Stato: Normale"  */
-
-/* ─ Luci tab ──────────────────────────────────────────────────────── */
-static lv_obj_t *s_luci_sw           = NULL;
-static lv_obj_t *s_luci_br_sl        = NULL;
-static lv_obj_t *s_luci_br_lbl       = NULL;
-static lv_obj_t *s_luci_scene_btn[4] = { NULL, NULL, NULL, NULL };
 
 /* ─ Temperatura tab ───────────────────────────────────────────────── */
 static lv_obj_t *s_temp_arc        = NULL;
@@ -179,8 +167,6 @@ static lv_obj_t *s_cool_chip       = NULL;
 static lv_obj_t *s_cool_lbl        = NULL;
 
 /* ─ Automazioni tab ───────────────────────────────────────────────── */
-static lv_obj_t *s_auto_luci_sw  = NULL;
-static lv_obj_t *s_auto_luci_inf = NULL;
 static lv_obj_t *s_auto_co2_sw   = NULL;
 static lv_obj_t *s_auto_co2_inf  = NULL;
 static lv_obj_t *s_auto_ht_sw    = NULL;
@@ -785,14 +771,14 @@ static void build_home_tab(lv_obj_t *tab)
     s_home_temp_badge = make_badge(c1, LV_SYMBOL_OK "  OK",
                                    C_ON_BG, C_ON, NULL);
 
-    /* Card 2 – Luci */
-    lv_obj_t *c2 = make_home_card(row1, TAB_LUCI);
+    /* Card 2 – Luci (relay 0 state) */
+    lv_obj_t *c2 = make_home_card(row1, TAB_AUTOMAZIONI);
     make_card_header(c2, LV_SYMBOL_IMAGE, C_YELLOW, "LUCI");
     s_home_led_val = lv_label_create(c2);
-    lv_label_set_text(s_home_led_val, "--%");
+    lv_label_set_text(s_home_led_val, "OFF");
     lv_obj_set_style_text_font(s_home_led_val, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(s_home_led_val, lv_color_hex(C_TEXT), 0);
-    s_home_led_badge = make_badge(c2, "OFF", C_OFF, C_MUTED, NULL);
+    lv_obj_set_style_text_color(s_home_led_val, lv_color_hex(C_MUTED), 0);
+    s_home_led_badge = make_badge(c2, "Rel\xc3\xa8 1", C_OFF, C_MUTED, NULL);
 
     /* ── Row 2 ─────────────────────────────────────────────────── */
     lv_obj_t *row2 = lv_obj_create(tab);
@@ -829,31 +815,6 @@ static void build_home_tab(lv_obj_t *tab)
  * ║  8. Luci tab – brightness slider + scene buttons
  * ╚══════════════════════════════════════════════════════════════════════ */
 
-static const led_scene_t k_scene_ids[4] = {
-    LED_SCENE_SUNRISE, LED_SCENE_NONE, LED_SCENE_SUNSET, LED_SCENE_MOONLIGHT
-};
-static const uint32_t k_scene_colors[4] = {
-    0xF39C12, C_YELLOW, 0xE67E22, C_PRIMARY
-};
-static const char *k_scene_names[4]  = { "Alba", "Giorno", "Tramonto", "Notte" };
-static const char *k_scene_pcts[4]   = { "30%", "100%", "50%", "10%" };
-static const char *k_scene_icons[4]  = {
-    LV_SYMBOL_PLUS, LV_SYMBOL_IMAGE, LV_SYMBOL_MINUS, LV_SYMBOL_LOOP
-};
-/* Selected scene background colours */
-static const uint32_t k_scene_sel_bg[4] = {
-    0x3D2000, 0x3D3000, 0x3D1500, 0x0A1A35
-};
-
-static void luci_sw_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    uint32_t ramp = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000;
-    if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED))
-        led_controller_fade_on(ramp);
-    else
-        led_controller_fade_off(ramp);
-}
 
 static void luci_br_cb(lv_event_t *e)
 {
@@ -1176,13 +1137,6 @@ static void build_temperatura_tab(lv_obj_t *tab)
  * ║  10. Automazioni tab – scrollable list with toggles
  * ╚══════════════════════════════════════════════════════════════════════ */
 
-static void auto_luci_sw_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    led_schedule_config_t cfg = led_schedule_get_config();
-    cfg.enabled = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    led_schedule_set_config(&cfg);
-}
 
 static void auto_co2_sw_cb(lv_event_t *e)
 {
@@ -1235,21 +1189,18 @@ static void build_automazioni_tab(lv_obj_t *tab)
     lv_label_set_text(title, "AUTOMAZIONI");
     style_title(title);
 
-    led_schedule_config_t sched = led_schedule_get_config();
     co2_config_t          co2   = co2_controller_get_config();
     auto_heater_config_t  ht    = auto_heater_get_config();
 
-    /* Luci schedule time string */
-    char luci_time[24];
-    snprintf(luci_time, sizeof(luci_time), "%02d:%02d \xe2\x80\x93 %02d:%02d",
-             sched.on_hour, sched.on_minute, sched.off_hour, sched.off_minute);
-
-    /* CO2 time derived from LED schedule + offsets */
-    int co2_on_min  = sched.on_hour  * 60 + sched.on_minute  - co2.pre_on_min;
-    int co2_off_min = sched.off_hour * 60 + sched.off_minute + co2.post_off_min;
+    /* CO2 time derived from relay 0 schedule + offsets */
+    relay_state_t rs_build[RELAY_COUNT];
+    relay_controller_get_all(rs_build);
+    int lights_on_min  = (rs_build[0].schedules[0].enabled) ? (int)rs_build[0].schedules[0].on_min  : 0;
+    int lights_off_min = (rs_build[0].schedules[0].enabled) ? (int)rs_build[0].schedules[0].off_min : 0;
+    int co2_on_min  = lights_on_min  - co2.pre_on_min;
+    int co2_off_min = lights_off_min + co2.post_off_min;
     if (co2_on_min  < 0)    co2_on_min  = 0;
     if (co2_off_min > 1439) co2_off_min = 1439;
-    /* "%02d:%02d <UTF-8 en dash> %02d:%02d": max 5+1+3+1+5 = 15 chars + NUL */
     char co2_time[32];
     snprintf(co2_time, sizeof(co2_time), "%02d:%02d \xe2\x80\x93 %02d:%02d",
              co2_on_min / 60, co2_on_min % 60,
@@ -1257,14 +1208,6 @@ static void build_automazioni_tab(lv_obj_t *tab)
 
     char ht_info[32];
     snprintf(ht_info, sizeof(ht_info), "Target: %.1f\xc2\xb0""C", ht.target_temp_c);
-
-    /* Luci */
-    s_auto_luci_sw = make_auto_item(tab,
-        LV_SYMBOL_IMAGE, C_YELLOW,
-        "Luci", luci_time, "Tutti i giorni",
-        sched.enabled, &s_auto_luci_inf);
-    lv_obj_add_event_cb(s_auto_luci_sw, auto_luci_sw_cb,
-                        LV_EVENT_VALUE_CHANGED, NULL);
 
     /* CO2 */
     s_auto_co2_sw = make_auto_item(tab,
@@ -1319,7 +1262,7 @@ static void build_automazioni_tab(lv_obj_t *tab)
  * ║  11. Dati tab – LVGL chart with Temperatura/Luci/CO₂ selector
  * ╚══════════════════════════════════════════════════════════════════════ */
 
-static const uint32_t k_chart_colors[3] = { C_PRIMARY, C_YELLOW, C_ON };
+static const uint32_t k_chart_colors[2] = { C_PRIMARY, C_ON };
 
 static void chart_update(int mode)
 {
@@ -1327,7 +1270,7 @@ static void chart_update(int mode)
     s_chart_mode = mode;
 
     /* Update selector button styles */
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         if (!s_chart_sel[i]) continue;
         bool sel = (i == mode);
         lv_obj_set_style_bg_color(s_chart_sel[i],
@@ -1370,31 +1313,18 @@ static void chart_update(int mode)
                 lv_chart_set_next_value(s_chart, s_chart_ser, 250);
         }
 
-    } else if (mode == 1) {
-        /* ── Light brightness (bar chart, 0-100%) ────────────── */
-        lv_chart_set_type(s_chart, LV_CHART_TYPE_BAR);
-        lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-
-        led_schedule_config_t cfg = led_schedule_get_config();
-        int on_slot  = (cfg.on_hour  * 60 + cfg.on_minute)  * CHART_POINTS / 1440;
-        int off_slot = (cfg.off_hour * 60 + cfg.off_minute) * CHART_POINTS / 1440;
-        int br_pct   = cfg.brightness * 100 / 255;
-
-        for (int i = 0; i < CHART_POINTS; i++) {
-            int v = (cfg.enabled && on_slot < off_slot &&
-                     i >= on_slot && i < off_slot) ? br_pct : 0;
-            lv_chart_set_next_value(s_chart, s_chart_ser, v);
-        }
-
     } else {
         /* ── CO2 active window (bar chart, 0-100%) ───────────── */
         lv_chart_set_type(s_chart, LV_CHART_TYPE_BAR);
         lv_chart_set_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
 
-        led_schedule_config_t sched = led_schedule_get_config();
-        co2_config_t          co2   = co2_controller_get_config();
-        int on_min  = sched.on_hour  * 60 + sched.on_minute  - co2.pre_on_min;
-        int off_min = sched.off_hour * 60 + sched.off_minute + co2.post_off_min;
+        relay_state_t rs_chart[RELAY_COUNT];
+        relay_controller_get_all(rs_chart);
+        co2_config_t co2 = co2_controller_get_config();
+        int lights_on  = rs_chart[0].schedules[0].enabled ? (int)rs_chart[0].schedules[0].on_min  : 0;
+        int lights_off = rs_chart[0].schedules[0].enabled ? (int)rs_chart[0].schedules[0].off_min : 0;
+        int on_min  = lights_on  - co2.pre_on_min;
+        int off_min = lights_off + co2.post_off_min;
         if (on_min  < 0)    on_min  = 0;
         if (off_min > 1439) off_min = 1439;
         int on_slot  = on_min  * CHART_POINTS / 1440;
@@ -1435,7 +1365,7 @@ static void build_dati_tab(lv_obj_t *tab)
     lv_obj_set_style_pad_gap(sel, 8, 0);
 
     static const char *sel_labels[3] = { "TEMPERATURA", "LUCI", "CO\u2082" };
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         lv_obj_t *btn = lv_button_create(sel);
         s_chart_sel[i] = btn;
         lv_obj_set_flex_grow(btn, 1);
@@ -1817,33 +1747,20 @@ static void ui_refresh_cb(lv_timer_t *timer)
         lv_obj_set_style_text_color(s_cool_lbl, lv_color_hex(C_MUTED), 0);
     }
 
-    /* ── LED (Luci) ──────────────────────────────────────────── */
-    bool led_on  = led_controller_is_on();
-    int  led_pct = led_on ? (led_controller_get_brightness() * 100 / 255) : 0;
-
-    /* Home card */
-    if (s_home_led_val)
-        lv_label_set_text_fmt(s_home_led_val, "%d%%", led_pct);
+    /* ── Luci (relay 0) ─────────────────────────────────────── */
+    bool lights_on = relay_controller_get(0);
+    if (s_home_led_val) {
+        lv_label_set_text(s_home_led_val, lights_on ? "ON" : "OFF");
+        lv_obj_set_style_text_color(s_home_led_val,
+            lv_color_hex(lights_on ? C_ON : C_MUTED), 0);
+    }
     if (s_home_led_badge) {
         lv_obj_t *lbl = lv_obj_get_child(s_home_led_badge, 0);
         if (lbl) {
-            lv_label_set_text(lbl, led_on ? "ON" : "OFF");
-            lv_obj_set_style_text_color(lbl,
-                lv_color_hex(led_on ? C_ON : C_MUTED), 0);
             lv_obj_set_style_bg_color(s_home_led_badge,
-                lv_color_hex(led_on ? C_ON_BG : C_OFF), 0);
+                lv_color_hex(lights_on ? C_ON_BG : C_OFF), 0);
         }
     }
-
-    /* Luci tab switch + brightness */
-    if (s_luci_sw) {
-        if (led_on) lv_obj_add_state(s_luci_sw, LV_STATE_CHECKED);
-        else        lv_obj_remove_state(s_luci_sw, LV_STATE_CHECKED);
-    }
-    if (s_luci_br_sl)
-        lv_slider_set_value(s_luci_br_sl, led_pct, LV_ANIM_OFF);
-    if (s_luci_br_lbl)
-        lv_label_set_text_fmt(s_luci_br_lbl, "%d%%", led_pct);
 
     /* ── CO2 ─────────────────────────────────────────────────── */
     co2_config_t co2 = co2_controller_get_config();
@@ -1855,19 +1772,16 @@ static void ui_refresh_cb(lv_timer_t *timer)
             lv_color_hex(co2_relay_on ? C_ON : C_MUTED), 0);
     }
     if (s_home_co2_sub) {
-        led_schedule_config_t sc = led_schedule_get_config();
-        int off_min = sc.off_hour * 60 + sc.off_minute + co2.post_off_min;
+        relay_state_t rs_co2[RELAY_COUNT];
+        relay_controller_get_all(rs_co2);
+        int lights_off_min = rs_co2[0].schedules[0].enabled ? (int)rs_co2[0].schedules[0].off_min : 0;
+        int off_min = lights_off_min + co2.post_off_min;
         if (off_min > 1439) off_min = 1439;
         lv_label_set_text_fmt(s_home_co2_sub, "Terminazione: %02d:%02d",
                               off_min / 60, off_min % 60);
     }
 
     /* Automazioni tab switches */
-    led_schedule_config_t sched_now = led_schedule_get_config();
-    if (s_auto_luci_sw) {
-        if (sched_now.enabled) lv_obj_add_state(s_auto_luci_sw, LV_STATE_CHECKED);
-        else                   lv_obj_remove_state(s_auto_luci_sw, LV_STATE_CHECKED);
-    }
     co2_config_t co2_now = co2_controller_get_config();
     if (s_auto_co2_sw) {
         if (co2_now.enabled) lv_obj_add_state(s_auto_co2_sw, LV_STATE_CHECKED);
@@ -1969,13 +1883,11 @@ static void build_ui(void)
 
     /* Build each tab */
     lv_obj_t *tab_home  = lv_tabview_add_tab(s_tv, LV_SYMBOL_HOME   "  Home");
-    lv_obj_t *tab_luci  = lv_tabview_add_tab(s_tv, LV_SYMBOL_IMAGE  "  Luci");
     lv_obj_t *tab_temp  = lv_tabview_add_tab(s_tv, LV_SYMBOL_WARNING "  Temp");
     lv_obj_t *tab_auto  = lv_tabview_add_tab(s_tv, LV_SYMBOL_SETTINGS " Auto");
     lv_obj_t *tab_dati  = lv_tabview_add_tab(s_tv, LV_SYMBOL_LIST   "  Dati");
 
     build_home_tab(tab_home);
-    build_luci_tab(tab_luci);
     build_temperatura_tab(tab_temp);
     build_automazioni_tab(tab_auto);
     build_dati_tab(tab_dati);
@@ -1983,7 +1895,7 @@ static void build_ui(void)
     /* Periodic data refresh (2 s) */
     lv_timer_create(ui_refresh_cb, UI_REFRESH_MS, NULL);
 
-    ESP_LOGI(TAG, "UI built – 5 tabs (Home/Luci/Temp/Auto/Dati)");
+    ESP_LOGI(TAG, "UI built – 4 tabs (Home/Temp/Auto/Dati)");
 }
 
 esp_err_t display_ui_init(void)

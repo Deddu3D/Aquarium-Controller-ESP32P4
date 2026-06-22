@@ -63,39 +63,6 @@ menu "Aquarium Timezone Settings"
 
 endmenu
 
-menu "Aquarium LED Strip Settings"
-
-    config LED_STRIP_GPIO
-        int "LED strip data GPIO"
-        default 8
-        help
-            GPIO pin connected to the data line of the WS2812B LED strip.
-
-    config LED_STRIP_NUM_LEDS
-        int "Number of LEDs"
-        default 208
-        range 1 1024
-        help
-            Total number of LEDs in the WS2812B strip.
-
-    config LED_STRIP_DEFAULT_BRIGHTNESS
-        int "Default brightness (0-255)"
-        default 128
-        range 0 255
-        help
-            Default brightness level for the LED strip at startup.
-
-    config LED_RAMP_DURATION_SEC
-        int "Manual on/off acclimatization ramp (seconds)"
-        default 30
-        range 0 120
-        help
-            Duration of the gradual fade-in / fade-out ramp when the
-            LED strip is turned on or off manually.  Set to 0 to disable
-            (instant on/off).  Recommended: 30 s for fish welfare.
-
-endmenu
-
 menu "Aquarium Temperature Sensor Settings"
 
     config DS18B20_GPIO
@@ -141,9 +108,6 @@ menu "Aquarium Relay Settings"
         default 28
         help
             GPIO pin connected to relay channel 1.
-            On the Waveshare ESP32-P4-WiFi6 board the LED strip (GPIO20) and
-            DS18B20 sensor (GPIO21) are on the RIGHT-side header; relays are
-            placed on the LEFT-side header to keep the two harnesses separate.
             Left-side GPIOs available: 2, 3, 4, 5, 28, 29, 30, 31, 49, 50,
             51, 52 (GPIO7=SDA and GPIO8=SCL are reserved for touch I2C;
             GPIO24=DM and GPIO25=DP must NOT be used – USB bus).
@@ -261,43 +225,7 @@ menu "Aquarium Feeding Mode Settings"
         range 1 60
         help
             How long the feeding pause lasts in minutes before automatically
-            restoring the relay and LED state.
-
-endmenu
-
-menu "Aquarium Daily Cycle Settings"
-
-    config DAILY_CYCLE_LATITUDE_E4
-        int "Default latitude × 10000 (e.g. 454600 = 45.46°N)"
-        default 454600
-        range -900000 900000
-        help
-            Geographic latitude of the aquarium installation, expressed as
-            an integer equal to the decimal-degree value multiplied by 10000.
-            Used to compute real sunrise / sunset times for the daily lighting
-            cycle.  Positive = North, negative = South.
-            Examples: Milan 454600, Rome 418902, London 515060, New York 407128
-
-    config DAILY_CYCLE_LONGITUDE_E4
-        int "Default longitude × 10000 (e.g. 91900 = 9.19°E)"
-        default 91900
-        range -1800000 1800000
-        help
-            Geographic longitude of the aquarium installation, expressed as
-            an integer equal to the decimal-degree value multiplied by 10000.
-            Used to compute real sunrise / sunset times for the daily lighting
-            cycle.  Positive = East, negative = West.
-            Examples: Milan 91900, Rome 124942, London -1250, New York -740060
-
-    config DAILY_CYCLE_MOONLIGHT_DURATION_MIN
-        int "Moonlight phase duration after sunset (minutes, 0 = disabled)"
-        default 60
-        range 0 240
-        help
-            Number of minutes after astronomical sunset during which the
-            moonlight scene (LED_SCENE_MOONLIGHT) is active.  After this
-            interval the LEDs are turned off for the night.
-            Set to 0 to disable the moonlight phase entirely.
+            restoring the relay state.
 
 endmenu
 
@@ -330,31 +258,3 @@ menu "Aquarium WebSocket Settings"
 
 endmenu
 
-
-menu "Aquarium LED Scene Settings"
-
-    config LED_SCENE_SUNRISE_DURATION_MIN
-        int "Default sunrise ramp duration (minutes)"
-        default 30
-        range 5 120
-        help
-            Time in minutes for the full sunrise colour ramp from darkness
-            to daylight white.  A value of 30 minutes mimics a natural dawn.
-
-    config LED_SCENE_SUNSET_DURATION_MIN
-        int "Default sunset ramp duration (minutes)"
-        default 30
-        range 5 120
-        help
-            Time in minutes for the full sunset colour ramp from daylight
-            white back to darkness.
-
-    config LED_SCENE_MOONLIGHT_BRIGHTNESS
-        int "Default moonlight brightness (0-60)"
-        default 15
-        range 0 60
-        help
-            LED brightness level during the moonlight scene.  Should be very
-            dim (< 30) to simulate natural moonlight without disturbing fish.
-
-endmenu
