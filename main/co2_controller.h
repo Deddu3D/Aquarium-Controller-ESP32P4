@@ -3,8 +3,8 @@
  *
  * Aquarium Controller - CO2 Solenoid Controller
  * Automates a CO2 solenoid valve (via relay) in sync with the
- * LED lighting schedule.  The valve opens when the lights come
- * on and closes when they go off, with optional pre/post delays
+ * aquarium lighting relay schedule. The valve opens when lights
+ * come on and closes when they go off, with optional pre/post delays
  * to pre-fill the reactor and prevent CO2 waste after lights-out.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
@@ -54,10 +54,10 @@ co2_config_t co2_controller_get_config(void);
 esp_err_t co2_controller_set_config(const co2_config_t *cfg);
 
 /**
- * @brief Evaluate CO2 valve logic against the current LED schedule.
+ * @brief Evaluate CO2 valve logic against the current lights relay schedule.
  *
  * Call periodically (e.g. every 10 s from the main loop).
- * Opens/closes the solenoid relay based on the LED schedule window
+ * Opens/closes the solenoid relay based on the lights relay schedule window
  * and the configured pre/post delays.
  */
 void co2_controller_tick(void);

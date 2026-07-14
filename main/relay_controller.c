@@ -40,10 +40,10 @@ static const gpio_num_t s_relay_gpio[RELAY_COUNT] = {
 
 /* Default names for each channel */
 static const char *s_default_names[RELAY_COUNT] = {
-    "Relay 1",
-    "Relay 2",
-    "Relay 3",
-    "Relay 4",
+    "Luci",
+    "Riscaldatore",
+    "CO2",
+    "Pompa",
 };
 
 /* Runtime state – protected by s_mutex for thread safety */

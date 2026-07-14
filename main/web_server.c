@@ -27,8 +27,6 @@
 
 #include "wifi_manager.h"
 #include "web_server.h"
-#include "led_controller.h"
-#include "led_schedule.h"
 #include "temperature_sensor.h"
 #include "temperature_history.h"
 #include "telegram_notify.h"
@@ -40,8 +38,6 @@
 #include "timezone_manager.h"
 #include "esp_ota_ops.h"
 #include "feeding_mode.h"
-#include "led_scenes.h"
-#include "daily_cycle.h"
 #include "event_log.h"
 #include "relay_automation.h"
 #include "aquarium_profiles.h"
@@ -58,11 +54,6 @@ static esp_err_t setup_done_set(bool done);
 static const char *relay_trigger_to_str(relay_trig_t trigger);
 static relay_trig_t relay_trigger_from_str(const char *trigger);
 static esp_err_t ota_fetch_latest_tag(const char *url, char *latest_version, size_t latest_version_len);
-
-/* Kconfig fallback for acclimatization ramp duration */
-#ifndef CONFIG_LED_RAMP_DURATION_SEC
-#define CONFIG_LED_RAMP_DURATION_SEC 30
-#endif
 
 /* ── HTTP Basic Auth ─────────────────────────────────────────────── */
 
@@ -513,7 +504,6 @@ static void get_wifi_status(wifi_status_t *out)
 
 /* JSON response buffer sizes */
 #define JSON_STATUS_BUF_SIZE   768   /* enlarged: now includes restart_reason, boot_count, setup_done */
-#define JSON_LEDS_BUF_SIZE     256
 #define JSON_SCHED_BUF_SIZE    768
 #define JSON_TEMP_BUF_SIZE     128
 #define JSON_TG_BUF_SIZE       768
@@ -523,23 +513,16 @@ static void get_wifi_status(wifi_status_t *out)
 #define JSON_CO2_BUF_SIZE      256
 #define JSON_TZ_BUF_SIZE       128
 #define JSON_FEEDING_BUF_SIZE  192
-#define JSON_SCENE_BUF_SIZE    384
-#define JSON_DAILY_BUF_SIZE    256
 #define JSON_RELAY_AUTO_BUF_SIZE 2048
 #define JSON_OTA_URL_BUF_SIZE   384
 
 /* HTTP request body receive sizes */
-#define POST_BODY_LED_SIZE      256
-#define POST_BODY_SCHED_SIZE    768
-#define POST_BODY_PRESETS_SIZE  768
 #define POST_BODY_TG_SIZE       512
 #define POST_BODY_RELAY_SIZE    512
 #define POST_BODY_DDNS_SIZE     256
 #define POST_BODY_CO2_SIZE      256
 #define POST_BODY_TZ_SIZE       128
 #define POST_BODY_FEEDING_SIZE  128
-#define POST_BODY_SCENE_SIZE    256
-#define POST_BODY_DAILY_SIZE    192
 #define POST_BODY_PROFILE_SIZE   96
 #define POST_BODY_SETUP_SIZE     64
 #define POST_BODY_RELAY_AUTO_SIZE 4096
@@ -759,8 +742,6 @@ static esp_err_t api_health_get_handler(httpd_req_t *req)
     float temp_c = 0.0f;
     bool temp_ok = temperature_sensor_get(&temp_c);
 
-    bool led_ok  = (led_controller_get_num_leds() > 0);
-
     /* Overall health: all critical subsystems must be OK */
     bool healthy = wifi_ok;   /* WiFi is the only hard requirement */
 
@@ -771,8 +752,6 @@ static esp_err_t api_health_get_handler(httpd_req_t *req)
         "{\"healthy\":%s,"
         "\"wifi\":%s,"
         "\"temperature_sensor\":%s,"
-        "\"led_strip\":%s,"
-        "\"led_schedule_enabled\":%s,"
         "\"temp_c\":%.1f,"
         "\"free_heap\":%" PRIu32 ","
         "\"min_free_heap\":%" PRIu32 ","
@@ -780,8 +759,6 @@ static esp_err_t api_health_get_handler(httpd_req_t *req)
         healthy ? "true" : "false",
         wifi_ok ? "true" : "false",
         temp_ok ? "true" : "false",
-        led_ok  ? "true" : "false",
-        led_schedule_get_config().enabled ? "true" : "false",
         temp_ok ? (double)temp_c : 0.0,
         esp_get_free_heap_size(),
         esp_get_minimum_free_heap_size(),
@@ -791,30 +768,7 @@ static esp_err_t api_health_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
-/* ── LED status endpoint (/api/leds  GET) ─────────────────────────── */
-
-static esp_err_t api_leds_get_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    uint8_t r, g, b;
-    led_controller_get_color(&r, &g, &b);
-
-    char buf[JSON_LEDS_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"on\":%s,"
-        "\"brightness\":%d,"
-        "\"r\":%d,\"g\":%d,\"b\":%d,"
-        "\"num_leds\":%d}",
-        led_controller_is_on() ? "true" : "false",
-        led_controller_get_brightness(),
-        r, g, b,
-        led_controller_get_num_leds());
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
-}
-
-/* ── LED control endpoint (/api/leds  POST) ──────────────────────── */
+/* ── JSON helper utilities ──────────────────────────────────────── */
 
 /**
  * @brief Simple integer parser – find "key":value in a JSON-like string.
@@ -1081,337 +1035,6 @@ static esp_err_t ota_fetch_latest_tag(const char *url, char *latest_version, siz
     strlcpy(latest_version, tag->valuestring, latest_version_len);
     cJSON_Delete(root);
     return ESP_OK;
-}
-
-static esp_err_t api_leds_post_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    char buf[POST_BODY_LED_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    ESP_LOGI(TAG, "LED POST body: %s", buf);
-
-    /* Parse fields */
-    int on_val = json_get_bool(buf, "\"on\"");
-    int br_val = json_get_int(buf, "\"brightness\"");
-    int r_val  = json_get_int(buf, "\"r\"");
-    int g_val  = json_get_int(buf, "\"g\"");
-    int b_val  = json_get_int(buf, "\"b\"");
-
-    uint32_t ramp_ms = (uint32_t)CONFIG_LED_RAMP_DURATION_SEC * 1000;
-
-    if (on_val == 1) {
-        /* Turning on or updating while on: resolve target color/brightness,
-         * then use fade_to so the ramp always starts from the current state.
-         * This prevents the strip from blinking off when only brightness or
-         * color is changed while the LEDs are already on. */
-        uint8_t cur_r, cur_g, cur_b;
-        led_controller_get_color(&cur_r, &cur_g, &cur_b);
-        uint8_t new_r  = (r_val  >= 0) ? (uint8_t)(r_val  > 255 ? 255 : r_val)  : cur_r;
-        uint8_t new_g  = (g_val  >= 0) ? (uint8_t)(g_val  > 255 ? 255 : g_val)  : cur_g;
-        uint8_t new_b  = (b_val  >= 0) ? (uint8_t)(b_val  > 255 ? 255 : b_val)  : cur_b;
-        uint8_t new_br = (br_val >= 0) ? (uint8_t)(br_val > 255 ? 255 : br_val)
-                                        : led_controller_get_brightness();
-        led_controller_fade_to(new_r, new_g, new_b, new_br, ramp_ms);
-    } else if (on_val == 0) {
-        led_controller_fade_off(ramp_ms);
-    } else {
-        /* No on/off change: apply color and brightness instantly */
-        if (r_val >= 0 && g_val >= 0 && b_val >= 0) {
-            led_controller_set_color(
-                (uint8_t)(r_val > 255 ? 255 : r_val),
-                (uint8_t)(g_val > 255 ? 255 : g_val),
-                (uint8_t)(b_val > 255 ? 255 : b_val));
-        }
-        if (br_val >= 0) {
-            led_controller_set_brightness((uint8_t)(br_val > 255 ? 255 : br_val));
-        }
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, "{\"ok\":true}", -1);
-}
-
-/* ── LED Schedule status endpoint (/api/led_schedule  GET) ────────── */
-
-static esp_err_t api_led_schedule_get_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    led_schedule_config_t cfg = led_schedule_get_config();
-
-    char buf[JSON_SCHED_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"enabled\":%s,"
-        "\"on_hour\":%d,\"on_minute\":%d,"
-        "\"ramp_duration_min\":%d,"
-        "\"pause_enabled\":%s,"
-        "\"pause_start_hour\":%d,\"pause_start_minute\":%d,"
-        "\"pause_end_hour\":%d,\"pause_end_minute\":%d,"
-        "\"pause_brightness\":%d,"
-        "\"pause_red\":%d,\"pause_green\":%d,\"pause_blue\":%d,"
-        "\"off_hour\":%d,\"off_minute\":%d,"
-        "\"brightness\":%d,"
-        "\"red\":%d,\"green\":%d,\"blue\":%d}",
-        cfg.enabled       ? "true" : "false",
-        cfg.on_hour,   cfg.on_minute,
-        cfg.ramp_duration_min,
-        cfg.pause_enabled ? "true" : "false",
-        cfg.pause_start_hour, cfg.pause_start_minute,
-        cfg.pause_end_hour,   cfg.pause_end_minute,
-        cfg.pause_brightness,
-        cfg.pause_red, cfg.pause_green, cfg.pause_blue,
-        cfg.off_hour,  cfg.off_minute,
-        cfg.brightness,
-        cfg.red, cfg.green, cfg.blue);
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
-}
-
-/* ── LED Schedule control endpoint (/api/led_schedule  POST) ─────── */
-
-static esp_err_t api_led_schedule_post_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    char buf[POST_BODY_SCHED_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    ESP_LOGI(TAG, "LED Schedule POST body: %s", buf);
-
-    led_schedule_config_t cfg = led_schedule_get_config();
-    int val;
-    double dval;
-
-    val = json_get_bool(buf, "\"enabled\"");
-    if (val >= 0) cfg.enabled = (val == 1);
-
-    val = json_get_int(buf, "\"on_hour\"");
-    if (val >= 0) cfg.on_hour = (uint8_t)val;
-    val = json_get_int(buf, "\"on_minute\"");
-    if (val >= 0) cfg.on_minute = (uint8_t)val;
-
-    if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
-        cfg.ramp_duration_min = clamp_u16(dval, 120.0);
-
-    val = json_get_bool(buf, "\"pause_enabled\"");
-    if (val >= 0) cfg.pause_enabled = (val == 1);
-
-    val = json_get_int(buf, "\"pause_start_hour\"");
-    if (val >= 0) cfg.pause_start_hour = (uint8_t)val;
-    val = json_get_int(buf, "\"pause_start_minute\"");
-    if (val >= 0) cfg.pause_start_minute = (uint8_t)val;
-    val = json_get_int(buf, "\"pause_end_hour\"");
-    if (val >= 0) cfg.pause_end_hour = (uint8_t)val;
-    val = json_get_int(buf, "\"pause_end_minute\"");
-    if (val >= 0) cfg.pause_end_minute = (uint8_t)val;
-
-    val = json_get_int(buf, "\"pause_brightness\"");
-    if (val >= 0) cfg.pause_brightness = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"pause_red\"");
-    if (val >= 0) cfg.pause_red = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"pause_green\"");
-    if (val >= 0) cfg.pause_green = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"pause_blue\"");
-    if (val >= 0) cfg.pause_blue = (uint8_t)(val > 255 ? 255 : val);
-
-    val = json_get_int(buf, "\"off_hour\"");
-    if (val >= 0) cfg.off_hour = (uint8_t)val;
-    val = json_get_int(buf, "\"off_minute\"");
-    if (val >= 0) cfg.off_minute = (uint8_t)val;
-
-    val = json_get_int(buf, "\"brightness\"");
-    if (val >= 0) cfg.brightness = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"red\"");
-    if (val >= 0) cfg.red = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"green\"");
-    if (val >= 0) cfg.green = (uint8_t)(val > 255 ? 255 : val);
-    val = json_get_int(buf, "\"blue\"");
-    if (val >= 0) cfg.blue = (uint8_t)(val > 255 ? 255 : val);
-
-    led_schedule_set_config(&cfg);
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, "{\"ok\":true}", -1);
-}
-
-/* ── LED Presets GET endpoint (/api/led_presets  GET) ────────────── */
-
-static esp_err_t api_led_presets_get_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    /* Heap-allocate: 5 presets × ~420 bytes each + wrapper ≈ 2500 bytes */
-    const size_t buf_size = 4096;
-    char *buf = malloc(buf_size);
-    if (buf == NULL) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
-        return ESP_FAIL;
-    }
-
-    int pos = snprintf(buf, buf_size, "{\"presets\":[");
-
-    for (int i = 0; i < LED_PRESET_COUNT; i++) {
-        led_preset_t p;
-        led_preset_get(i, &p);
-
-        if (pos >= (int)buf_size - 2) {
-            break;  /* buffer full */
-        }
-
-        /* Escape name */
-        char ename[LED_PRESET_NAME_LEN * 2 + 4];
-        json_escape(p.name, ename, sizeof(ename));
-
-        int written = snprintf(buf + pos, buf_size - (size_t)pos,
-            "%s{\"slot\":%d,\"name\":\"%s\","
-            "\"config\":{"
-            "\"enabled\":%s,"
-            "\"on_hour\":%d,\"on_minute\":%d,"
-            "\"ramp_duration_min\":%d,"
-            "\"pause_enabled\":%s,"
-            "\"pause_start_hour\":%d,\"pause_start_minute\":%d,"
-            "\"pause_end_hour\":%d,\"pause_end_minute\":%d,"
-            "\"pause_brightness\":%d,"
-            "\"pause_red\":%d,\"pause_green\":%d,\"pause_blue\":%d,"
-            "\"off_hour\":%d,\"off_minute\":%d,"
-            "\"brightness\":%d,"
-            "\"red\":%d,\"green\":%d,\"blue\":%d}}",
-            i > 0 ? "," : "",
-            i, ename,
-            p.config.enabled       ? "true" : "false",
-            p.config.on_hour,   p.config.on_minute,
-            p.config.ramp_duration_min,
-            p.config.pause_enabled ? "true" : "false",
-            p.config.pause_start_hour, p.config.pause_start_minute,
-            p.config.pause_end_hour,   p.config.pause_end_minute,
-            p.config.pause_brightness,
-            p.config.pause_red, p.config.pause_green, p.config.pause_blue,
-            p.config.off_hour,  p.config.off_minute,
-            p.config.brightness,
-            p.config.red, p.config.green, p.config.blue);
-        if (written > 0 && pos + written < (int)buf_size) {
-            pos += written;
-        }
-    }
-
-    if (pos + 3 < (int)buf_size) {
-        buf[pos++] = ']';
-        buf[pos++] = '}';
-        buf[pos]   = '\0';
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t err = httpd_resp_send(req, buf, pos);
-    free(buf);
-    return err;
-}
-
-/* ── LED Presets control endpoint (/api/led_presets  POST) ──────── */
-/* Body: {"action":"save","slot":N,"name":"...",<all schedule fields>}  */
-/* Body: {"action":"load","slot":N}                                      */
-
-static esp_err_t api_led_presets_post_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    char buf[POST_BODY_PRESETS_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    ESP_LOGI(TAG, "LED Presets POST body: %s", buf);
-
-    char action[16] = {0};
-    json_get_str(buf, "\"action\"", action, sizeof(action));
-
-    int slot = json_get_int(buf, "\"slot\"");
-    if (slot < 0 || slot >= LED_PRESET_COUNT) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid slot");
-        return ESP_FAIL;
-    }
-
-    if (strcmp(action, "load") == 0) {
-        esp_err_t err = led_preset_load(slot);
-        if (err != ESP_OK) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Load failed");
-            return ESP_FAIL;
-        }
-    } else if (strcmp(action, "save") == 0) {
-        char name[LED_PRESET_NAME_LEN] = {0};
-        json_get_str(buf, "\"name\"", name, sizeof(name));
-        if (name[0] == '\0') {
-            snprintf(name, sizeof(name), "Preset %d", slot + 1);
-        }
-
-        /* Build config from POST fields, starting from current preset config */
-        led_preset_t current;
-        led_preset_get(slot, &current);
-        led_schedule_config_t cfg = current.config;
-        int val;
-        double dval;
-
-        val = json_get_bool(buf, "\"enabled\"");
-        if (val >= 0) cfg.enabled = (val == 1);
-        val = json_get_int(buf, "\"on_hour\"");
-        if (val >= 0) cfg.on_hour = (uint8_t)val;
-        val = json_get_int(buf, "\"on_minute\"");
-        if (val >= 0) cfg.on_minute = (uint8_t)val;
-        if (json_get_double(buf, "\"ramp_duration_min\"", &dval) == 0)
-            cfg.ramp_duration_min = clamp_u16(dval, 120.0);
-        val = json_get_bool(buf, "\"pause_enabled\"");
-        if (val >= 0) cfg.pause_enabled = (val == 1);
-        val = json_get_int(buf, "\"pause_start_hour\"");
-        if (val >= 0) cfg.pause_start_hour = (uint8_t)val;
-        val = json_get_int(buf, "\"pause_start_minute\"");
-        if (val >= 0) cfg.pause_start_minute = (uint8_t)val;
-        val = json_get_int(buf, "\"pause_end_hour\"");
-        if (val >= 0) cfg.pause_end_hour = (uint8_t)val;
-        val = json_get_int(buf, "\"pause_end_minute\"");
-        if (val >= 0) cfg.pause_end_minute = (uint8_t)val;
-        val = json_get_int(buf, "\"pause_brightness\"");
-        if (val >= 0) cfg.pause_brightness = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"pause_red\"");
-        if (val >= 0) cfg.pause_red = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"pause_green\"");
-        if (val >= 0) cfg.pause_green = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"pause_blue\"");
-        if (val >= 0) cfg.pause_blue = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"off_hour\"");
-        if (val >= 0) cfg.off_hour = (uint8_t)val;
-        val = json_get_int(buf, "\"off_minute\"");
-        if (val >= 0) cfg.off_minute = (uint8_t)val;
-        val = json_get_int(buf, "\"brightness\"");
-        if (val >= 0) cfg.brightness = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"red\"");
-        if (val >= 0) cfg.red = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"green\"");
-        if (val >= 0) cfg.green = (uint8_t)(val > 255 ? 255 : val);
-        val = json_get_int(buf, "\"blue\"");
-        if (val >= 0) cfg.blue = (uint8_t)(val > 255 ? 255 : val);
-
-        esp_err_t err = led_preset_save(slot, name, &cfg);
-        if (err != ESP_OK) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
-            return ESP_FAIL;
-        }
-    } else {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Unknown action");
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
 
@@ -2519,174 +2142,6 @@ static esp_err_t api_feeding_post_handler(httpd_req_t *req)
     return httpd_resp_send(req, "{\"ok\":true}", -1);
 }
 
-/* ── LED Scene GET endpoint (/api/scene  GET) ────────────────────── */
-
-static esp_err_t api_scene_get_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    led_scenes_config_t cfg = led_scenes_get_config();
-    led_scene_t active = led_scenes_get_active();
-    float moon_frac = led_scenes_get_moon_phase();
-
-    char buf[JSON_SCENE_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"active\":%d,"
-        "\"sunrise_duration_min\":%d,"
-        "\"sunrise_max_brightness\":%d,"
-        "\"sunset_duration_min\":%d,"
-        "\"moonlight_brightness\":%d,"
-        "\"moonlight_r\":%d,\"moonlight_g\":%d,\"moonlight_b\":%d,"
-        "\"storm_intensity\":%d,"
-        "\"clouds_depth\":%d,"
-        "\"clouds_period_s\":%d,"
-        "\"shimmer_intensity\":%d,"
-        "\"shimmer_speed\":%d,"
-        "\"moon_phase\":%.3f}",
-        (int)active,
-        cfg.sunrise_duration_min,
-        cfg.sunrise_max_brightness,
-        cfg.sunset_duration_min,
-        cfg.moonlight_brightness,
-        cfg.moonlight_r, cfg.moonlight_g, cfg.moonlight_b,
-        cfg.storm_intensity,
-        cfg.clouds_depth,
-        cfg.clouds_period_s,
-        cfg.shimmer_intensity,
-        cfg.shimmer_speed,
-        (double)moon_frac);
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
-}
-
-/* ── LED Scene POST endpoint (/api/scene  POST) ──────────────────── */
-/*
- * {"start_scene":N}                          – start/stop scene N
- * {"sunrise_duration_min":30,...}            – update config only
- * Both can be combined: start + config update in one call.
- */
-
-static esp_err_t api_scene_post_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    char buf[POST_BODY_SCENE_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    /* Config update */
-    led_scenes_config_t cfg = led_scenes_get_config();
-    double dval;
-
-    if (json_get_double(buf, "\"sunrise_duration_min\"", &dval) == 0)
-        cfg.sunrise_duration_min = (uint16_t)(dval > 120 ? 120 : (dval < 5 ? 5 : dval));
-    if (json_get_double(buf, "\"sunrise_max_brightness\"", &dval) == 0)
-        cfg.sunrise_max_brightness = (uint8_t)(dval > 255 ? 255 : dval);
-    if (json_get_double(buf, "\"sunset_duration_min\"", &dval) == 0)
-        cfg.sunset_duration_min = (uint8_t)(dval > 120 ? 120 : (dval < 5 ? 5 : dval));
-    if (json_get_double(buf, "\"moonlight_brightness\"", &dval) == 0)
-        cfg.moonlight_brightness = (uint8_t)(dval > 60 ? 60 : dval);
-    if (json_get_double(buf, "\"moonlight_r\"", &dval) == 0)
-        cfg.moonlight_r = (uint8_t)(dval > 255 ? 255 : dval);
-    if (json_get_double(buf, "\"moonlight_g\"", &dval) == 0)
-        cfg.moonlight_g = (uint8_t)(dval > 255 ? 255 : dval);
-    if (json_get_double(buf, "\"moonlight_b\"", &dval) == 0)
-        cfg.moonlight_b = (uint8_t)(dval > 255 ? 255 : dval);
-    if (json_get_double(buf, "\"storm_intensity\"", &dval) == 0)
-        cfg.storm_intensity = (uint8_t)(dval > 100 ? 100 : dval);
-    if (json_get_double(buf, "\"clouds_depth\"", &dval) == 0)
-        cfg.clouds_depth = (uint8_t)(dval > 80 ? 80 : dval);
-    if (json_get_double(buf, "\"clouds_period_s\"", &dval) == 0)
-        cfg.clouds_period_s = (uint16_t)(dval > 600 ? 600 : (dval < 10 ? 10 : dval));
-    if (json_get_double(buf, "\"shimmer_intensity\"", &dval) == 0)
-        cfg.shimmer_intensity = (uint8_t)(dval > 100 ? 100 : dval);
-    if (json_get_double(buf, "\"shimmer_speed\"", &dval) == 0)
-        cfg.shimmer_speed = (uint8_t)(dval > 10 ? 10 : (dval < 1 ? 1 : dval));
-
-    led_scenes_set_config(&cfg);
-
-    /* Scene activation */
-    int start_scene = json_get_int(buf, "\"start_scene\"");
-    if (start_scene >= 0) {
-        led_scenes_start((led_scene_t)start_scene);
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, "{\"ok\":true}", -1);
-}
-
-/* ── Daily Cycle GET endpoint (/api/daily_cycle  GET) ────────────── */
-
-static esp_err_t api_daily_cycle_get_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    daily_cycle_config_t cfg = daily_cycle_get_config();
-    daily_cycle_phase_t  phase = daily_cycle_get_phase();
-    int sunrise_min = daily_cycle_get_sunrise_min();
-    int sunset_min  = daily_cycle_get_sunset_min();
-
-    char buf[JSON_DAILY_BUF_SIZE];
-    int len = snprintf(buf, sizeof(buf),
-        "{\"enabled\":%s,"
-        "\"latitude\":%.4f,"
-        "\"longitude\":%.4f,"
-        "\"phase\":%d,"
-        "\"sunrise_min\":%d,"
-        "\"sunset_min\":%d,"
-        "\"moonlight_duration_min\":%d}",
-        cfg.enabled ? "true" : "false",
-        cfg.latitude,
-        cfg.longitude,
-        (int)phase,
-        sunrise_min,
-        sunset_min,
-        cfg.moonlight_duration_min);
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, buf, len);
-}
-
-/* ── Daily Cycle POST endpoint (/api/daily_cycle  POST) ──────────── */
-/*
- * {"enabled":true,"latitude":45.46,"longitude":9.19}
- * Any subset of fields may be provided; missing fields retain current values.
- */
-
-static esp_err_t api_daily_cycle_post_handler(httpd_req_t *req)
-{
-    AUTH_CHECK(req);
-    char buf[POST_BODY_DAILY_SIZE];
-    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (received <= 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
-    buf[received] = '\0';
-
-    daily_cycle_config_t cfg = daily_cycle_get_config();
-    double dval;
-
-    int en = json_get_bool(buf, "\"enabled\"");
-    if (en >= 0) cfg.enabled = (bool)en;
-
-    if (json_get_double(buf, "\"latitude\"",  &dval) == 0) cfg.latitude  = (float)dval;
-    if (json_get_double(buf, "\"longitude\"", &dval) == 0) cfg.longitude = (float)dval;
-    if (json_get_double(buf, "\"moonlight_duration_min\"", &dval) == 0)
-        cfg.moonlight_duration_min = (int)dval;
-
-    esp_err_t err = daily_cycle_set_config(&cfg);
-    if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid config");
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, "{\"ok\":true}", -1);
-}
-
 /* ── WebSocket push server (/ws) ─────────────────────────────────── */
 /*
  * The ESP-IDF HTTP server supports WebSocket upgrade natively.
@@ -2734,13 +2189,11 @@ static int ws_build_status(char *buf, size_t buf_size)
         "\"uptime_s\":%" PRId64 ","
         "\"free_heap\":%" PRIu32 ","
         "\"temp_ok\":%s,"
-        "\"temp_c\":%.2f,"
-        "\"phase\":%d}",
+        "\"temp_c\":%.2f}",
         uptime_s,
         esp_get_free_heap_size(),
         temp_ok ? "true" : "false",
-        temp_ok ? (double)temp_c : 0.0,
-        (int)daily_cycle_get_phase());
+        temp_ok ? (double)temp_c : 0.0);
 }
 
 static void ws_push_task(void *arg)
@@ -2859,31 +2312,6 @@ static esp_err_t api_config_export_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* LED schedule */
-    {
-        led_schedule_config_t c = led_schedule_get_config();
-        cJSON *o = cJSON_AddObjectToObject(root, "led_schedule");
-        cJSON_AddBoolToObject(o, "enabled",          c.enabled);
-        cJSON_AddNumberToObject(o, "on_hour",         c.on_hour);
-        cJSON_AddNumberToObject(o, "on_minute",       c.on_minute);
-        cJSON_AddNumberToObject(o, "off_hour",        c.off_hour);
-        cJSON_AddNumberToObject(o, "off_minute",      c.off_minute);
-        cJSON_AddNumberToObject(o, "brightness",      c.brightness);
-        cJSON_AddNumberToObject(o, "red",             c.red);
-        cJSON_AddNumberToObject(o, "green",           c.green);
-        cJSON_AddNumberToObject(o, "blue",            c.blue);
-        cJSON_AddNumberToObject(o, "ramp_duration_min", c.ramp_duration_min);
-        cJSON_AddBoolToObject(o, "pause_enabled",    c.pause_enabled);
-        cJSON_AddNumberToObject(o, "pause_start_hour", c.pause_start_hour);
-        cJSON_AddNumberToObject(o, "pause_start_minute", c.pause_start_minute);
-        cJSON_AddNumberToObject(o, "pause_end_hour", c.pause_end_hour);
-        cJSON_AddNumberToObject(o, "pause_end_minute", c.pause_end_minute);
-        cJSON_AddNumberToObject(o, "pause_brightness", c.pause_brightness);
-        cJSON_AddNumberToObject(o, "pause_red",      c.pause_red);
-        cJSON_AddNumberToObject(o, "pause_green",    c.pause_green);
-        cJSON_AddNumberToObject(o, "pause_blue",     c.pause_blue);
-    }
-
     /* Auto-heater */
     {
         auto_heater_config_t c = auto_heater_get_config();
@@ -2904,32 +2332,6 @@ static esp_err_t api_config_export_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(o, "relay_index",    c.relay_index);
         cJSON_AddNumberToObject(o, "pre_on_min",     c.pre_on_min);
         cJSON_AddNumberToObject(o, "post_off_min",   c.post_off_min);
-    }
-
-    /* Daily cycle */
-    {
-        daily_cycle_config_t c = daily_cycle_get_config();
-        cJSON *o = cJSON_AddObjectToObject(root, "daily_cycle");
-        cJSON_AddBoolToObject(o, "enabled",                 c.enabled);
-        cJSON_AddNumberToObject(o, "latitude",              (double)c.latitude);
-        cJSON_AddNumberToObject(o, "longitude",             (double)c.longitude);
-        cJSON_AddNumberToObject(o, "moonlight_duration_min", c.moonlight_duration_min);
-    }
-
-    /* LED scenes */
-    {
-        led_scenes_config_t c = led_scenes_get_config();
-        cJSON *o = cJSON_AddObjectToObject(root, "led_scenes");
-        cJSON_AddNumberToObject(o, "sunrise_duration_min",   c.sunrise_duration_min);
-        cJSON_AddNumberToObject(o, "sunrise_max_brightness", c.sunrise_max_brightness);
-        cJSON_AddNumberToObject(o, "sunset_duration_min",    c.sunset_duration_min);
-        cJSON_AddNumberToObject(o, "moonlight_brightness",   c.moonlight_brightness);
-        cJSON_AddNumberToObject(o, "moonlight_r",            c.moonlight_r);
-        cJSON_AddNumberToObject(o, "moonlight_g",            c.moonlight_g);
-        cJSON_AddNumberToObject(o, "moonlight_b",            c.moonlight_b);
-        cJSON_AddNumberToObject(o, "storm_intensity",        c.storm_intensity);
-        cJSON_AddNumberToObject(o, "clouds_depth",           c.clouds_depth);
-        cJSON_AddNumberToObject(o, "clouds_period_s",        c.clouds_period_s);
     }
 
     /* Timezone */
@@ -3069,35 +2471,8 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
 
     int applied = 0;
 
-    /* LED schedule */
-    cJSON *o = cJSON_GetObjectItem(root, "led_schedule");
-    if (o) {
-        led_schedule_config_t c = led_schedule_get_config();
-        cJSON *f;
-        if ((f = cJSON_GetObjectItem(o, "enabled")))           c.enabled           = cJSON_IsTrue(f);
-        if ((f = cJSON_GetObjectItem(o, "on_hour")))           c.on_hour           = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "on_minute")))         c.on_minute         = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "off_hour")))          c.off_hour          = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "off_minute")))        c.off_minute        = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "brightness")))        c.brightness        = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "red")))               c.red               = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "green")))             c.green             = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "blue")))              c.blue              = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "ramp_duration_min"))) c.ramp_duration_min = (uint16_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_enabled")))     c.pause_enabled     = cJSON_IsTrue(f);
-        if ((f = cJSON_GetObjectItem(o, "pause_start_hour")))  c.pause_start_hour  = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_start_minute")))c.pause_start_minute= (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_end_hour")))    c.pause_end_hour    = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_end_minute")))  c.pause_end_minute  = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_brightness")))  c.pause_brightness  = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_red")))         c.pause_red         = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_green")))       c.pause_green       = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "pause_blue")))        c.pause_blue        = (uint8_t)f->valueint;
-        led_schedule_set_config(&c);
-        applied++;
-    }
-
     /* Auto-heater */
+    cJSON *o = cJSON_GetObjectItem(root, "heater");
     o = cJSON_GetObjectItem(root, "heater");
     if (o) {
         auto_heater_config_t c = auto_heater_get_config();
@@ -3122,38 +2497,6 @@ static esp_err_t api_config_import_handler(httpd_req_t *req)
         if ((f = cJSON_GetObjectItem(o, "pre_on_min")))     c.pre_on_min   = f->valueint;
         if ((f = cJSON_GetObjectItem(o, "post_off_min")))   c.post_off_min = f->valueint;
         co2_controller_set_config(&c);
-        applied++;
-    }
-
-    /* Daily cycle */
-    o = cJSON_GetObjectItem(root, "daily_cycle");
-    if (o) {
-        daily_cycle_config_t c = daily_cycle_get_config();
-        cJSON *f;
-        if ((f = cJSON_GetObjectItem(o, "enabled")))                 c.enabled                = cJSON_IsTrue(f);
-        if ((f = cJSON_GetObjectItem(o, "latitude")))                c.latitude               = (float)f->valuedouble;
-        if ((f = cJSON_GetObjectItem(o, "longitude")))               c.longitude              = (float)f->valuedouble;
-        if ((f = cJSON_GetObjectItem(o, "moonlight_duration_min")))  c.moonlight_duration_min = f->valueint;
-        daily_cycle_set_config(&c);
-        applied++;
-    }
-
-    /* LED scenes */
-    o = cJSON_GetObjectItem(root, "led_scenes");
-    if (o) {
-        led_scenes_config_t c = led_scenes_get_config();
-        cJSON *f;
-        if ((f = cJSON_GetObjectItem(o, "sunrise_duration_min")))   c.sunrise_duration_min   = (uint16_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "sunrise_max_brightness"))) c.sunrise_max_brightness = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "sunset_duration_min")))    c.sunset_duration_min    = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "moonlight_brightness")))   c.moonlight_brightness   = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "moonlight_r")))            c.moonlight_r            = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "moonlight_g")))            c.moonlight_g            = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "moonlight_b")))            c.moonlight_b            = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "storm_intensity")))        c.storm_intensity        = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "clouds_depth")))           c.clouds_depth           = (uint8_t)f->valueint;
-        if ((f = cJSON_GetObjectItem(o, "clouds_period_s")))        c.clouds_period_s        = (uint16_t)f->valueint;
-        led_scenes_set_config(&c);
         applied++;
     }
 
@@ -3467,7 +2810,7 @@ static esp_err_t api_mdns_post_handler(httpd_req_t *req)
  * @brief Erase all NVS namespaces and reboot the device.
  *
  * This returns the device to factory defaults (WiFi credentials,
- * relay names, LED schedule, Telegram config, etc. are all wiped).
+ * relay names, Telegram config, etc. are all wiped).
  * The client will not receive a response because the device reboots
  * immediately after the erase.
  */
@@ -3569,47 +2912,11 @@ static const httpd_uri_t uri_api_health = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_leds_get = {
-    .uri      = "/api/leds",
-    .method   = HTTP_GET,
-    .handler  = api_leds_get_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_leds_post = {
-    .uri      = "/api/leds",
-    .method   = HTTP_POST,
-    .handler  = api_leds_post_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_led_sched_get = {
-    .uri      = "/api/led_schedule",
-    .method   = HTTP_GET,
-    .handler  = api_led_schedule_get_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_led_sched_post = {
-    .uri      = "/api/led_schedule",
-    .method   = HTTP_POST,
-    .handler  = api_led_schedule_post_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_led_presets_get = {
-    .uri      = "/api/led_presets",
-    .method   = HTTP_GET,
-    .handler  = api_led_presets_get_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_led_presets_post = {
-    .uri      = "/api/led_presets",
-    .method   = HTTP_POST,
-    .handler  = api_led_presets_post_handler,
-    .user_ctx = NULL,
-};
 
 static const httpd_uri_t uri_api_temp_get = {
     .uri      = "/api/temperature",
@@ -3814,19 +3121,7 @@ static const httpd_uri_t uri_api_feeding_post = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_scene_get = {
-    .uri      = "/api/scene",
-    .method   = HTTP_GET,
-    .handler  = api_scene_get_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_scene_post = {
-    .uri      = "/api/scene",
-    .method   = HTTP_POST,
-    .handler  = api_scene_post_handler,
-    .user_ctx = NULL,
-};
 
 #ifdef CONFIG_WEB_AUTH_ENABLE
 static const httpd_uri_t uri_api_login = {
@@ -3865,19 +3160,7 @@ static const httpd_uri_t uri_api_config_import = {
     .user_ctx = NULL,
 };
 
-static const httpd_uri_t uri_api_daily_cycle_get = {
-    .uri      = "/api/daily_cycle",
-    .method   = HTTP_GET,
-    .handler  = api_daily_cycle_get_handler,
-    .user_ctx = NULL,
-};
 
-static const httpd_uri_t uri_api_daily_cycle_post = {
-    .uri      = "/api/daily_cycle",
-    .method   = HTTP_POST,
-    .handler  = api_daily_cycle_post_handler,
-    .user_ctx = NULL,
-};
 
 /* Wildcard handler: serve embedded static files under /www/wildcard */
 static const httpd_uri_t uri_www_static = {
@@ -4001,12 +3284,6 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_setup_done);
     httpd_register_uri_handler(s_server, &uri_api_profile);
     httpd_register_uri_handler(s_server, &uri_api_health);
-    httpd_register_uri_handler(s_server, &uri_api_leds_get);
-    httpd_register_uri_handler(s_server, &uri_api_leds_post);
-    httpd_register_uri_handler(s_server, &uri_api_led_sched_get);
-    httpd_register_uri_handler(s_server, &uri_api_led_sched_post);
-    httpd_register_uri_handler(s_server, &uri_api_led_presets_get);
-    httpd_register_uri_handler(s_server, &uri_api_led_presets_post);
     httpd_register_uri_handler(s_server, &uri_api_temp_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_hist_get);
     httpd_register_uri_handler(s_server, &uri_api_temp_csv_get);
@@ -4036,10 +3313,6 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(s_server, &uri_api_tz_post);
     httpd_register_uri_handler(s_server, &uri_api_feeding_get);
     httpd_register_uri_handler(s_server, &uri_api_feeding_post);
-    httpd_register_uri_handler(s_server, &uri_api_scene_get);
-    httpd_register_uri_handler(s_server, &uri_api_scene_post);
-    httpd_register_uri_handler(s_server, &uri_api_daily_cycle_get);
-    httpd_register_uri_handler(s_server, &uri_api_daily_cycle_post);
     httpd_register_uri_handler(s_server, &uri_api_factory_reset);
     httpd_register_uri_handler(s_server, &uri_api_events_get);
     httpd_register_uri_handler(s_server, &uri_api_config_export);

@@ -3,7 +3,7 @@
  *
  * Aquarium Controller - CO2 Solenoid Controller implementation
  * Opens / closes a relay-driven solenoid valve in sync with the
- * LED lighting schedule to avoid CO2 waste and pH swings.
+ * lights relay schedule to avoid CO2 waste and pH swings.
  *
  * Target board : Waveshare ESP32-P4-WiFi6 rev 1.3
  * ESP-IDF      : v6.0.0
@@ -21,7 +21,6 @@
 
 #include "co2_controller.h"
 #include "relay_controller.h"
-#include "led_schedule.h"
 
 static const char *TAG = "co2";
 
@@ -32,12 +31,48 @@ static const char *TAG = "co2";
 #define NVS_KEY_RELAY      "relay_idx"
 #define NVS_KEY_PRE_ON     "pre_on"
 #define NVS_KEY_POST_OFF   "post_off"
+#define MINUTES_PER_DAY    1440
 
 /* ── Private state ───────────────────────────────────────────────── */
 
 static SemaphoreHandle_t s_mutex   = NULL;
 static co2_config_t      s_config;
 static bool              s_valve_on = false;   /* last commanded state */
+static const int         s_lights_relay_index = 0;
+
+/* Return true when now_min is inside the half-open interval
+ * [start_min, end_min), supporting windows that cross midnight
+ * (start_min > end_min). */
+static bool minute_in_window(int now_min, int start_min, int end_min)
+{
+    if (start_min <= end_min) {
+        return now_min >= start_min && now_min < end_min;
+    }
+    return now_min >= start_min || now_min < end_min;
+}
+
+/* Check whether any enabled schedule slot is active at now_min after applying
+ * pre-on and post-off margins (minutes), with wrap-around at midnight.
+ * When out_start_min/out_end_min are provided, the active adjusted window
+ * is returned for diagnostics. */
+static bool relay_schedule_active_now(const relay_schedule_t relay_schedules[RELAY_SCHEDULE_SLOTS],
+                                      int now_min, int pre_on_min, int post_off_min,
+                                      int *out_start_min, int *out_end_min)
+{
+    for (int i = 0; i < RELAY_SCHEDULE_SLOTS; i++) {
+        if (!relay_schedules[i].enabled) {
+            continue;
+        }
+        int on_m = ((int)relay_schedules[i].on_min - pre_on_min + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+        int off_m = ((int)relay_schedules[i].off_min + post_off_min + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+        if (minute_in_window(now_min, on_m, off_m)) {
+            if (out_start_min) *out_start_min = on_m;
+            if (out_end_min) *out_end_min = off_m;
+            return true;
+        }
+    }
+    return false;
+}
 
 /* ── NVS helpers ─────────────────────────────────────────────────── */
 
@@ -182,52 +217,41 @@ void co2_controller_tick(void)
 
     int now_min = ti.tm_hour * 60 + ti.tm_min;
 
-    /* Read the LED schedule to get the on/off window */
-    led_schedule_config_t sched = led_schedule_get_config();
-    if (!sched.enabled) {
-        /* No LED schedule – close valve and return */
+    relay_state_t relays[RELAY_COUNT];
+    relay_controller_get_all(relays);
+
+    int active_start_min = -1;
+    int active_end_min = -1;
+    bool should_be_on = relay_schedule_active_now(relays[s_lights_relay_index].schedules,
+                                                  now_min,
+                                                  cfg.pre_on_min,
+                                                  cfg.post_off_min,
+                                                  &active_start_min,
+                                                  &active_end_min);
+    if (!should_be_on) {
+        /* No active lights schedule window – close valve and return. */
         if (currently_on) {
             relay_controller_set(cfg.relay_index, false);
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_valve_on = false;
             xSemaphoreGive(s_mutex);
-            ESP_LOGI(TAG, "CO2 OFF (no LED schedule active)");
+            ESP_LOGI(TAG, "CO2 OFF (no active lights schedule)");
         }
         return;
     }
-
-    int led_on_min  = sched.on_hour  * 60 + sched.on_minute;
-    int led_off_min = sched.off_hour * 60 + sched.off_minute;
-
-    /* Adjust window by pre/post delays */
-    int valve_open_min  = led_on_min  - cfg.pre_on_min;
-    int valve_close_min = led_off_min + cfg.post_off_min;
-
-    /* Normalise both to the 0–1439 range */
-    valve_open_min  = ((valve_open_min  % 1440) + 1440) % 1440;
-    valve_close_min = ((valve_close_min % 1440) + 1440) % 1440;
-
-    /* Determine if valve should be open */
-    bool should_be_on;
-    if (valve_open_min <= valve_close_min) {
-        should_be_on = (now_min >= valve_open_min &&
-                        now_min <  valve_close_min);
-    } else {
-        /* Overnight window */
-        should_be_on = (now_min >= valve_open_min ||
-                        now_min <  valve_close_min);
-    }
-
     if (should_be_on != currently_on) {
         relay_controller_set(cfg.relay_index, should_be_on);
         xSemaphoreTake(s_mutex, portMAX_DELAY);
         s_valve_on = should_be_on;
         xSemaphoreGive(s_mutex);
-        ESP_LOGI(TAG, "CO2 solenoid %s (relay %d, now=%02d:%02d window=%02d:%02d–%02d:%02d)",
+        ESP_LOGI(TAG, "CO2 solenoid %s (relay %d, now=%02d:%02d window=%02d:%02d–%02d:%02d lights_relay=%s)",
                  should_be_on ? "OPEN" : "CLOSED",
                  cfg.relay_index,
-                 now_min / 60, now_min % 60,
-                 valve_open_min / 60, valve_open_min % 60,
-                 valve_close_min / 60, valve_close_min % 60);
+                 ti.tm_hour, ti.tm_min,
+                 (active_start_min >= 0) ? (active_start_min / 60) : 0,
+                 (active_start_min >= 0) ? (active_start_min % 60) : 0,
+                 (active_end_min >= 0) ? (active_end_min / 60) : 0,
+                 (active_end_min >= 0) ? (active_end_min % 60) : 0,
+                 relays[s_lights_relay_index].on ? "ON" : "OFF");
     }
 }

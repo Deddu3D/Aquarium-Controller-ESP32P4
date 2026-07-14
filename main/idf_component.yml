@@ -6,9 +6,6 @@ dependencies:
   ## ESP WiFi Remote: transparent WiFi API delegation to the coprocessor
   espressif/esp_wifi_remote:
     version: "^1.0.0"
-  ## LED Strip: addressable LED driver (WS2812B) via RMT peripheral
-  espressif/led_strip:
-    version: "^3.0.0"
   ## DS18B20: digital temperature sensor (1-Wire) via RMT peripheral
   ## Note: onewire_bus is a PUBLIC transitive dependency of ds18b20 and must
   ## NOT be listed here separately – doing so registers onewire_bus twice and
